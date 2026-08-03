@@ -477,7 +477,8 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 function renderSignIn(): void {
     $sprite   = SVG_SPRITE;
     $clientId = h(GOOGLE_CLIENT_ID);
-    $devStub  = isDevStubActive(GOOGLE_CLIENT_ID);
+    // Dev-stub button only shows when placeholder client id AND APP_DEBUG=1 — matches server-side gate.
+    $devStub  = isDevStubActive(GOOGLE_CLIENT_ID) && (getenv('APP_DEBUG') === '1');
     $csrf     = csrfInput();
     $flashHtml = '';
     if ($flash = consumeFlash()) {
@@ -654,33 +655,51 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $monthEnd   = $anchor->modify('+1 month')->format('Y-m-d');
     $label      = $anchor->format('F Y');
 
-    // Range predicate hits the (household_id, date) index; portable across MySQL/MariaDB
-    // configs where DATE_FORMAT or an unquoted `date` identifier could misbehave.
+    // Pagination for the transaction list. Aggregates (total, breakdown) still cover the
+    // whole month via a separate cheap SUM; only the row list is capped.
+    $pageSize = 200;
+    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+
+    // Monthly aggregates — one indexed SUM per query, no fetchAll of the whole month.
+    $sumStmt = $db->prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+         FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?"
+    );
+    $sumStmt->execute([$hid, $monthStart, $monthEnd]);
+    $agg = $sumStmt->fetch();
+    $entryCount = (int)$agg['n'];
+    $total      = (float)$agg['total'];
+
+    // Category breakdown from an indexed GROUP BY, not from PHP-side accumulation.
+    $catStmt = $db->prepare(
+        "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS cat_name,
+                COALESCE(c.icon, 'tag') AS cat_icon, SUM(e.amount) AS amt
+         FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         GROUP BY c.id, c.name, c.icon
+         ORDER BY amt DESC"
+    );
+    $catStmt->execute([$hid, $monthStart, $monthEnd]);
+    $byCat = $catStmt->fetchAll();
+
+    // Paginated transaction list — LIMIT + OFFSET on the (household_id, date) index.
     $rows = $db->prepare(
         "SELECT e.*, c.name AS cat_name, c.icon AS cat_icon, m.name AS mem_name
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id
          LEFT JOIN members m ON m.id = e.member_id
          WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
-         ORDER BY e.`date` DESC, e.id DESC"
+         ORDER BY e.`date` DESC, e.id DESC
+         LIMIT $pageSize OFFSET $rowOffset"
     );
     $rows->execute([$hid, $monthStart, $monthEnd]);
     $expenses = $rows->fetchAll();
-    $total = array_sum(array_map(fn($r) => (float)$r['amount'], $expenses));
 
     // For the edit-expense modal.
     $catList = $db->prepare("SELECT id, name FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $catList->execute([$hid]); $catList = $catList->fetchAll();
     $memList = $db->prepare("SELECT id, name FROM members WHERE household_id = ? ORDER BY id");
     $memList->execute([$hid]); $memList = $memList->fetchAll();
-
-    $byCat = [];
-    foreach ($expenses as $e) {
-        $k = (int)($e['category_id'] ?? 0);
-        if (!isset($byCat[$k])) $byCat[$k] = ['name' => $e['cat_name'] ?? 'Uncategorised', 'icon' => $e['cat_icon'] ?? 'tag', 'amt' => 0.0];
-        $byCat[$k]['amt'] += (float)$e['amount'];
-    }
-    uasort($byCat, fn($a, $b) => $b['amt'] <=> $a['amt']);
 
     ob_start();
     ?>
@@ -694,20 +713,20 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <?php endif; ?>
     </div>
 
-    <?php if (!$expenses): ?>
+    <?php if ($entryCount === 0): ?>
       <div class="empty">No expenses this month.</div>
     <?php else: ?>
       <div class="card total-card accent">
-        <div class="big"><?= h(fmt((float)$total)) ?></div>
-        <div class="sub"><?= count($expenses) ?> <?= count($expenses) === 1 ? 'entry' : 'entries' ?></div>
+        <div class="big"><?= h(fmt($total)) ?></div>
+        <div class="sub"><?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?></div>
       </div>
 
       <div class="stack">
-        <?php foreach ($byCat as $c): $pct = $total > 0 ? ($c['amt'] / $total) * 100 : 0; ?>
+        <?php foreach ($byCat as $c): $pct = $total > 0 ? ((float)$c['amt'] / $total) * 100 : 0; ?>
           <div class="card cat-bar">
             <div class="top">
-              <div class="name"><?= icon($c['icon'], 18) ?> <?= h($c['name']) ?></div>
-              <div><span class="amt"><?= h(fmt($c['amt'])) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+              <div class="name"><?= icon($c['cat_icon'], 18) ?> <?= h($c['cat_name']) ?></div>
+              <div><span class="amt"><?= h(fmt((float)$c['amt'])) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
             <div class="bar"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
           </div>
@@ -762,6 +781,23 @@ function renderHistory(PDO $db, array $user, int $offset): void {
           <?php endforeach; ?>
         </div>
       <?php endforeach; ?>
+
+      <?php
+      $shown = $rowOffset + count($expenses);
+      $hasMore = $shown < $entryCount;
+      $hasPrev = $rowOffset > 0;
+      ?>
+      <?php if ($hasMore || $hasPrev): ?>
+        <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
+          <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?>&amp;o=<?= $prev ?>">← Newer</a>
+          <?php else: ?><span></span><?php endif; ?>
+          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
+          <?php if ($hasMore): ?>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
+          <?php else: ?><span></span><?php endif; ?>
+        </div>
+      <?php endif; ?>
     <?php endif; ?>
 
     <!-- Edit-expense modal: one shared <dialog>; row click fills it via openEditExpense() -->
@@ -822,30 +858,40 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 // ─── Investments ────────────────────────────────────────────────────
 function renderInvest(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
-    $rows = $db->prepare("SELECT * FROM investments WHERE household_id = ? ORDER BY date DESC, id DESC");
+
+    // Aggregates via indexed SUM (no PHP-side accumulation over unbounded fetchAll).
+    $agg = $db->prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM investments WHERE household_id = ?");
+    $agg->execute([$hid]); $agg = $agg->fetch();
+    $entryCount = (int)$agg['n'];
+    $total      = (float)$agg['t'];
+
+    $typeSum = $db->prepare(
+        "SELECT type, SUM(amount) AS amt FROM investments WHERE household_id = ? GROUP BY type ORDER BY amt DESC"
+    );
+    $typeSum->execute([$hid]); $byType = $typeSum->fetchAll();
+
+    // Paginated list.
+    $pageSize  = 200;
+    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+    $rows = $db->prepare("SELECT * FROM investments WHERE household_id = ? ORDER BY date DESC, id DESC LIMIT $pageSize OFFSET $rowOffset");
     $rows->execute([$hid]); $invs = $rows->fetchAll();
-    $total = array_sum(array_map(fn($r) => (float)$r['amount'], $invs));
+
     $typeList = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? ORDER BY id");
     $typeList->execute([$hid]); $typeList = $typeList->fetchAll(PDO::FETCH_COLUMN);
 
     ob_start();
     ?>
-    <?php if ($invs): ?>
+    <?php if ($entryCount > 0): ?>
       <div class="card total-card sage">
         <div class="sub">Total invested</div>
-        <div class="big"><?= h(fmt((float)$total)) ?></div>
+        <div class="big"><?= h(fmt($total)) ?></div>
       </div>
 
-      <?php
-      $byType = [];
-      foreach ($invs as $x) { $byType[$x['type']] = ($byType[$x['type']] ?? 0.0) + (float)$x['amount']; }
-      arsort($byType);
-      ?>
       <div class="stack">
-        <?php foreach ($byType as $type => $amt): $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
+        <?php foreach ($byType as $t): $amt = (float)$t['amt']; $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
           <div class="card cat-bar">
             <div class="top">
-              <div class="name"><?= icon('trending-up', 18) ?> <?= h($type) ?></div>
+              <div class="name"><?= icon('trending-up', 18) ?> <?= h($t['type']) ?></div>
               <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
             <div class="bar sage"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
@@ -878,7 +924,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
       <a class="btn btn-secondary btn-block" href="/invest?new=1"><?= icon('plus', 16) ?> &nbsp;Add investment</a>
     <?php endif; ?>
 
-    <?php if (!$invs): ?>
+    <?php if ($entryCount === 0): ?>
       <div class="empty">Nothing logged yet.</div>
     <?php else: ?>
       <?php
@@ -927,6 +973,23 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
         <?php endforeach; ?>
       </div>
       <?php endforeach; ?>
+
+      <?php
+      $shown = $rowOffset + count($invs);
+      $hasMore = $shown < $entryCount;
+      $hasPrev = $rowOffset > 0;
+      ?>
+      <?php if ($hasMore || $hasPrev): ?>
+        <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
+          <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
+            <a class="btn btn-secondary" href="/invest?o=<?= $prev ?>">← Newer</a>
+          <?php else: ?><span></span><?php endif; ?>
+          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
+          <?php if ($hasMore): ?>
+            <a class="btn btn-secondary" href="/invest?o=<?= $rowOffset + $pageSize ?>">Older →</a>
+          <?php else: ?><span></span><?php endif; ?>
+        </div>
+      <?php endif; ?>
 
       <dialog id="edit-investment-dlg" class="confirm" style="max-width:360px;">
         <form method="post" action="/investments/update">

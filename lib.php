@@ -112,18 +112,25 @@ function makeDb(array $cfg): PDO {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
-    foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
-    // Additive migrations — safe to attempt; catch "duplicate column" on already-migrated DBs.
-    try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); } catch (PDOException) {}
-    // Backfill default investment types for households that predate the investment_types table.
-    $orphaned = $db->query(
-        "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
-    )->fetchAll(PDO::FETCH_COLUMN);
-    if ($orphaned) {
-        $ins = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
-        foreach ($orphaned as $hid) {
-            foreach (DEFAULT_INVESTMENT_TYPES as $t) $ins->execute([(int)$hid, $t]);
+    // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
+    // request. Delete the sentinel to force a re-run after schema changes.
+    $sentinel = __DIR__ . '/data/.schema-ok-v3';
+    if (!file_exists($sentinel)) {
+        foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
+        try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); }
+        catch (PDOException $e) { error_log('[migrate] add currency column: ' . $e->getMessage()); }
+        // Backfill default investment types for households that predate the investment_types table.
+        $orphaned = $db->query(
+            "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        if ($orphaned) {
+            $ins = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
+            foreach ($orphaned as $hid) {
+                foreach (DEFAULT_INVESTMENT_TYPES as $t) $ins->execute([(int)$hid, $t]);
+            }
         }
+        if (!is_dir(dirname($sentinel))) mkdir(dirname($sentinel), 0755, true);
+        @touch($sentinel);
     }
     return $db;
 }
@@ -178,25 +185,30 @@ function csrfCheck(): void {
 // for a household-scale app. ponytail: swap to Redis if scale hurts.
 // ────────────────────────────────────────────────────────────────────
 function rateLimit(PDO $db, array $cfg, string $key, int $limit, int $windowSeconds): void {
-    $bucket = clientIp($cfg) . ':' . $key;
-    $now = time();
+    $bucket   = clientIp($cfg) . ':' . $key;
+    $now      = time();
+    $windowEnd = $now + $windowSeconds;
+
+    // Atomic upsert: if the row's window has expired, reset it in one statement;
+    // otherwise increment hits. Beats SELECT + REPLACE which lets two concurrent
+    // requests at a window boundary both reset the counter.
+    $db->prepare(
+        "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
+         ON DUPLICATE KEY UPDATE
+            hits       = IF(window_end < VALUES(window_end), 1, hits + 1),
+            window_end = IF(window_end < VALUES(window_end), VALUES(window_end), window_end)"
+    )->execute([$bucket, $windowEnd]);
+
     $sel = $db->prepare("SELECT hits, window_end FROM rate_limits WHERE bucket = ?");
     $sel->execute([$bucket]);
     $row = $sel->fetch();
-
-    if (!$row || (int)$row['window_end'] < $now) {
-        $db->prepare("REPLACE INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)")
-           ->execute([$bucket, $now + $windowSeconds]);
-        return;
-    }
-    if ((int)$row['hits'] >= $limit) {
+    if ($row && (int)$row['hits'] > $limit) {
         $retry = max(1, (int)$row['window_end'] - $now);
         http_response_code(429);
         header("Retry-After: $retry");
         header("Content-Type: text/plain; charset=utf-8");
         exit("Rate limit exceeded. Retry in {$retry}s.");
     }
-    $db->prepare("UPDATE rate_limits SET hits = hits + 1 WHERE bucket = ?")->execute([$bucket]);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -248,6 +260,12 @@ function validInvestmentType(PDO $db, int $hid, string $type): string {
 // ────────────────────────────────────────────────────────────────────
 function sweepRecurring(PDO $db, int $hid): void {
     $today = today();
+    // Cheap guard: single indexed lookup. The common case (nothing due) exits here
+    // without opening the prepare/fetch/update path on every authed request.
+    $probe = $db->prepare("SELECT 1 FROM recurring WHERE household_id = ? AND next_date <= ? LIMIT 1");
+    $probe->execute([$hid, $today]);
+    if (!$probe->fetchColumn()) return;
+
     $rows = $db->prepare("SELECT * FROM recurring WHERE household_id = ? AND next_date <= ?");
     $rows->execute([$hid, $today]);
     $insExp = $db->prepare(
@@ -257,7 +275,9 @@ function sweepRecurring(PDO $db, int $hid): void {
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
         $nd = $r['next_date'];
-        while ($nd <= $today) {
+        // Cap iterations — a stale/bad next_date shouldn't insert years of catch-up rows
+        // synchronously in one request. 120 = 10 years of monthly / 30 years of quarterly.
+        for ($i = 0; $i < 120 && $nd <= $today; $i++) {
             $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd]);
             $nd = advanceDate($nd, $r['frequency']);
         }

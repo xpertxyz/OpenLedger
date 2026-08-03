@@ -24,9 +24,12 @@ if (PHP_SAPI === 'cli') {
         echo "ok\n"; exit;
     }
     if ($mode === '--cron') {
-        // Runs from Hostinger cron. Daily is sufficient — the sweep is idempotent.
+        // Runs from Hostinger cron. Only touches households that actually have a due
+        // recurring item — uses the (household_id, next_date) index.
         $db = makeDb($config);
-        $hids = $db->query("SELECT id FROM households")->fetchAll(PDO::FETCH_COLUMN);
+        $hids = $db->query(
+            "SELECT DISTINCT household_id FROM recurring WHERE next_date <= CURDATE()"
+        )->fetchAll(PDO::FETCH_COLUMN);
         foreach ($hids as $hid) sweepRecurring($db, (int)$hid);
         $db->exec("DELETE FROM rate_limits WHERE window_end < UNIX_TIMESTAMP() - 3600");
         echo "swept " . count($hids) . " households\n"; exit;
@@ -87,8 +90,10 @@ if (!$user) {
     if ($method === 'POST' && $path === '/signin') {
         rateLimit($db, $config, 'signin', $config['limits']['rate_signin_per_15min'], 900);
 
-        // Dev-mode stub: only reachable while google_client_id is the placeholder.
-        if (isDevStubActive(GOOGLE_CLIENT_ID) && !empty($_POST['dev'])) {
+        // Dev-mode stub: only reachable while google_client_id is the placeholder AND APP_DEBUG=1.
+        // The APP_DEBUG requirement means a prod deploy that forgets to set GOOGLE_CLIENT_ID
+        // can't accidentally leave dev sign-in live.
+        if (!empty($config['debug']) && isDevStubActive(GOOGLE_CLIENT_ID) && !empty($_POST['dev'])) {
             $devSub = 'dev-local-user';
             $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
             $stmt->execute([$devSub]);
