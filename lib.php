@@ -81,7 +81,16 @@ const SCHEMA_STATEMENTS = [
         window_end INT UNSIGNED NOT NULL,
         INDEX ix_window (window_end)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    "CREATE TABLE IF NOT EXISTS investment_types (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        name VARCHAR(40) NOT NULL,
+        INDEX ix_household (household_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
+
+const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
 
 const DEFAULT_CATEGORIES = [
     ['Groceries', 'shopping-cart'], ['Rent', 'home'], ['Utilities', 'zap'],
@@ -106,6 +115,16 @@ function makeDb(array $cfg): PDO {
     foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
     // Additive migrations — safe to attempt; catch "duplicate column" on already-migrated DBs.
     try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); } catch (PDOException) {}
+    // Backfill default investment types for households that predate the investment_types table.
+    $orphaned = $db->query(
+        "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
+    )->fetchAll(PDO::FETCH_COLUMN);
+    if ($orphaned) {
+        $ins = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
+        foreach ($orphaned as $hid) {
+            foreach (DEFAULT_INVESTMENT_TYPES as $t) $ins->execute([(int)$hid, $t]);
+        }
+    }
     return $db;
 }
 
@@ -215,6 +234,14 @@ function assertUnderLimit(PDO $db, string $sqlCount, array $params, int $max, st
     if ((int)$s->fetchColumn() >= $max) throw new UserErr("$label limit reached ($max).");
 }
 
+// Confirms the submitted investment type belongs to this household. Rejects free-text.
+function validInvestmentType(PDO $db, int $hid, string $type): string {
+    $s = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? AND name = ?");
+    $s->execute([$hid, $type]);
+    if ($row = $s->fetchColumn()) return (string)$row;
+    throw new UserErr('Unknown investment type — pick one from the list (edit types in the profile drawer).');
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Recurring sweep (runs from web on every authed request AND from cron).
 // Both call this — idempotent, only fires when next_date has passed.
@@ -253,6 +280,8 @@ function bootstrapHousehold(PDO $db, string $name, string $email, string $google
            ->execute([$hid, 'Me']);
         $ins = $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, ?, 0)");
         foreach (DEFAULT_CATEGORIES as [$n, $i]) $ins->execute([$hid, $n, $i]);
+        $insIt = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
+        foreach (DEFAULT_INVESTMENT_TYPES as $t) $insIt->execute([$hid, $t]);
         $db->commit();
         return $uid;
     } catch (Throwable $e) {

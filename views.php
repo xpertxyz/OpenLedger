@@ -202,6 +202,12 @@ $meta
   .cat-row form { display:flex; gap:6px; align-items:center; margin:0; flex:1; }
   .cat-row .input { flex:1; padding: 6px 12px; font-size: 13px; }
   .cat-icon-mini { width:26px; height:26px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
+  /* Collapsible <details> sections in the drawer */
+  .drawer-body details > summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; padding: 2px 0; }
+  .drawer-body details > summary::-webkit-details-marker { display:none; }
+  .drawer-body details > summary::after { content:''; width:8px; height:8px; border-right:2px solid var(--color-neutral-800); border-bottom:2px solid var(--color-neutral-800); transform: rotate(-45deg); transition: transform .18s; margin-right:4px; }
+  .drawer-body details[open] > summary::after { transform: rotate(45deg); }
+  .drawer-body details > .details-body { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
 
   /* Confirmation modal — one shared native <dialog> reused for every destructive action + sign-out. */
   dialog.confirm { border:none; border-radius:var(--radius-md); padding:0; max-width:320px; width:calc(100% - 32px); background:var(--color-surface); color:var(--color-text); box-shadow:var(--shadow-lg); }
@@ -303,6 +309,9 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
     $mems->execute([$hid]); $mems = $mems->fetchAll();
     $canDeleteMember = count($mems) > 1;
+    $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY id");
+    $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
+    $canDeleteType = count($iTypes) > 1;
 
     $currency = $_SESSION['currency'] ?? '₹';
     $initial  = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
@@ -333,68 +342,109 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <hr>
 
-        <section>
-          <h4>Categories</h4>
-          <?php foreach ($cats as $c): ?>
-            <div class="cat-row">
-              <form method="post" action="/categories/update">
-                <?= csrfInput() ?>
-                <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
-                <input type="hidden" name="back" value="<?= $back ?>">
-                <div class="cat-icon-mini"><?= icon($c['icon'], 14) ?></div>
-                <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
-                <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
-              </form>
-              <?php if ($c['is_custom']): ?>
-                <button type="button" class="icon-btn" aria-label="Delete category"
-                        onclick='askConfirm(<?= h(json_encode([
-                            "action" => "/categories/delete",
-                            "id"     => (int)$c['id'],
-                            "back"   => strtok($requestUri, '#') . '#profile',
-                            "csrf"   => csrfToken(),
-                            "title"  => "Delete category?",
-                            "body"   => "Existing expenses in this category stay logged but become uncategorised: " . $c['name'],
-                            "ok"     => "Delete",
-                        ])) ?>)'><?= icon('trash-2', 14) ?></button>
-              <?php endif; ?>
-            </div>
-          <?php endforeach; ?>
-          <form method="post" action="/categories" class="row-form" style="margin-top:6px;">
-            <?= csrfInput() ?>
-            <input type="hidden" name="back" value="<?= $back ?>">
-            <input class="input" name="name" placeholder="New category" maxlength="50">
-            <button class="btn btn-primary" type="submit">Add</button>
-          </form>
-        </section>
+        <details>
+          <summary><h4>Categories</h4></summary>
+          <div class="details-body">
+            <?php foreach ($cats as $c): ?>
+              <div class="cat-row">
+                <form method="post" action="/categories/update">
+                  <?= csrfInput() ?>
+                  <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+                  <input type="hidden" name="back" value="<?= $back ?>">
+                  <div class="cat-icon-mini"><?= icon($c['icon'], 14) ?></div>
+                  <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
+                  <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
+                </form>
+                <?php if ($c['is_custom']): ?>
+                  <button type="button" class="icon-btn" aria-label="Delete category"
+                          onclick='askConfirm(<?= h(json_encode([
+                              "action" => "/categories/delete",
+                              "id"     => (int)$c['id'],
+                              "back"   => strtok($requestUri, '#') . '#profile',
+                              "csrf"   => csrfToken(),
+                              "title"  => "Delete category?",
+                              "body"   => "Existing expenses in this category stay logged but become uncategorised: " . $c['name'],
+                              "ok"     => "Delete",
+                          ])) ?>)'><?= icon('trash-2', 14) ?></button>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+            <form method="post" action="/categories" class="row-form" style="margin-top:6px;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input class="input" name="name" placeholder="New category" maxlength="50">
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
+        </details>
 
         <hr>
 
-        <section>
-          <h4>Household members</h4>
-          <?php foreach ($mems as $m): ?>
-            <div class="cat-row" style="padding: 2px 0;">
-              <div style="flex:1; font-size:14px;"><?= h($m['name']) ?></div>
-              <?php if ($canDeleteMember): ?>
-                <button type="button" class="icon-btn" aria-label="Remove member"
-                        onclick='askConfirm(<?= h(json_encode([
-                            "action" => "/members/delete",
-                            "id"     => (int)$m['id'],
-                            "back"   => strtok($requestUri, '#') . '#profile',
-                            "csrf"   => csrfToken(),
-                            "title"  => "Remove member?",
-                            "body"   => "Existing entries for " . $m['name'] . " stay logged; new ones can no longer be attributed to them.",
-                            "ok"     => "Remove",
-                        ])) ?>)'>×</button>
-              <?php endif; ?>
-            </div>
-          <?php endforeach; ?>
-          <form method="post" action="/members" class="row-form" style="margin-top:6px;">
-            <?= csrfInput() ?>
-            <input type="hidden" name="back" value="<?= $back ?>">
-            <input class="input" name="name" placeholder="Add member" maxlength="60">
-            <button class="btn btn-primary" type="submit">Add</button>
-          </form>
-        </section>
+        <details>
+          <summary><h4>Investment types</h4></summary>
+          <div class="details-body">
+            <?php foreach ($iTypes as $t): ?>
+              <div class="cat-row">
+                <form method="post" action="/investment-types/update">
+                  <?= csrfInput() ?>
+                  <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+                  <input type="hidden" name="back" value="<?= $back ?>">
+                  <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="40">
+                  <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
+                </form>
+                <?php if ($canDeleteType): ?>
+                  <button type="button" class="icon-btn" aria-label="Delete type"
+                          onclick='askConfirm(<?= h(json_encode([
+                              "action" => "/investment-types/delete",
+                              "id"     => (int)$t['id'],
+                              "back"   => strtok($requestUri, '#') . '#profile',
+                              "csrf"   => csrfToken(),
+                              "title"  => "Delete investment type?",
+                              "body"   => "Existing investments of type '" . $t['name'] . "' stay logged.",
+                              "ok"     => "Delete",
+                          ])) ?>)'><?= icon('trash-2', 14) ?></button>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+            <form method="post" action="/investment-types" class="row-form" style="margin-top:6px;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input class="input" name="name" placeholder="e.g. Gold scheme" maxlength="40">
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
+        </details>
+
+        <hr>
+
+        <details>
+          <summary><h4>Household members</h4></summary>
+          <div class="details-body">
+            <?php foreach ($mems as $m): ?>
+              <div class="cat-row" style="padding: 2px 0;">
+                <div style="flex:1; font-size:14px;"><?= h($m['name']) ?></div>
+                <?php if ($canDeleteMember): ?>
+                  <button type="button" class="icon-btn" aria-label="Remove member"
+                          onclick='askConfirm(<?= h(json_encode([
+                              "action" => "/members/delete",
+                              "id"     => (int)$m['id'],
+                              "back"   => strtok($requestUri, '#') . '#profile',
+                              "csrf"   => csrfToken(),
+                              "title"  => "Remove member?",
+                              "body"   => "Existing entries for " . $m['name'] . " stay logged; new ones can no longer be attributed to them.",
+                              "ok"     => "Remove",
+                          ])) ?>)'>×</button>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+            <form method="post" action="/members" class="row-form" style="margin-top:6px;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input class="input" name="name" placeholder="Add member" maxlength="60">
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
+        </details>
 
         <div style="flex:1;"></div>
 
@@ -774,6 +824,8 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
     $rows = $db->prepare("SELECT * FROM investments WHERE household_id = ? ORDER BY date DESC, id DESC");
     $rows->execute([$hid]); $invs = $rows->fetchAll();
     $total = array_sum(array_map(fn($r) => (float)$r['amount'], $invs));
+    $typeList = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? ORDER BY id");
+    $typeList->execute([$hid]); $typeList = $typeList->fetchAll(PDO::FETCH_COLUMN);
 
     ob_start();
     ?>
@@ -793,7 +845,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
           <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
                  oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
           <select class="select" name="type">
-            <?php foreach (['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'] as $t): ?>
+            <?php foreach ($typeList as $t): ?>
               <option><?= h($t) ?></option>
             <?php endforeach; ?>
           </select>
@@ -867,7 +919,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
           <div class="field-row">
             <input class="input" name="amount" id="ei-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
             <select class="select" name="type" id="ei-type">
-              <?php foreach (['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'] as $t): ?>
+              <?php foreach ($typeList as $t): ?>
                 <option><?= h($t) ?></option>
               <?php endforeach; ?>
             </select>

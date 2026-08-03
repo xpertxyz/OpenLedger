@@ -204,8 +204,7 @@ if ($method === 'POST') {
             case '/investments':
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
-                $type = in_array($_POST['type'] ?? '', ['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'], true)
-                        ? $_POST['type'] : 'Other';
+                $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 assertUnderLimit(
                     $db,
@@ -231,8 +230,7 @@ if ($method === 'POST') {
                 $id   = (int)($_POST['id'] ?? 0);
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
-                $type = in_array($_POST['type'] ?? '', ['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'], true)
-                        ? $_POST['type'] : 'Other';
+                $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $db->prepare(
                     "UPDATE investments SET name = ?, amount = ?, type = ?, date = ?
@@ -309,6 +307,40 @@ if ($method === 'POST') {
                 $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Category removed');
+                redirect($_POST['back'] ?? '/');
+
+            case '/investment-types':
+                $name = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM investment_types WHERE household_id = ?",
+                    [$hid],
+                    30,
+                    'Investment types'
+                );
+                $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)")
+                   ->execute([$hid, $name]);
+                flash('success', 'Investment type added');
+                redirect($_POST['back'] ?? '/');
+
+            case '/investment-types/update':
+                $id   = (int)($_POST['id'] ?? 0);
+                $name = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
+                $db->prepare("UPDATE investment_types SET name = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$name, $id, $hid]);
+                flash('success', 'Investment type renamed');
+                redirect($_POST['back'] ?? '/');
+
+            case '/investment-types/delete':
+                $countStmt = $db->prepare("SELECT COUNT(*) FROM investment_types WHERE household_id = ?");
+                $countStmt->execute([$hid]);
+                if ((int)$countStmt->fetchColumn() > 1) {
+                    $db->prepare("DELETE FROM investment_types WHERE id = ? AND household_id = ?")
+                       ->execute([(int)$_POST['id'], $hid]);
+                    flash('success', 'Investment type removed');
+                } else {
+                    flash('error', 'Keep at least one investment type.');
+                }
                 redirect($_POST['back'] ?? '/');
 
             case '/members':
