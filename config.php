@@ -31,6 +31,10 @@ return [
     'session_name' => 'HLSID',
     'currency'     => '₹',
 
+    // Set APP_DEBUG=1 in .env to display PHP errors on-page. Off in production —
+    // if you leave it on, PDO exceptions can leak DB credentials in stack traces.
+    'debug' => (getenv('APP_DEBUG') ?: '0') === '1',
+
     // If Hostinger sits behind Cloudflare, flip this and Cloudflare's CF-Connecting-IP is trusted for rate-limit keys.
     // Leave false when serving direct — otherwise attackers can forge headers to bypass limits.
     'trust_cloudflare_ip' => false,

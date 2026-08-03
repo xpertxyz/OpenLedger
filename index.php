@@ -34,6 +34,14 @@ if (PHP_SAPI === 'cli') {
     fwrite(STDERR, "usage: php index.php --selfcheck | --cron\n"); exit(1);
 }
 
+// Debug output — surface fatals + warnings in the browser response.
+// Only for troubleshooting; production must stay off.
+if (!empty($config['debug'])) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+    ini_set('display_startup_errors', '1');
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Session hardening — before session_start(), so cookie flags land.
 // ────────────────────────────────────────────────────────────────────
@@ -123,6 +131,7 @@ if (!$user) {
 }
 
 $hid = (int)$user['household_id'];
+$_SESSION['currency'] = $user['currency'] ?? '₹';
 sweepRecurring($db, $hid);
 
 // ────────────────────────────────────────────────────────────────────
@@ -145,6 +154,13 @@ if ($method === 'POST') {
                 $db->prepare("UPDATE users SET is_dark = 1 - is_dark WHERE id = ?")->execute([$user['id']]);
                 redirect($_POST['back'] ?? '/');
 
+            case '/currency':
+                $sym = requireStr((string)($_POST['symbol'] ?? ''), 8, 'Currency');
+                $db->prepare("UPDATE users SET currency = ? WHERE id = ?")->execute([$sym, $user['id']]);
+                $_SESSION['currency'] = $sym;
+                flash('success', 'Currency updated');
+                redirect('/manage');
+
             case '/expenses':
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
@@ -162,11 +178,13 @@ if ($method === 'POST') {
                     "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date)
                      VALUES (?, ?, ?, ?, ?, ?)"
                 )->execute([$hid, $amt, $catId ?: null, $memId ?: null, $note, $date]);
-                redirect('/?toast=added');
+                flash('success', 'Expense added');
+                redirect('/');
 
             case '/expenses/delete':
                 $db->prepare("DELETE FROM expenses WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Expense deleted');
                 redirect($_POST['back'] ?? '/history');
 
             case '/investments':
@@ -186,11 +204,13 @@ if ($method === 'POST') {
                     "INSERT INTO investments (household_id, name, amount, type, date)
                      VALUES (?, ?, ?, ?, ?)"
                 )->execute([$hid, $name, $amt, $type, $date]);
+                flash('success', 'Investment saved');
                 redirect('/invest');
 
             case '/investments/delete':
                 $db->prepare("DELETE FROM investments WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Investment deleted');
                 redirect('/invest');
 
             case '/recurring':
@@ -211,11 +231,13 @@ if ($method === 'POST') {
                     "INSERT INTO recurring (household_id, name, amount, category_id, frequency, next_date)
                      VALUES (?, ?, ?, ?, ?, ?)"
                 )->execute([$hid, $name, $amt, $catId ?: null, $freq, $date]);
+                flash('success', 'Recurring item saved');
                 redirect('/recurring');
 
             case '/recurring/delete':
                 $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Recurring item deleted');
                 redirect('/recurring');
 
             case '/categories':
@@ -229,11 +251,13 @@ if ($method === 'POST') {
                 );
                 $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, 'tag', 1)")
                    ->execute([$hid, $name]);
+                flash('success', 'Category added');
                 redirect($_POST['back'] ?? '/manage');
 
             case '/categories/delete':
                 $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
                    ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Category removed');
                 redirect('/manage');
 
             case '/members':
@@ -247,6 +271,7 @@ if ($method === 'POST') {
                 );
                 $db->prepare("INSERT INTO members (household_id, name) VALUES (?, ?)")
                    ->execute([$hid, $name]);
+                flash('success', 'Member added');
                 redirect('/manage');
 
             case '/members/delete':
@@ -255,6 +280,9 @@ if ($method === 'POST') {
                 if ((int)$countStmt->fetchColumn() > 1) {
                     $db->prepare("DELETE FROM members WHERE id = ? AND household_id = ?")
                        ->execute([(int)$_POST['id'], $hid]);
+                    flash('success', 'Member removed');
+                } else {
+                    flash('error', 'Cannot remove the last member.');
                 }
                 redirect('/manage');
 
@@ -272,7 +300,7 @@ if ($method === 'POST') {
 // ────────────────────────────────────────────────────────────────────
 switch ($path) {
     case '/':
-    case '/add':       renderAdd($db, $user, $_GET['toast'] ?? null); break;
+    case '/add':       renderAdd($db, $user); break;
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
     case '/invest':    renderInvest($db, $user, isset($_GET['new'])); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;

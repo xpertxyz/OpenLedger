@@ -36,6 +36,7 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42Z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
   <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.1" y2="4.9"/></symbol>
   <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
 </svg>
 SVG;
 
@@ -45,11 +46,11 @@ function icon(string $name, int $size = 20): string {
 }
 
 function fmt(float $amount): string {
-    return CURRENCY . number_format($amount, 2);
+    return ($_SESSION['currency'] ?? '₹') . number_format($amount, 2);
 }
 
 // Shared page frame: header, content, bottom tabnav, toasts.
-function layout(array $user, string $tab, string $content, ?string $successToast = null, string $requestUri = '/'): void {
+function layout(array $user, string $tab, string $content, string $requestUri = '/'): void {
     $darkAttr  = $user['is_dark'] ? ' style="' . h(THEME_DARK_VARS) . '"' : '';
     $themeIcon = $user['is_dark'] ? 'sun' : 'moon';
     $initial   = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
@@ -58,6 +59,7 @@ function layout(array $user, string $tab, string $content, ?string $successToast
     $themeBtn  = icon($themeIcon, 18);
     $gearBtn   = icon('settings', 19);
     $csrf      = csrfInput();
+    $csrfTok   = csrfJs();
 
     echo <<<HTML
 <!doctype html>
@@ -77,27 +79,29 @@ function layout(array $user, string $tab, string $content, ?string $successToast
   .avatar { width:34px; height:34px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); border:none; cursor:pointer; font-family:var(--font-heading); font-size:13px; }
   .content { padding: 0 var(--space-4); display:flex; flex-direction:column; gap:var(--space-4); }
   .stack { display:flex; flex-direction:column; gap:var(--space-3); }
-  .muted { color:var(--color-neutral-700); font-size:13px; }
-  .empty { text-align:center; padding:var(--space-8) var(--space-4); color:var(--color-neutral-700); }
+  .muted { color:var(--color-neutral-800); font-size:13px; }
+  .empty { text-align:center; padding:var(--space-8) var(--space-4); color:var(--color-neutral-800); }
   .row { display:flex; align-items:center; gap:12px; padding:12px 14px; }
   .row-icon { width:36px; height:36px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
   .row-icon.sage { background:var(--color-accent-2-100); color:var(--color-accent-2-700); }
   .row-main { flex:1; min-width:0; }
   .row-main .title { font-size:14px; font-weight:600; }
-  .row-main .sub { font-size:12px; color:var(--color-neutral-700); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row-main .sub { font-size:12px; color:var(--color-neutral-800); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row-amt { font-size:15px; font-weight:600; }
   .icon-btn { background:none; border:none; color:var(--color-neutral-700); cursor:pointer; padding:6px; border-radius:999px; }
   .icon-btn:hover { background:var(--color-neutral-200); }
 
-  .amount-card { text-align:center; padding: var(--space-6) var(--space-4); }
-  .amount-q { font-size:13px; color:var(--color-neutral-700); margin-bottom:6px; }
-  .amount-row { display:flex; justify-content:center; align-items:baseline; gap:6px; }
-  .amount-sym { font-family:var(--font-heading); font-size:30px; color:var(--color-accent-700); }
-  .amount-input { border:none; background:transparent; font-family:var(--font-heading); font-size:46px; text-align:center; width:180px; outline:none; color:var(--color-text); padding:0; }
+  .amount-card { padding: var(--space-4) var(--space-4); }
+  .amount-q { font-size:13px; color:var(--color-neutral-800); margin-bottom:6px; text-align:center; }
+  .amount-row { display:flex; align-items:center; gap:10px; padding: 0 var(--space-2); }
+  .amount-sym { font-family:var(--font-heading); font-size:30px; color:var(--color-accent-700); line-height:1; }
+  .amount-input { border:none; background:transparent; font-family:var(--font-heading); font-size:38px; text-align:left; flex:1; min-width:0; outline:none; color:var(--color-text); padding:0; }
+  .amount-submit { width:52px; height:52px; border-radius:999px; border:none; background:var(--color-accent); color:var(--color-bg); display:grid; place-items:center; cursor:pointer; flex-shrink:0; box-shadow: var(--shadow-sm); }
+  .amount-submit:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; }
   .cat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
   .cat-chip { border:1.5px solid var(--color-divider); background:var(--color-surface); border-radius:var(--radius-md); padding:12px 4px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; font-size:11.5px; color:var(--color-text); text-decoration:none; }
   .cat-chip.on { border-color:var(--color-accent); background:var(--color-accent-100); color:var(--color-accent-700); }
-  .cat-chip.new { border-style:dashed; color:var(--color-neutral-700); }
+  .cat-chip.new { border-style:dashed; color:var(--color-neutral-800); }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; }
   .pill-btn { padding:6px 14px; border-radius:999px; border:1.5px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
   .pill-btn.on { background:var(--color-accent); color:var(--color-bg); border-color:transparent; }
@@ -115,13 +119,14 @@ function layout(array $user, string $tab, string $content, ?string $successToast
   .cat-bar .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .cat-bar .name { display:flex; align-items:center; gap:8px; font-size:14px; }
   .cat-bar .amt { font-size:13px; }
-  .cat-bar .pct { font-size:11px; color:var(--color-neutral-700); margin-left:6px; }
+  .cat-bar .pct { font-size:11px; color:var(--color-neutral-800); margin-left:6px; }
   .bar { height:8px; background:var(--color-divider); border-radius:999px; margin-top:8px; overflow:hidden; }
   .bar > i { display:block; height:100%; background:var(--color-accent); border-radius:999px; }
-  .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-700); margin: var(--space-3) 2px var(--space-2); }
+  .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-800); margin: var(--space-3) 2px var(--space-2); }
 
-  .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); background:var(--color-text); color:var(--color-bg); padding:10px 18px; border-radius:999px; font-size:13px; z-index:100; animation: toast-life 1.8s forwards; max-width: calc(100% - 32px); text-align:center; }
-  .toast.error { background:var(--color-accent-700); color:var(--color-bg); animation: toast-life-long 3.6s forwards; }
+  .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:100; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
+  .toast.success { background:var(--color-accent-2-700); color:var(--color-bg); }
+  .toast.error   { background:var(--color-accent-700); color:var(--color-bg); animation: toast-life-long 3.6s forwards; }
   @keyframes toast-life {
     0%{opacity:0;transform:translate(-50%,8px);} 10%{opacity:1;transform:translate(-50%,0);}
     80%{opacity:1;} 100%{opacity:0;}
@@ -139,6 +144,15 @@ function layout(array $user, string $tab, string $content, ?string $successToast
   .select { padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-family:var(--font-body); font-size:14px; }
   .field-row { display:flex; gap:8px; }
   .field-row > * { flex:1; min-width:0; }
+
+  /* Confirmation modal — one shared native <dialog> reused for every destructive action + sign-out. */
+  dialog.confirm { border:none; border-radius:var(--radius-md); padding:0; max-width:320px; width:calc(100% - 32px); background:var(--color-surface); color:var(--color-text); box-shadow:var(--shadow-lg); }
+  dialog.confirm::backdrop { background: color-mix(in srgb, #000 55%, transparent); }
+  dialog.confirm form { padding: var(--space-4); display:flex; flex-direction:column; gap:12px; margin:0; }
+  dialog.confirm .dlg-title { font-family:var(--font-heading); font-size:18px; }
+  dialog.confirm .dlg-body  { font-size:14px; color:var(--color-neutral-800); }
+  dialog.confirm .dlg-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+  .btn-danger { background:#c0392b; color:#fff; border:none; }
 </style>
 </head>
 <body{$darkAttr}>
@@ -149,17 +163,17 @@ $sprite
     <div class="hdr-actions">
       <form method="post" action="/theme">$csrf<input type="hidden" name="back" value="{$backUri}"><button class="btn btn-icon" type="submit" aria-label="Toggle theme" style="color:var(--color-text);">$themeBtn</button></form>
       <a href="/manage" class="btn btn-icon" aria-label="Manage" style="color:var(--color-text);">$gearBtn</a>
-      <form method="post" action="/signout">$csrf<button class="avatar" type="submit" aria-label="Sign out">$initial</button></form>
+      <button class="avatar" type="button" aria-label="Sign out"
+              onclick="askConfirm({action:'/signout', csrf:'{$csrfTok}', title:'Sign out?', body:'You will need to sign in again.', ok:'Sign out'})">$initial</button>
     </div>
   </div>
   <div class="content">$content</div>
 </div>
 HTML;
 
-    if ($successToast === 'added') echo "<div class='toast'>Expense added</div>";
     if ($flash = consumeFlash()) {
-        $cls = $flash['type'] === 'error' ? ' error' : '';
-        echo "<div class='toast$cls'>" . h($flash['msg']) . "</div>";
+        $cls = $flash['type'] === 'error' ? 'error' : 'success';
+        echo "<div class='toast $cls'>" . h($flash['msg']) . "</div>";
     }
 
     $tabs = [
@@ -173,7 +187,39 @@ HTML;
         $on = $tab === $key ? ' class="on"' : '';
         echo "<a href=\"" . h($href) . "\"$on>" . icon($ic, 18) . h($label) . "</a>";
     }
-    echo '</nav></body></html>';
+    echo '</nav>';
+
+    // Shared confirmation dialog + trigger helper. Every destructive form / signout uses this.
+    echo <<<DLG
+<dialog id="confirm-dlg" class="confirm" aria-labelledby="dlg-title">
+  <form method="post" id="confirm-form">
+    <input type="hidden" name="_csrf" id="confirm-csrf">
+    <input type="hidden" name="id" id="confirm-id">
+    <input type="hidden" name="back" id="confirm-back">
+    <div class="dlg-title" id="dlg-title"></div>
+    <div class="dlg-body" id="dlg-body"></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('confirm-dlg').close()">Cancel</button>
+      <button type="submit" class="btn btn-danger" id="confirm-ok">Delete</button>
+    </div>
+  </form>
+</dialog>
+<script>
+function askConfirm(opts) {
+  var f = document.getElementById('confirm-form');
+  f.action = opts.action;
+  document.getElementById('confirm-id').value = opts.id || '';
+  document.getElementById('confirm-back').value = opts.back || '';
+  document.getElementById('confirm-csrf').value = opts.csrf || '';
+  document.getElementById('dlg-title').textContent = opts.title || 'Are you sure?';
+  document.getElementById('dlg-body').textContent  = opts.body  || '';
+  document.getElementById('confirm-ok').textContent = opts.ok || 'Delete';
+  document.getElementById('confirm-ok').className = 'btn ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
+  document.getElementById('confirm-dlg').showModal();
+}
+</script>
+</body></html>
+DLG;
 }
 
 // ─── Sign-in ────────────────────────────────────────────────────────
@@ -192,7 +238,7 @@ function renderSignIn(): void {
     }
     $devBlock = $devStub ? <<<DEV
     <div style="border-top:1px solid var(--color-divider);padding-top:12px;width:100%;">
-      <div style="font-size:12px;color:var(--color-neutral-700);margin-bottom:8px;">Google client id not configured — dev mode</div>
+      <div style="font-size:12px;color:var(--color-neutral-800);margin-bottom:8px;">Google client id not configured — dev mode</div>
       <form method="post" action="/signin">
         $csrf
         <input type="hidden" name="dev" value="1">
@@ -218,8 +264,8 @@ DEV
 $sprite
 <div style="width:100%;max-width:340px;padding:var(--space-4);">
   <div class="card elev-lg" style="padding:var(--space-6);align-items:center;text-align:center;gap:var(--space-4);">
-    <div style="font-family:var(--font-heading);font-size:24px;">Home Ledger</div>
-    <div style="font-size:14px;color:var(--color-neutral-700);">Track household expenses and investments together.</div>
+    <img src="/assets/logo/home-ledger-logo-wordmark.svg" alt="Home Ledger" style="max-width:220px;width:100%;height:auto;">
+    <div style="font-size:14px;color:var(--color-neutral-800);">Track household expenses and investments together.</div>
 
     <div id="g_id_onload"
          data-client_id="$clientId"
@@ -244,7 +290,7 @@ HTML;
 }
 
 // ─── Add ────────────────────────────────────────────────────────────
-function renderAdd(PDO $db, array $user, ?string $toast): void {
+function renderAdd(PDO $db, array $user): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = $cats->fetchAll();
@@ -255,6 +301,17 @@ function renderAdd(PDO $db, array $user, ?string $toast): void {
     $selectedMem = (int)($_GET['mem'] ?? ($mems[0]['id'] ?? 0));
     $showNewCat  = isset($_GET['newcat']);
 
+    // Selected category sorts first, rest keep their original order.
+    if ($selectedCat) {
+        usort($cats, function ($a, $b) use ($selectedCat) {
+            $aSel = $a['id'] == $selectedCat ? 0 : 1;
+            $bSel = $b['id'] == $selectedCat ? 0 : 1;
+            return $aSel <=> $bSel;
+        });
+    }
+
+    $currency = $_SESSION['currency'] ?? '₹';
+
     ob_start();
     ?>
     <form method="post" action="/expenses" class="stack">
@@ -262,10 +319,16 @@ function renderAdd(PDO $db, array $user, ?string $toast): void {
       <div class="card elev-sm amount-card">
         <div class="amount-q">How much did you spend?</div>
         <div class="amount-row">
-          <span class="amount-sym"><?= h(CURRENCY) ?></span>
+          <span class="amount-sym"><?= h($currency) ?></span>
           <input class="amount-input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="0" autofocus
                  oninput="document.getElementById('add-btn').disabled = !(parseFloat(this.value) > 0)">
+          <button class="amount-submit" id="add-btn" type="submit" aria-label="Add expense" disabled><?= icon('plus', 22) ?></button>
         </div>
+      </div>
+
+      <div class="note-row">
+        <input class="input" name="note" placeholder="Add a note (optional)" maxlength="200">
+        <input class="input" name="date" type="date" value="<?= h(today()) ?>" style="flex:0 0 auto; width:auto;">
       </div>
 
       <input type="hidden" name="category_id" id="cat-input" value="<?= (int)$selectedCat ?>">
@@ -300,13 +363,6 @@ function renderAdd(PDO $db, array $user, ?string $toast): void {
       <?php elseif ($mems): ?>
         <input type="hidden" name="member_id" value="<?= (int)$mems[0]['id'] ?>">
       <?php endif; ?>
-
-      <div class="note-row">
-        <input class="input" name="note" placeholder="Add a note (optional)" maxlength="200">
-        <input class="input" name="date" type="date" value="<?= h(today()) ?>" style="flex:0 0 auto; width:auto;">
-      </div>
-
-      <button class="btn btn-primary btn-block" id="add-btn" type="submit" disabled>Add Expense</button>
     </form>
 
     <?php if ($showNewCat): ?>
@@ -326,7 +382,7 @@ function renderAdd(PDO $db, array $user, ?string $toast): void {
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'add', $content, $toast, '/');
+    layout($user, 'add', $content, '/');
 }
 
 // ─── History ────────────────────────────────────────────────────────
@@ -334,19 +390,22 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $hid = (int)$user['household_id'];
     if ($offset < 0)   $offset = 0;
     if ($offset > 600) $offset = 600; // sanity cap ~50 years
-    $anchor = (new DateTimeImmutable('first day of this month'))->modify("-{$offset} months");
-    $ym = $anchor->format('Y-m');
-    $label = $anchor->format('F Y');
+    $anchor     = (new DateTimeImmutable('first day of this month 00:00:00'))->modify("-{$offset} months");
+    $monthStart = $anchor->format('Y-m-d');
+    $monthEnd   = $anchor->modify('+1 month')->format('Y-m-d');
+    $label      = $anchor->format('F Y');
 
+    // Range predicate hits the (household_id, date) index; portable across MySQL/MariaDB
+    // configs where DATE_FORMAT or an unquoted `date` identifier could misbehave.
     $rows = $db->prepare(
         "SELECT e.*, c.name AS cat_name, c.icon AS cat_icon, m.name AS mem_name
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id
          LEFT JOIN members m ON m.id = e.member_id
-         WHERE e.household_id = ? AND DATE_FORMAT(e.date, '%Y-%m') = ?
-         ORDER BY e.date DESC, e.id DESC"
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         ORDER BY e.`date` DESC, e.id DESC"
     );
-    $rows->execute([$hid, $ym]);
+    $rows->execute([$hid, $monthStart, $monthEnd]);
     $expenses = $rows->fetchAll();
     $total = array_sum(array_map(fn($r) => (float)$r['amount'], $expenses));
 
@@ -406,12 +465,10 @@ function renderHistory(PDO $db, array $user, int $offset): void {
                 <div class="sub"><?= h(trim(($e['note'] ?? '') . ($e['note'] && $e['mem_name'] ? ' · ' : '') . ($e['mem_name'] ?? ''))) ?></div>
               </div>
               <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
-              <form method="post" action="/expenses/delete" style="margin:0;">
-                <?= csrfInput() ?>
-                <input type="hidden" name="id" value="<?= (int)$e['id'] ?>">
-                <input type="hidden" name="back" value="/history?m=<?= $offset ?>">
-                <button class="icon-btn" type="submit" aria-label="Delete"><?= icon('trash-2', 16) ?></button>
-              </form>
+              <button class="icon-btn" type="button" aria-label="Delete"
+                      onclick="askConfirm({action:'/expenses/delete', id:<?= (int)$e['id'] ?>, back:'/history?m=<?= $offset ?>', csrf:'<?= csrfJs() ?>', title:'Delete expense?', body:<?= json_encode(fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised')) ?>, ok:'Delete'})">
+                <?= icon('trash-2', 16) ?>
+              </button>
             </div>
           <?php endforeach; ?>
         </div>
@@ -419,7 +476,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'history', $content, null, "/history?m=$offset");
+    layout($user, 'history', $content, "/history?m=$offset");
 }
 
 // ─── Investments ────────────────────────────────────────────────────
@@ -474,18 +531,17 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
               <div class="sub"><?= h($i['type']) ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
-            <form method="post" action="/investments/delete" style="margin:0;">
-              <?= csrfInput() ?>
-              <input type="hidden" name="id" value="<?= (int)$i['id'] ?>">
-              <button class="icon-btn" type="submit" aria-label="Delete"><?= icon('trash-2', 16) ?></button>
-            </form>
+            <button class="icon-btn" type="button" aria-label="Delete"
+                    onclick="askConfirm({action:'/investments/delete', id:<?= (int)$i['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete investment?', body:<?= json_encode($i['name'] . ' — ' . fmt((float)$i['amount'])) ?>, ok:'Delete'})">
+              <?= icon('trash-2', 16) ?>
+            </button>
           </div>
         <?php endforeach; ?>
       </div>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'invest', $content, null, '/invest');
+    layout($user, 'invest', $content, '/invest');
 }
 
 // ─── Recurring ──────────────────────────────────────────────────────
@@ -547,18 +603,17 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               <div class="sub"><?= h(($r['cat_name'] ?? 'Uncategorised') . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
-            <form method="post" action="/recurring/delete" style="margin:0;">
-              <?= csrfInput() ?>
-              <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-              <button class="icon-btn" type="submit" aria-label="Delete"><?= icon('trash-2', 16) ?></button>
-            </form>
+            <button class="icon-btn" type="button" aria-label="Delete"
+                    onclick="askConfirm({action:'/recurring/delete', id:<?= (int)$r['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete recurring item?', body:<?= json_encode($r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency']) ?>, ok:'Delete'})">
+              <?= icon('trash-2', 16) ?>
+            </button>
           </div>
         <?php endforeach; ?>
       </div>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'recurring', $content, null, '/recurring');
+    layout($user, 'recurring', $content, '/recurring');
 }
 
 // ─── Manage (categories + members) ──────────────────────────────────
@@ -569,9 +624,20 @@ function renderManage(PDO $db, array $user): void {
     $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
     $mems->execute([$hid]); $mems = $mems->fetchAll();
     $canDeleteMember = count($mems) > 1;
+    $currency = $_SESSION['currency'] ?? '₹';
 
     ob_start();
     ?>
+    <div class="card" style="padding:var(--space-4); gap:var(--space-3);">
+      <h3 style="margin:0; font-size:16px;">Currency</h3>
+      <form method="post" action="/currency" class="note-row">
+        <?= csrfInput() ?>
+        <input class="input" name="symbol" value="<?= h($currency) ?>" maxlength="8" style="max-width:80px; text-align:center; font-family:var(--font-heading); font-size:20px;">
+        <button class="btn btn-primary" type="submit">Save</button>
+      </form>
+      <div class="muted" style="font-size:12px;">Any symbol (₹, $, €, £, Rs., etc.) — displays in front of every amount.</div>
+    </div>
+
     <div class="card" style="padding:var(--space-4); gap:var(--space-3);">
       <h3 style="margin:0; font-size:16px;">Categories</h3>
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
@@ -579,11 +645,9 @@ function renderManage(PDO $db, array $user): void {
           <span class="tag tag-neutral" style="display:inline-flex; align-items:center; gap:6px;">
             <?= icon($c['icon'], 14) ?> <?= h($c['name']) ?>
             <?php if ($c['is_custom']): ?>
-              <form method="post" action="/categories/delete" style="margin:0;display:inline;">
-                <?= csrfInput() ?>
-                <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
-                <button type="submit" style="background:none;border:none;color:inherit;cursor:pointer;padding:0 0 0 2px;font-size:14px;line-height:1;" aria-label="Delete category">×</button>
-              </form>
+              <button type="button" aria-label="Delete category"
+                      style="background:none;border:none;color:inherit;cursor:pointer;padding:0 0 0 2px;font-size:14px;line-height:1;"
+                      onclick="askConfirm({action:'/categories/delete', id:<?= (int)$c['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete category?', body:<?= json_encode('Existing expenses in this category stay logged but become uncategorised: ' . $c['name']) ?>, ok:'Delete'})">×</button>
             <?php endif; ?>
           </span>
         <?php endforeach; ?>
@@ -602,11 +666,8 @@ function renderManage(PDO $db, array $user): void {
           <div class="row" style="padding: 6px 0;">
             <div class="row-main"><?= h($m['name']) ?></div>
             <?php if ($canDeleteMember): ?>
-              <form method="post" action="/members/delete" style="margin:0;">
-                <?= csrfInput() ?>
-                <input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
-                <button class="icon-btn" type="submit" aria-label="Remove member">×</button>
-              </form>
+              <button class="icon-btn" type="button" aria-label="Remove member"
+                      onclick="askConfirm({action:'/members/delete', id:<?= (int)$m['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Remove member?', body:<?= json_encode('Existing entries for ' . $m['name'] . ' stay logged; new ones can no longer be attributed to them.') ?>, ok:'Remove'})">×</button>
             <?php endif; ?>
           </div>
         <?php endforeach; ?>
@@ -621,5 +682,5 @@ function renderManage(PDO $db, array $user): void {
     <a class="btn btn-block" href="/" style="text-align:center;">Done</a>
     <?php
     $content = ob_get_clean();
-    layout($user, '', $content, null, '/manage');
+    layout($user, '', $content, '/manage');
 }

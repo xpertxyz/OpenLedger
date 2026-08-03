@@ -20,6 +20,7 @@ const SCHEMA_STATEMENTS = [
         email VARCHAR(190) NOT NULL,
         name VARCHAR(80) NOT NULL,
         is_dark TINYINT(1) NOT NULL DEFAULT 0,
+        currency VARCHAR(8) NOT NULL DEFAULT '₹',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uk_google_sub (google_sub),
         INDEX ix_household (household_id)
@@ -103,6 +104,8 @@ function makeDb(array $cfg): PDO {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
     foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
+    // Additive migrations — safe to attempt; catch "duplicate column" on already-migrated DBs.
+    try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); } catch (PDOException) {}
     return $db;
 }
 
@@ -142,6 +145,8 @@ function csrfToken(): string {
 function csrfInput(): string {
     return '<input type="hidden" name="_csrf" value="' . h(csrfToken()) . '">';
 }
+// Raw token for JS attribute contexts (e.g. onclick="askConfirm({csrf:'...'})").
+function csrfJs(): string { return h(csrfToken()); }
 function csrfCheck(): void {
     if (!hash_equals($_SESSION['csrf'] ?? '', (string)($_POST['_csrf'] ?? ''))) {
         http_response_code(400); exit('Bad CSRF token — refresh and retry.');
