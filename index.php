@@ -187,6 +187,20 @@ if ($method === 'POST') {
                 flash('success', 'Expense deleted');
                 redirect($_POST['back'] ?? '/history');
 
+            case '/expenses/update':
+                $id    = (int)($_POST['id'] ?? 0);
+                $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $date  = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $note  = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
+                $catId = (int)($_POST['category_id'] ?? 0);
+                $memId = (int)($_POST['member_id'] ?? 0);
+                $db->prepare(
+                    "UPDATE expenses SET amount = ?, category_id = ?, member_id = ?, note = ?, date = ?
+                     WHERE id = ? AND household_id = ?"
+                )->execute([$amt, $catId ?: null, $memId ?: null, $note, $date, $id, $hid]);
+                flash('success', 'Expense updated');
+                redirect($_POST['back'] ?? '/history');
+
             case '/investments':
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
@@ -211,6 +225,20 @@ if ($method === 'POST') {
                 $db->prepare("DELETE FROM investments WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Investment deleted');
+                redirect('/invest');
+
+            case '/investments/update':
+                $id   = (int)($_POST['id'] ?? 0);
+                $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $type = in_array($_POST['type'] ?? '', ['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'], true)
+                        ? $_POST['type'] : 'Other';
+                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $db->prepare(
+                    "UPDATE investments SET name = ?, amount = ?, type = ?, date = ?
+                     WHERE id = ? AND household_id = ?"
+                )->execute([$name, $amt, $type, $date, $id, $hid]);
+                flash('success', 'Investment updated');
                 redirect('/invest');
 
             case '/recurring':
@@ -238,6 +266,21 @@ if ($method === 'POST') {
                 $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Recurring item deleted');
+                redirect('/recurring');
+
+            case '/recurring/update':
+                $id    = (int)($_POST['id'] ?? 0);
+                $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $freq  = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
+                         ? $_POST['frequency'] : 'monthly';
+                $date  = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
+                $catId = (int)($_POST['category_id'] ?? 0);
+                $db->prepare(
+                    "UPDATE recurring SET name = ?, amount = ?, category_id = ?, frequency = ?, next_date = ?
+                     WHERE id = ? AND household_id = ?"
+                )->execute([$name, $amt, $catId ?: null, $freq, $date, $id, $hid]);
+                flash('success', 'Recurring item updated');
                 redirect('/recurring');
 
             case '/categories':

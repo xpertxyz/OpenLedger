@@ -37,6 +37,7 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.1" y2="4.9"/></symbol>
   <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
   <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
+  <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
 </svg>
 SVG;
 
@@ -81,14 +82,15 @@ function layout(array $user, string $tab, string $content, string $requestUri = 
   .stack { display:flex; flex-direction:column; gap:var(--space-3); }
   .muted { color:var(--color-neutral-800); font-size:13px; }
   .empty { text-align:center; padding:var(--space-8) var(--space-4); color:var(--color-neutral-800); }
-  .row { display:flex; align-items:center; gap:12px; padding:12px 14px; }
-  .row-icon { width:36px; height:36px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
+  /* .card from the design system defaults to flex-direction:column; force row + compact padding for list rows. */
+  .row.card { flex-direction:row !important; align-items:center; gap:10px; padding:8px 12px; }
+  .row-icon { width:30px; height:30px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
   .row-icon.sage { background:var(--color-accent-2-100); color:var(--color-accent-2-700); }
   .row-main { flex:1; min-width:0; }
-  .row-main .title { font-size:14px; font-weight:600; }
-  .row-main .sub { font-size:12px; color:var(--color-neutral-800); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .row-amt { font-size:15px; font-weight:600; }
-  .icon-btn { background:none; border:none; color:var(--color-neutral-700); cursor:pointer; padding:6px; border-radius:999px; }
+  .row-main .title { font-size:13px; font-weight:600; line-height:1.2; }
+  .row-main .sub { font-size:11.5px; color:var(--color-neutral-800); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
+  .row-amt { font-size:14px; font-weight:600; margin-inline: 4px 2px; }
+  .icon-btn { background:none; border:none; color:var(--color-neutral-700); cursor:pointer; padding:6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; }
   .icon-btn:hover { background:var(--color-neutral-200); }
 
   .amount-card { padding: var(--space-4) var(--space-4); }
@@ -297,7 +299,11 @@ function renderAdd(PDO $db, array $user): void {
     $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
     $mems->execute([$hid]); $mems = $mems->fetchAll();
 
-    $selectedCat = (int)($_GET['cat'] ?? ($cats[0]['id'] ?? 0));
+    // Sticky category: default to the last one this household used; falls back to first if none.
+    $lastCat = $db->prepare("SELECT category_id FROM expenses WHERE household_id = ? ORDER BY id DESC LIMIT 1");
+    $lastCat->execute([$hid]);
+    $defaultCat = (int)($lastCat->fetchColumn() ?: ($cats[0]['id'] ?? 0));
+    $selectedCat = (int)($_GET['cat'] ?? $defaultCat);
     $selectedMem = (int)($_GET['mem'] ?? ($mems[0]['id'] ?? 0));
     $showNewCat  = isset($_GET['newcat']);
 
@@ -409,6 +415,12 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $expenses = $rows->fetchAll();
     $total = array_sum(array_map(fn($r) => (float)$r['amount'], $expenses));
 
+    // For the edit-expense modal.
+    $catList = $db->prepare("SELECT id, name FROM categories WHERE household_id = ? ORDER BY is_custom, id");
+    $catList->execute([$hid]); $catList = $catList->fetchAll();
+    $memList = $db->prepare("SELECT id, name FROM members WHERE household_id = ? ORDER BY id");
+    $memList->execute([$hid]); $memList = $memList->fetchAll();
+
     $byCat = [];
     foreach ($expenses as $e) {
         $k = (int)($e['category_id'] ?? 0);
@@ -458,22 +470,93 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         <div class="day-hdr"><?= h($dayLabel) ?></div>
         <div class="stack">
           <?php foreach ($entries as $e): ?>
+            <?php $rowJson = json_encode([
+                'id'          => (int)$e['id'],
+                'amount'      => (string)$e['amount'],
+                'date'        => $e['date'],
+                'category_id' => (int)($e['category_id'] ?? 0),
+                'member_id'   => (int)($e['member_id'] ?? 0),
+                'note'        => (string)($e['note'] ?? ''),
+            ]); ?>
             <div class="card elev-sm row">
-              <div class="row-icon"><?= icon($e['cat_icon'] ?? 'tag', 18) ?></div>
+              <div class="row-icon"><?= icon($e['cat_icon'] ?? 'tag', 16) ?></div>
               <div class="row-main">
                 <div class="title"><?= h($e['cat_name'] ?? 'Uncategorised') ?></div>
                 <div class="sub"><?= h(trim(($e['note'] ?? '') . ($e['note'] && $e['mem_name'] ? ' · ' : '') . ($e['mem_name'] ?? ''))) ?></div>
               </div>
               <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
+              <button class="icon-btn" type="button" aria-label="Edit"
+                      onclick='openEditExpense(<?= h($rowJson) ?>)'>
+                <?= icon('edit', 15) ?>
+              </button>
               <button class="icon-btn" type="button" aria-label="Delete"
-                      onclick="askConfirm({action:'/expenses/delete', id:<?= (int)$e['id'] ?>, back:'/history?m=<?= $offset ?>', csrf:'<?= csrfJs() ?>', title:'Delete expense?', body:<?= json_encode(fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised')) ?>, ok:'Delete'})">
-                <?= icon('trash-2', 16) ?>
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/expenses/delete",
+                          "id"     => (int)$e['id'],
+                          "back"   => "/history?m=$offset",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Delete expense?",
+                          "body"   => fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised'),
+                          "ok"     => "Delete",
+                      ])) ?>)'>
+                <?= icon('trash-2', 15) ?>
               </button>
             </div>
           <?php endforeach; ?>
         </div>
       <?php endforeach; ?>
     <?php endif; ?>
+
+    <!-- Edit-expense modal: one shared <dialog>; row click fills it via openEditExpense() -->
+    <dialog id="edit-expense-dlg" class="confirm" style="max-width:360px;">
+      <form method="post" action="/expenses/update">
+        <?= csrfInput() ?>
+        <input type="hidden" name="id" id="ed-id">
+        <input type="hidden" name="back" value="/history?m=<?= $offset ?>">
+        <div class="dlg-title">Edit expense</div>
+
+        <div class="field-row">
+          <input class="input" name="amount" id="ed-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+          <input class="input" name="date" id="ed-date" type="date" required style="flex:0 0 auto; width:auto;">
+        </div>
+
+        <select class="select" name="category_id" id="ed-category" required>
+          <?php foreach ($catList as $c): ?>
+            <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+
+        <?php if (count($memList) > 1): ?>
+          <select class="select" name="member_id" id="ed-member">
+            <option value="">— No member —</option>
+            <?php foreach ($memList as $m): ?>
+              <option value="<?= (int)$m['id'] ?>"><?= h($m['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        <?php elseif ($memList): ?>
+          <input type="hidden" name="member_id" id="ed-member" value="<?= (int)$memList[0]['id'] ?>">
+        <?php endif; ?>
+
+        <input class="input" name="note" id="ed-note" placeholder="Note (optional)" maxlength="200">
+
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-expense-dlg').close()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+    function openEditExpense(d) {
+      document.getElementById('ed-id').value       = d.id;
+      document.getElementById('ed-amount').value   = d.amount;
+      document.getElementById('ed-date').value     = d.date;
+      document.getElementById('ed-category').value = d.category_id;
+      var mem = document.getElementById('ed-member');
+      if (mem) mem.value = d.member_id || '';
+      document.getElementById('ed-note').value     = d.note || '';
+      document.getElementById('edit-expense-dlg').showModal();
+    }
+    </script>
     <?php
     $content = ob_get_clean();
     layout($user, 'history', $content, "/history?m=$offset");
@@ -524,20 +607,70 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
     <?php else: ?>
       <div class="stack">
         <?php foreach ($invs as $i): ?>
+          <?php $invJson = json_encode([
+              'id'     => (int)$i['id'],
+              'name'   => $i['name'],
+              'amount' => (string)$i['amount'],
+              'type'   => $i['type'],
+              'date'   => $i['date'],
+          ]); ?>
           <div class="card elev-sm row">
-            <div class="row-icon sage"><?= icon('trending-up', 18) ?></div>
+            <div class="row-icon sage"><?= icon('trending-up', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($i['name']) ?></div>
               <div class="sub"><?= h($i['type']) ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
+            <button class="icon-btn" type="button" aria-label="Edit"
+                    onclick='openEditInvestment(<?= h($invJson) ?>)'>
+              <?= icon('edit', 15) ?>
+            </button>
             <button class="icon-btn" type="button" aria-label="Delete"
-                    onclick="askConfirm({action:'/investments/delete', id:<?= (int)$i['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete investment?', body:<?= json_encode($i['name'] . ' — ' . fmt((float)$i['amount'])) ?>, ok:'Delete'})">
-              <?= icon('trash-2', 16) ?>
+                    onclick='askConfirm(<?= h(json_encode([
+                        "action" => "/investments/delete",
+                        "id"     => (int)$i['id'],
+                        "csrf"   => csrfToken(),
+                        "title"  => "Delete investment?",
+                        "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
+                        "ok"     => "Delete",
+                    ])) ?>)'>
+              <?= icon('trash-2', 15) ?>
             </button>
           </div>
         <?php endforeach; ?>
       </div>
+
+      <dialog id="edit-investment-dlg" class="confirm" style="max-width:360px;">
+        <form method="post" action="/investments/update">
+          <?= csrfInput() ?>
+          <input type="hidden" name="id" id="ei-id">
+          <div class="dlg-title">Edit investment</div>
+          <input class="input" name="name" id="ei-name" required maxlength="80" placeholder="Name">
+          <div class="field-row">
+            <input class="input" name="amount" id="ei-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+            <select class="select" name="type" id="ei-type">
+              <?php foreach (['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'] as $t): ?>
+                <option><?= h($t) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <input class="input" name="date" id="ei-date" type="date" required>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-investment-dlg').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+      <script>
+      function openEditInvestment(d) {
+        document.getElementById('ei-id').value     = d.id;
+        document.getElementById('ei-name').value   = d.name;
+        document.getElementById('ei-amount').value = d.amount;
+        document.getElementById('ei-type').value   = d.type;
+        document.getElementById('ei-date').value   = d.date;
+        document.getElementById('edit-investment-dlg').showModal();
+      }
+      </script>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
@@ -596,20 +729,79 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <?php else: ?>
       <div class="stack">
         <?php foreach ($recs as $r): ?>
+          <?php $recJson = json_encode([
+              'id'          => (int)$r['id'],
+              'name'        => $r['name'],
+              'amount'      => (string)$r['amount'],
+              'category_id' => (int)($r['category_id'] ?? 0),
+              'frequency'   => $r['frequency'],
+              'next_date'   => $r['next_date'],
+          ]); ?>
           <div class="card elev-sm row">
-            <div class="row-icon"><?= icon('repeat', 18) ?></div>
+            <div class="row-icon"><?= icon('repeat', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($r['name']) ?></div>
               <div class="sub"><?= h(($r['cat_name'] ?? 'Uncategorised') . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
+            <button class="icon-btn" type="button" aria-label="Edit"
+                    onclick='openEditRecurring(<?= h($recJson) ?>)'>
+              <?= icon('edit', 15) ?>
+            </button>
             <button class="icon-btn" type="button" aria-label="Delete"
-                    onclick="askConfirm({action:'/recurring/delete', id:<?= (int)$r['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete recurring item?', body:<?= json_encode($r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency']) ?>, ok:'Delete'})">
-              <?= icon('trash-2', 16) ?>
+                    onclick='askConfirm(<?= h(json_encode([
+                        "action" => "/recurring/delete",
+                        "id"     => (int)$r['id'],
+                        "csrf"   => csrfToken(),
+                        "title"  => "Delete recurring item?",
+                        "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
+                        "ok"     => "Delete",
+                    ])) ?>)'>
+              <?= icon('trash-2', 15) ?>
             </button>
           </div>
         <?php endforeach; ?>
       </div>
+
+      <dialog id="edit-recurring-dlg" class="confirm" style="max-width:360px;">
+        <form method="post" action="/recurring/update">
+          <?= csrfInput() ?>
+          <input type="hidden" name="id" id="er-id">
+          <div class="dlg-title">Edit recurring item</div>
+          <input class="input" name="name" id="er-name" required maxlength="80" placeholder="Name">
+          <div class="field-row">
+            <input class="input" name="amount" id="er-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+            <select class="select" name="category_id" id="er-category">
+              <?php foreach ($cats as $c): ?>
+                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="field-row">
+            <select class="select" name="frequency" id="er-frequency">
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            <input class="input" name="next_date" id="er-next" type="date" required>
+          </div>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-recurring-dlg').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+      <script>
+      function openEditRecurring(d) {
+        document.getElementById('er-id').value        = d.id;
+        document.getElementById('er-name').value      = d.name;
+        document.getElementById('er-amount').value    = d.amount;
+        document.getElementById('er-category').value  = d.category_id;
+        document.getElementById('er-frequency').value = d.frequency;
+        document.getElementById('er-next').value      = d.next_date;
+        document.getElementById('edit-recurring-dlg').showModal();
+      }
+      </script>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
@@ -647,7 +839,14 @@ function renderManage(PDO $db, array $user): void {
             <?php if ($c['is_custom']): ?>
               <button type="button" aria-label="Delete category"
                       style="background:none;border:none;color:inherit;cursor:pointer;padding:0 0 0 2px;font-size:14px;line-height:1;"
-                      onclick="askConfirm({action:'/categories/delete', id:<?= (int)$c['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Delete category?', body:<?= json_encode('Existing expenses in this category stay logged but become uncategorised: ' . $c['name']) ?>, ok:'Delete'})">×</button>
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/categories/delete",
+                          "id"     => (int)$c['id'],
+                          "csrf"   => csrfToken(),
+                          "title"  => "Delete category?",
+                          "body"   => 'Existing expenses in this category stay logged but become uncategorised: ' . $c['name'],
+                          "ok"     => "Delete",
+                      ])) ?>)'>×</button>
             <?php endif; ?>
           </span>
         <?php endforeach; ?>
@@ -667,7 +866,14 @@ function renderManage(PDO $db, array $user): void {
             <div class="row-main"><?= h($m['name']) ?></div>
             <?php if ($canDeleteMember): ?>
               <button class="icon-btn" type="button" aria-label="Remove member"
-                      onclick="askConfirm({action:'/members/delete', id:<?= (int)$m['id'] ?>, csrf:'<?= csrfJs() ?>', title:'Remove member?', body:<?= json_encode('Existing entries for ' . $m['name'] . ' stay logged; new ones can no longer be attributed to them.') ?>, ok:'Remove'})">×</button>
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/members/delete",
+                          "id"     => (int)$m['id'],
+                          "csrf"   => csrfToken(),
+                          "title"  => "Remove member?",
+                          "body"   => 'Existing entries for ' . $m['name'] . ' stay logged; new ones can no longer be attributed to them.',
+                          "ok"     => "Remove",
+                      ])) ?>)'>×</button>
             <?php endif; ?>
           </div>
         <?php endforeach; ?>
