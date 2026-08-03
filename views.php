@@ -454,7 +454,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
           <div class="card cat-bar">
             <div class="top">
               <div class="name"><?= icon($c['icon'], 18) ?> <?= h($c['name']) ?></div>
-              <div><span class="amt"><?= h(fmt($c['amt'])) ?></span><span class="pct"><?= number_format($pct, 0) ?>%</span></div>
+              <div><span class="amt"><?= h(fmt($c['amt'])) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
             <div class="bar"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
           </div>
@@ -466,8 +466,12 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       foreach ($expenses as $e) { $byDay[$e['date']][] = $e; }
       foreach ($byDay as $day => $entries):
         $dayLabel = (new DateTimeImmutable($day))->format('D, M j');
+        $dayTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
       ?>
-        <div class="day-hdr"><?= h($dayLabel) ?></div>
+        <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span><?= h($dayLabel) ?></span>
+          <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($dayTotal)) ?></span>
+        </div>
         <div class="stack">
           <?php foreach ($entries as $e): ?>
             <?php $rowJson = json_encode([
@@ -605,8 +609,19 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
     <?php if (!$invs): ?>
       <div class="empty">Nothing logged yet.</div>
     <?php else: ?>
+      <?php
+      $byDay = [];
+      foreach ($invs as $i) { $byDay[$i['date']][] = $i; }
+      foreach ($byDay as $day => $entries):
+        $dayLabel = (new DateTimeImmutable($day))->format('D, M j, Y');
+        $dayTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
+      ?>
+      <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span><?= h($dayLabel) ?></span>
+        <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($dayTotal)) ?></span>
+      </div>
       <div class="stack">
-        <?php foreach ($invs as $i): ?>
+        <?php foreach ($entries as $i): ?>
           <?php $invJson = json_encode([
               'id'     => (int)$i['id'],
               'name'   => $i['name'],
@@ -618,7 +633,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
             <div class="row-icon sage"><?= icon('trending-up', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($i['name']) ?></div>
-              <div class="sub"><?= h($i['type']) ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j, Y')) ?></div>
+              <div class="sub"><?= h($i['type']) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
@@ -639,6 +654,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
           </div>
         <?php endforeach; ?>
       </div>
+      <?php endforeach; ?>
 
       <dialog id="edit-investment-dlg" class="confirm" style="max-width:360px;">
         <form method="post" action="/investments/update">
