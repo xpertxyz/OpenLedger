@@ -1046,6 +1046,8 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = $cats->fetchAll();
+    $typeList = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? ORDER BY id");
+    $typeList->execute([$hid]); $typeList = $typeList->fetchAll(PDO::FETCH_COLUMN);
     $rows = $db->prepare(
         "SELECT r.*, c.name AS cat_name FROM recurring r
          LEFT JOIN categories c ON c.id = r.category_id
@@ -1060,14 +1062,23 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <?php if ($showForm): ?>
       <form method="post" action="/recurring" class="card stack" style="padding:var(--space-4); gap:10px;">
         <?= csrfInput() ?>
-        <input class="input" name="name" placeholder="e.g. Rent" required maxlength="80" id="rec-name"
+        <select class="select" name="kind" id="rec-kind" onchange="toggleRecKind()">
+          <option value="expense">Expense — auto-post to History</option>
+          <option value="investment">Investment — auto-post to Invest</option>
+        </select>
+        <input class="input" name="name" placeholder="e.g. Rent, Nifty SIP" required maxlength="80" id="rec-name"
                oninput="document.getElementById('rec-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('rec-amt').value) > 0)">
         <div class="field-row">
           <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="rec-amt"
                  oninput="document.getElementById('rec-save').disabled = !(document.getElementById('rec-name').value.trim() && parseFloat(this.value) > 0)">
-          <select class="select" name="category_id">
+          <select class="select" name="category_id" id="rec-cat">
             <?php foreach ($cats as $c): ?>
               <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <select class="select" name="type" id="rec-type" style="display:none;">
+            <?php foreach ($typeList as $t): ?>
+              <option value="<?= h($t) ?>"><?= h($t) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -1084,6 +1095,15 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <button class="btn btn-primary btn-block" type="submit" id="rec-save" disabled>Save</button>
         </div>
       </form>
+      <script>
+      function toggleRecKind() {
+        var kind = document.getElementById('rec-kind').value;
+        document.getElementById('rec-cat').style.display  = kind === 'expense' ? '' : 'none';
+        document.getElementById('rec-cat').disabled       = kind !== 'expense';
+        document.getElementById('rec-type').style.display = kind === 'investment' ? '' : 'none';
+        document.getElementById('rec-type').disabled      = kind !== 'investment';
+      }
+      </script>
     <?php else: ?>
       <a class="btn btn-secondary btn-block" href="/recurring?new=1"><?= icon('plus', 16) ?> &nbsp;Add recurring</a>
     <?php endif; ?>
@@ -1097,15 +1117,18 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               'id'          => (int)$r['id'],
               'name'        => $r['name'],
               'amount'      => (string)$r['amount'],
+              'kind'        => $r['kind'] ?? 'expense',
               'category_id' => (int)($r['category_id'] ?? 0),
+              'type'        => (string)($r['type'] ?? ''),
               'frequency'   => $r['frequency'],
               'next_date'   => $r['next_date'],
           ]); ?>
+          <?php $isInv = ($r['kind'] ?? 'expense') === 'investment'; ?>
           <div class="card elev-sm row">
-            <div class="row-icon"><?= icon('repeat', 16) ?></div>
+            <div class="row-icon<?= $isInv ? ' sage' : '' ?>"><?= icon($isInv ? 'trending-up' : 'repeat', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($r['name']) ?></div>
-              <div class="sub"><?= h(($r['cat_name'] ?? 'Uncategorised') . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
+              <div class="sub"><?= h(($isInv ? ($r['type'] ?? 'Other') : ($r['cat_name'] ?? 'Uncategorised')) . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
@@ -1133,12 +1156,21 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <?= csrfInput() ?>
           <input type="hidden" name="id" id="er-id">
           <div class="dlg-title">Edit recurring item</div>
+          <select class="select" name="kind" id="er-kind" onchange="toggleErKind()">
+            <option value="expense">Expense</option>
+            <option value="investment">Investment</option>
+          </select>
           <input class="input" name="name" id="er-name" required maxlength="80" placeholder="Name">
           <div class="field-row">
             <input class="input" name="amount" id="er-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
             <select class="select" name="category_id" id="er-category">
               <?php foreach ($cats as $c): ?>
                 <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <select class="select" name="type" id="er-type" style="display:none;">
+              <?php foreach ($typeList as $t): ?>
+                <option value="<?= h($t) ?>"><?= h($t) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -1157,13 +1189,23 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
         </form>
       </dialog>
       <script>
+      function toggleErKind() {
+        var kind = document.getElementById('er-kind').value;
+        document.getElementById('er-category').style.display = kind === 'expense' ? '' : 'none';
+        document.getElementById('er-category').disabled      = kind !== 'expense';
+        document.getElementById('er-type').style.display     = kind === 'investment' ? '' : 'none';
+        document.getElementById('er-type').disabled          = kind !== 'investment';
+      }
       function openEditRecurring(d) {
         document.getElementById('er-id').value        = d.id;
+        document.getElementById('er-kind').value      = d.kind || 'expense';
         document.getElementById('er-name').value      = d.name;
         document.getElementById('er-amount').value    = d.amount;
-        document.getElementById('er-category').value  = d.category_id;
+        document.getElementById('er-category').value  = d.category_id || '';
+        if (d.type) document.getElementById('er-type').value = d.type;
         document.getElementById('er-frequency').value = d.frequency;
         document.getElementById('er-next').value      = d.next_date;
+        toggleErKind();
         document.getElementById('edit-recurring-dlg').showModal();
       }
       </script>

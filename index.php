@@ -247,10 +247,17 @@ if ($method === 'POST') {
             case '/recurring':
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $kind = in_array($_POST['kind'] ?? '', ['expense','investment'], true) ? $_POST['kind'] : 'expense';
                 $freq = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
                         ? $_POST['frequency'] : 'monthly';
                 $date = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
-                $catId = (int)($_POST['category_id'] ?? 0);
+                if ($kind === 'investment') {
+                    $catId = null;
+                    $type  = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
+                } else {
+                    $catId = (int)($_POST['category_id'] ?? 0) ?: null;
+                    $type  = null;
+                }
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM recurring WHERE household_id = ?",
@@ -259,9 +266,9 @@ if ($method === 'POST') {
                     'Recurring items'
                 );
                 $db->prepare(
-                    "INSERT INTO recurring (household_id, name, amount, category_id, frequency, next_date)
-                     VALUES (?, ?, ?, ?, ?, ?)"
-                )->execute([$hid, $name, $amt, $catId ?: null, $freq, $date]);
+                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, frequency, next_date)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $kind, $catId, $type, $freq, $date]);
                 flash('success', 'Recurring item saved');
                 redirect('/recurring');
 
@@ -270,18 +277,20 @@ if ($method === 'POST') {
                 $cascade = !empty($_POST['cascade']);
                 $db->beginTransaction();
                 try {
-                    $expensesDeleted = 0;
+                    $pastDeleted = 0;
                     if ($cascade) {
-                        $del = $db->prepare("DELETE FROM expenses WHERE household_id = ? AND recurring_id = ?");
-                        $del->execute([$hid, $rid]);
-                        $expensesDeleted = $del->rowCount();
+                        $delE = $db->prepare("DELETE FROM expenses WHERE household_id = ? AND recurring_id = ?");
+                        $delE->execute([$hid, $rid]);
+                        $delI = $db->prepare("DELETE FROM investments WHERE household_id = ? AND recurring_id = ?");
+                        $delI->execute([$hid, $rid]);
+                        $pastDeleted = $delE->rowCount() + $delI->rowCount();
                     }
                     $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
                        ->execute([$rid, $hid]);
                     $db->commit();
                 } catch (Throwable $e) { $db->rollBack(); throw $e; }
                 flash('success', $cascade
-                    ? "Recurring item deleted (plus {$expensesDeleted} past expense(s))"
+                    ? "Recurring item deleted (plus {$pastDeleted} past entry(ies))"
                     : 'Recurring item deleted');
                 redirect('/recurring');
 
@@ -289,14 +298,21 @@ if ($method === 'POST') {
                 $id    = (int)($_POST['id'] ?? 0);
                 $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $kind  = in_array($_POST['kind'] ?? '', ['expense','investment'], true) ? $_POST['kind'] : 'expense';
                 $freq  = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
                          ? $_POST['frequency'] : 'monthly';
                 $date  = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
-                $catId = (int)($_POST['category_id'] ?? 0);
+                if ($kind === 'investment') {
+                    $catId = null;
+                    $type  = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
+                } else {
+                    $catId = (int)($_POST['category_id'] ?? 0) ?: null;
+                    $type  = null;
+                }
                 $db->prepare(
-                    "UPDATE recurring SET name = ?, amount = ?, category_id = ?, frequency = ?, next_date = ?
+                    "UPDATE recurring SET name = ?, amount = ?, kind = ?, category_id = ?, type = ?, frequency = ?, next_date = ?
                      WHERE id = ? AND household_id = ?"
-                )->execute([$name, $amt, $catId ?: null, $freq, $date, $id, $hid]);
+                )->execute([$name, $amt, $kind, $catId, $type, $freq, $date, $id, $hid]);
                 flash('success', 'Recurring item updated');
                 redirect('/recurring');
 

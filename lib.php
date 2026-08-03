@@ -61,9 +61,11 @@ const SCHEMA_STATEMENTS = [
         household_id INT NOT NULL,
         name VARCHAR(80) NOT NULL,
         amount DECIMAL(12,2) NOT NULL,
-        type VARCHAR(20) NOT NULL,
+        type VARCHAR(40) NOT NULL,
+        recurring_id INT NULL,
         date DATE NOT NULL,
-        INDEX ix_household (household_id)
+        INDEX ix_household (household_id),
+        INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
     "CREATE TABLE IF NOT EXISTS recurring (
@@ -71,7 +73,9 @@ const SCHEMA_STATEMENTS = [
         household_id INT NOT NULL,
         name VARCHAR(80) NOT NULL,
         amount DECIMAL(12,2) NOT NULL,
+        kind VARCHAR(20) NOT NULL DEFAULT 'expense',
         category_id INT NULL,
+        type VARCHAR(40) NULL,
         frequency ENUM('monthly','quarterly','yearly') NOT NULL,
         next_date DATE NOT NULL,
         INDEX ix_household_next (household_id, next_date)
@@ -116,13 +120,21 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v4';
+    $sentinel = __DIR__ . '/data/.schema-ok-v5';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); }
         catch (PDOException $e) { error_log('[migrate] add currency column: ' . $e->getMessage()); }
         try { $db->exec("ALTER TABLE expenses ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)"); }
-        catch (PDOException $e) { error_log('[migrate] add recurring_id column: ' . $e->getMessage()); }
+        catch (PDOException $e) { error_log('[migrate] add expenses.recurring_id: ' . $e->getMessage()); }
+        try { $db->exec("ALTER TABLE investments ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)"); }
+        catch (PDOException $e) { error_log('[migrate] add investments.recurring_id: ' . $e->getMessage()); }
+        try { $db->exec("ALTER TABLE investments MODIFY COLUMN type VARCHAR(40) NOT NULL"); }
+        catch (PDOException $e) { error_log('[migrate] widen investments.type: ' . $e->getMessage()); }
+        try { $db->exec("ALTER TABLE recurring ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'expense'"); }
+        catch (PDOException $e) { error_log('[migrate] add recurring.kind: ' . $e->getMessage()); }
+        try { $db->exec("ALTER TABLE recurring ADD COLUMN type VARCHAR(40) NULL"); }
+        catch (PDOException $e) { error_log('[migrate] add recurring.type: ' . $e->getMessage()); }
         // Backfill default investment types for households that predate the investment_types table.
         $orphaned = $db->query(
             "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
@@ -276,13 +288,22 @@ function sweepRecurring(PDO $db, int $hid): void {
         "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, recurring_id)
          VALUES (?, ?, ?, NULL, ?, ?, ?)"
     );
+    $insInv = $db->prepare(
+        "INSERT INTO investments (household_id, name, amount, type, date, recurring_id)
+         VALUES (?, ?, ?, ?, ?, ?)"
+    );
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
         $nd = $r['next_date'];
+        $kind = $r['kind'] ?? 'expense';
         // Cap iterations — a stale/bad next_date shouldn't insert years of catch-up rows
         // synchronously in one request. 120 = 10 years of monthly / 30 years of quarterly.
         for ($i = 0; $i < 120 && $nd <= $today; $i++) {
-            $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd, (int)$r['id']]);
+            if ($kind === 'investment') {
+                $insInv->execute([$hid, $r['name'], $r['amount'], (string)($r['type'] ?? 'Other'), $nd, (int)$r['id']]);
+            } else {
+                $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd, (int)$r['id']]);
+            }
             $nd = advanceDate($nd, $r['frequency']);
         }
         $upd->execute([$nd, $r['id']]);
