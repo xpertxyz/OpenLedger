@@ -1218,7 +1218,9 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
 }
 
 // ─── Terms & Conditions ─────────────────────────────────────────────
-function renderTerms(PDO $db, array $user): void {
+
+// Shared prose block — no chrome; both the authed and public wrappers embed this.
+function termsBody(): string {
     ob_start();
     ?>
     <div class="card" style="padding: var(--space-6) var(--space-4); gap: var(--space-4); line-height:1.55;">
@@ -1268,6 +1270,33 @@ function renderTerms(PDO $db, array $user): void {
       <a class="btn btn-block" href="/" style="text-align:center; margin-top:8px;">Back</a>
     </div>
     <?php
-    $content = ob_get_clean();
-    layout($db, $user, '', $content, '/terms');
+    return ob_get_clean();
+}
+
+// Authed: full app chrome (header, drawer, tabnav).
+function renderTerms(PDO $db, array $user): void {
+    layout($db, $user, '', termsBody(), '/terms');
+}
+
+// Unauthed: standalone page with the same minimal chrome the sign-in card uses.
+function renderTermsPublic(): void {
+    $sprite = SVG_SPRITE;
+    $body   = termsBody();
+    echo <<<HTML
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Ledger — Terms &amp; conditions</title>
+<link rel="stylesheet" href="/design-tokens/styles.css">
+<style>
+  body { margin:0; background:var(--color-bg); }
+  .col { max-width:480px; margin:0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }
+</style>
+</head>
+<body>
+$sprite
+<div class="col">$body</div>
+</body></html>
+HTML;
 }

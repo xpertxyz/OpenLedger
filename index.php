@@ -23,6 +23,102 @@ if (PHP_SAPI === 'cli') {
         assert(parseAmount('12.34', $config) === 12.34);
         echo "ok\n"; exit;
     }
+    if ($mode === '--preflight') {
+        // Fast, no-HTTP smoke test: run before every deploy.
+        // Exit 0 = green, non-zero = at least one FAIL. Prints a checklist to stdout.
+        require __DIR__ . '/views.php';
+        $pass = 0; $fail = 0; $warn = 0;
+        $line = function (string $tag, string $msg) use (&$pass, &$fail, &$warn) {
+            $icons = ['OK' => "\033[32m✓\033[0m", 'FAIL' => "\033[31m✗\033[0m", 'WARN' => "\033[33m!\033[0m"];
+            echo "  {$icons[$tag]} {$msg}\n";
+            if ($tag === 'OK') $pass++; elseif ($tag === 'FAIL') $fail++; else $warn++;
+        };
+        echo "Home Ledger — preflight\n\n";
+
+        echo "PHP syntax:\n";
+        foreach (['index.php','lib.php','views.php','config.php','router.php'] as $f) {
+            $r = shell_exec("php -l " . escapeshellarg(__DIR__ . "/$f") . " 2>&1");
+            str_contains((string)$r, 'No syntax errors')
+                ? $line('OK',   "$f")
+                : $line('FAIL', "$f  → $r");
+        }
+
+        echo "\nStdlib self-check:\n";
+        try {
+            assert(advanceDate('2026-01-15', 'monthly')   === '2026-02-15');
+            assert(advanceDate('2026-01-15', 'quarterly') === '2026-04-15');
+            assert(advanceDate('2026-01-15', 'yearly')    === '2027-01-15');
+            try { parseAmount('-1', $config);   assert(false); } catch (UserErr) {}
+            try { parseAmount('abc', $config);  assert(false); } catch (UserErr) {}
+            try { parseAmount('1e9', $config);  assert(false); } catch (UserErr) {}
+            assert(parseAmount('12.34', $config) === 12.34);
+            $line('OK', 'date math + parseAmount edge cases');
+        } catch (Throwable $e) { $line('FAIL', 'selfcheck: ' . $e->getMessage()); }
+
+        echo "\nDatabase:\n";
+        try {
+            $db = makeDb($config);
+            $line('OK', "connected to {$config['db']['host']}/{$config['db']['name']} as {$config['db']['user']}");
+            $expected = ['households','users','members','categories','expenses','investments','recurring','rate_limits','investment_types'];
+            $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            $missing = array_diff($expected, $tables);
+            if ($missing) $line('FAIL', 'missing tables: ' . implode(', ', $missing));
+            else          $line('OK',   'all ' . count($expected) . ' tables present');
+            $cols = $db->query("SHOW COLUMNS FROM recurring")->fetchAll(PDO::FETCH_COLUMN);
+            foreach (['kind','type','category_id','frequency','next_date'] as $c) {
+                in_array($c, $cols, true) ? $line('OK', "recurring.$c") : $line('FAIL', "recurring.$c missing");
+            }
+            $ecols = $db->query("SHOW COLUMNS FROM expenses")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('recurring_id', $ecols, true) ? $line('OK', 'expenses.recurring_id') : $line('FAIL', 'expenses.recurring_id missing');
+            $icols = $db->query("SHOW COLUMNS FROM investments")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('recurring_id', $icols, true) ? $line('OK', 'investments.recurring_id') : $line('FAIL', 'investments.recurring_id missing');
+            $ucols = $db->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('currency', $ucols, true) ? $line('OK', 'users.currency') : $line('FAIL', 'users.currency missing');
+        } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
+
+        echo "\nConfig / env:\n";
+        if (isDevStubActive(GOOGLE_CLIENT_ID)) {
+            !empty($config['debug'])
+                ? $line('WARN', 'GOOGLE_CLIENT_ID is placeholder — dev-stub sign-in is enabled (APP_DEBUG=1). OK for local, NEVER deploy this to prod.')
+                : $line('WARN', 'GOOGLE_CLIENT_ID is placeholder — sign-in will fail until you set a real one.');
+        } else {
+            $line('OK', 'GOOGLE_CLIENT_ID set (' . substr(GOOGLE_CLIENT_ID, 0, 20) . '...)');
+        }
+        if (!empty($config['debug'])) $line('WARN', 'APP_DEBUG=1 — PHP errors show on-page. Disable for prod.');
+        else                          $line('OK',   'APP_DEBUG off');
+        $line(($config['db']['pass'] ?? '') === '' ? 'WARN' : 'OK', 'DB password ' . (($config['db']['pass'] ?? '') === '' ? 'is empty' : 'present'));
+
+        echo "\nStatic assets:\n";
+        foreach ([
+            'design-tokens/styles.css',
+            'assets/logo/home-ledger-logo.svg',
+            'assets/logo/home-ledger-logo-wordmark.svg',
+            'assets/logo/apple-touch-icon.png',
+            'assets/logo/og-image.png',
+            '.htaccess',
+        ] as $a) {
+            file_exists(__DIR__ . "/$a")
+                ? $line('OK',   "$a (" . number_format(filesize(__DIR__ . "/$a")) . " bytes)")
+                : $line('FAIL', "$a missing");
+        }
+
+        echo "\nHTTP guards (regex tests, no live server):\n";
+        // Very cheap sanity: does .htaccess deny .env?
+        $ht = @file_get_contents(__DIR__ . '/.htaccess') ?: '';
+        preg_match('/FilesMatch "\^\\\\\." >/s', $ht) || str_contains($ht, '^\\.')
+            ? $line('OK', '.htaccess denies dotfiles')
+            : $line('WARN', '.htaccess may not deny dotfiles — check .env is web-inaccessible');
+        str_contains($ht, 'config\\.php') ? $line('OK', '.htaccess denies raw config.php fetch') : $line('WARN', 'config.php may be web-accessible');
+
+        echo "\nRecurring sweep (dry run):\n";
+        try {
+            if (isset($db)) { sweepRecurring($db, 0); $line('OK', 'sweepRecurring runs cleanly against household_id=0 (no-op)'); }
+        } catch (Throwable $e) { $line('FAIL', 'sweepRecurring: ' . $e->getMessage()); }
+
+        echo "\n────────────────────────\n";
+        printf("  %d passed, %d warnings, %d failed\n", $pass, $warn, $fail);
+        exit($fail > 0 ? 1 : 0);
+    }
     if ($mode === '--cron') {
         // Runs from Hostinger cron. Only touches households that actually have a due
         // recurring item — uses the (household_id, next_date) index.
@@ -84,9 +180,13 @@ if ($method === 'POST') {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Unauthed: only the sign-in gate + Google callback are reachable.
+// Unauthed: only the sign-in gate, Google callback, and /terms are reachable.
 // ────────────────────────────────────────────────────────────────────
 if (!$user) {
+    if ($method === 'GET' && $path === '/terms') {
+        renderTermsPublic();
+        exit;
+    }
     if ($method === 'POST' && $path === '/signin') {
         rateLimit($db, $config, 'signin', $config['limits']['rate_signin_per_15min'], 900);
 
