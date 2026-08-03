@@ -159,7 +159,7 @@ if ($method === 'POST') {
                 $db->prepare("UPDATE users SET currency = ? WHERE id = ?")->execute([$sym, $user['id']]);
                 $_SESSION['currency'] = $sym;
                 flash('success', 'Currency updated');
-                redirect('/manage');
+                redirect($_POST['back'] ?? '/');
 
             case '/expenses':
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
@@ -295,13 +295,21 @@ if ($method === 'POST') {
                 $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, 'tag', 1)")
                    ->execute([$hid, $name]);
                 flash('success', 'Category added');
-                redirect($_POST['back'] ?? '/manage');
+                redirect($_POST['back'] ?? '/');
+
+            case '/categories/update':
+                $id   = (int)($_POST['id'] ?? 0);
+                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
+                $db->prepare("UPDATE categories SET name = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$name, $id, $hid]);
+                flash('success', 'Category renamed');
+                redirect($_POST['back'] ?? '/');
 
             case '/categories/delete':
                 $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Category removed');
-                redirect('/manage');
+                redirect($_POST['back'] ?? '/');
 
             case '/members':
                 $name = requireStr((string)($_POST['name'] ?? ''), 60, 'Member name');
@@ -315,7 +323,7 @@ if ($method === 'POST') {
                 $db->prepare("INSERT INTO members (household_id, name) VALUES (?, ?)")
                    ->execute([$hid, $name]);
                 flash('success', 'Member added');
-                redirect('/manage');
+                redirect($_POST['back'] ?? '/');
 
             case '/members/delete':
                 $countStmt = $db->prepare("SELECT COUNT(*) FROM members WHERE household_id = ?");
@@ -327,7 +335,7 @@ if ($method === 'POST') {
                 } else {
                     flash('error', 'Cannot remove the last member.');
                 }
-                redirect('/manage');
+                redirect($_POST['back'] ?? '/');
 
             default:
                 http_response_code(404); exit('404');
@@ -347,6 +355,7 @@ switch ($path) {
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
     case '/invest':    renderInvest($db, $user, isset($_GET['new'])); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
-    case '/manage':    renderManage($db, $user); break;
+    case '/terms':     renderTerms($db, $user); break;
+    case '/manage':    redirect('/#profile');           // legacy path
     default:           http_response_code(404); exit('404');
 }

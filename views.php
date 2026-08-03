@@ -72,15 +72,14 @@ function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
 META;
 }
 
-// Shared page frame: header, content, bottom tabnav, toasts.
-function layout(array $user, string $tab, string $content, string $requestUri = '/'): void {
+// Shared page frame: header, content, bottom tabnav, toasts, right-side profile drawer.
+function layout(PDO $db, array $user, string $tab, string $content, string $requestUri = '/'): void {
     $darkAttr  = $user['is_dark'] ? ' style="' . h(THEME_DARK_VARS) . '"' : '';
     $themeIcon = $user['is_dark'] ? 'sun' : 'moon';
     $initial   = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
     $sprite    = SVG_SPRITE;
     $backUri   = h($requestUri);
     $themeBtn  = icon($themeIcon, 18);
-    $gearBtn   = icon('settings', 19);
     $csrf      = csrfInput();
     $csrfTok   = csrfJs();
 
@@ -182,6 +181,28 @@ $meta
   .field-row { display:flex; gap:8px; }
   .field-row > * { flex:1; min-width:0; }
 
+  /* Right-side profile drawer — slides in from the right, backdrop dim. */
+  .drawer-backdrop { position:fixed; inset:0; background: color-mix(in srgb, #000 45%, transparent); opacity:0; pointer-events:none; transition: opacity .22s ease; z-index:200; }
+  .drawer-backdrop.open { opacity:1; pointer-events:auto; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(340px, 92vw); background:var(--color-bg); box-shadow: var(--shadow-lg); transform: translateX(100%); transition: transform .25s ease; z-index:201; overflow-y:auto; display:flex; flex-direction:column; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-hdr { padding: var(--space-4); border-bottom:1px solid var(--color-divider); display:flex; align-items:center; gap:12px; position:sticky; top:0; background:var(--color-bg); z-index:1; }
+  .drawer-hdr .drawer-avatar { width:40px; height:40px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; font-family:var(--font-heading); font-size:16px; flex-shrink:0; }
+  .drawer-hdr .drawer-who { flex:1; min-width:0; }
+  .drawer-hdr .drawer-who .n { font-family:var(--font-heading); font-size:16px; }
+  .drawer-hdr .drawer-who .e { font-size:12px; color:var(--color-neutral-800); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawer-body { padding: var(--space-4); display:flex; flex-direction:column; gap: var(--space-4); flex:1; }
+  .drawer-body section { display:flex; flex-direction:column; gap:8px; }
+  .drawer-body h4 { margin:0; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--color-neutral-800); font-family:var(--font-body); font-weight:700; }
+  .drawer-body hr { border:none; height:1px; background:var(--color-divider); margin:0; }
+  .drawer-body a.plain-link { color:var(--color-accent-700); font-size:13px; text-decoration:underline; text-underline-offset:2px; }
+  .row-form { display:flex; gap:6px; align-items:center; margin:0; }
+  .row-form .input { flex:1; }
+  .cat-row { display:flex; gap:6px; align-items:center; }
+  .cat-row form { display:flex; gap:6px; align-items:center; margin:0; flex:1; }
+  .cat-row .input { flex:1; padding: 6px 12px; font-size: 13px; }
+  .cat-icon-mini { width:26px; height:26px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
+
   /* Confirmation modal — one shared native <dialog> reused for every destructive action + sign-out. */
   dialog.confirm { border:none; border-radius:var(--radius-md); padding:0; max-width:320px; width:calc(100% - 32px); background:var(--color-surface); color:var(--color-text); box-shadow:var(--shadow-lg); }
   dialog.confirm::backdrop { background: color-mix(in srgb, #000 55%, transparent); }
@@ -199,9 +220,7 @@ $sprite
     <div class="brand">Home Ledger</div>
     <div class="hdr-actions">
       <form method="post" action="/theme">$csrf<input type="hidden" name="back" value="{$backUri}"><button class="btn btn-icon" type="submit" aria-label="Toggle theme" style="color:var(--color-text);">$themeBtn</button></form>
-      <a href="/manage" class="btn btn-icon" aria-label="Manage" style="color:var(--color-text);">$gearBtn</a>
-      <button class="avatar" type="button" aria-label="Sign out"
-              onclick="askConfirm({action:'/signout', csrf:'{$csrfTok}', title:'Sign out?', body:'You will need to sign in again.', ok:'Sign out'})">$initial</button>
+      <button class="avatar" type="button" aria-label="Profile" onclick="openProfile()">$initial</button>
     </div>
   </div>
   <div class="content">$content</div>
@@ -225,6 +244,9 @@ HTML;
         echo "<a href=\"" . h($href) . "\"$on>" . icon($ic, 18) . h($label) . "</a>";
     }
     echo '</nav>';
+
+    // Right-side profile drawer — triggered by the header avatar.
+    renderProfileDrawer($db, $user, $requestUri);
 
     // Shared confirmation dialog + trigger helper. Every destructive form / signout uses this.
     echo <<<DLG
@@ -254,9 +276,147 @@ function askConfirm(opts) {
   document.getElementById('confirm-ok').className = 'btn ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
   document.getElementById('confirm-dlg').showModal();
 }
+function openProfile() {
+  document.getElementById('drawer-backdrop').classList.add('open');
+  document.getElementById('drawer-panel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeProfile() {
+  document.getElementById('drawer-backdrop').classList.remove('open');
+  document.getElementById('drawer-panel').classList.remove('open');
+  document.body.style.overflow = '';
+  if (location.hash === '#profile') history.replaceState(null, '', location.pathname + location.search);
+}
+// Auto-open when redirected back from a POST inside the drawer.
+window.addEventListener('load', function () { if (location.hash === '#profile') openProfile(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeProfile(); });
 </script>
 </body></html>
 DLG;
+}
+
+// Right-side drawer — replaces the old /manage page. All account/household controls live here.
+function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
+    $hid = (int)$user['household_id'];
+    $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
+    $cats->execute([$hid]); $cats = $cats->fetchAll();
+    $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
+    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $canDeleteMember = count($mems) > 1;
+
+    $currency = $_SESSION['currency'] ?? '₹';
+    $initial  = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
+    $back     = h(strtok($requestUri, '#') . '#profile');
+
+    ?>
+    <div id="drawer-backdrop" class="drawer-backdrop" onclick="closeProfile()"></div>
+    <aside id="drawer-panel" class="drawer" aria-label="Profile">
+      <div class="drawer-hdr">
+        <div class="drawer-avatar"><?= $initial ?></div>
+        <div class="drawer-who">
+          <div class="n"><?= h($user['name'] ?? 'You') ?></div>
+          <div class="e"><?= h($user['email'] ?? '') ?></div>
+        </div>
+        <button class="icon-btn" type="button" aria-label="Close" onclick="closeProfile()"><?= icon('x', 18) ?></button>
+      </div>
+
+      <div class="drawer-body">
+        <section>
+          <h4>Currency</h4>
+          <form method="post" action="/currency" class="row-form">
+            <?= csrfInput() ?>
+            <input type="hidden" name="back" value="<?= $back ?>">
+            <input class="input" name="symbol" value="<?= h($currency) ?>" maxlength="8" style="max-width:80px; text-align:center; font-family:var(--font-heading); font-size:18px;">
+            <button class="btn btn-primary" type="submit">Save</button>
+          </form>
+        </section>
+
+        <hr>
+
+        <section>
+          <h4>Categories</h4>
+          <?php foreach ($cats as $c): ?>
+            <div class="cat-row">
+              <form method="post" action="/categories/update">
+                <?= csrfInput() ?>
+                <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+                <input type="hidden" name="back" value="<?= $back ?>">
+                <div class="cat-icon-mini"><?= icon($c['icon'], 14) ?></div>
+                <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
+                <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
+              </form>
+              <?php if ($c['is_custom']): ?>
+                <button type="button" class="icon-btn" aria-label="Delete category"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/categories/delete",
+                            "id"     => (int)$c['id'],
+                            "back"   => strtok($requestUri, '#') . '#profile',
+                            "csrf"   => csrfToken(),
+                            "title"  => "Delete category?",
+                            "body"   => "Existing expenses in this category stay logged but become uncategorised: " . $c['name'],
+                            "ok"     => "Delete",
+                        ])) ?>)'><?= icon('trash-2', 14) ?></button>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+          <form method="post" action="/categories" class="row-form" style="margin-top:6px;">
+            <?= csrfInput() ?>
+            <input type="hidden" name="back" value="<?= $back ?>">
+            <input class="input" name="name" placeholder="New category" maxlength="50">
+            <button class="btn btn-primary" type="submit">Add</button>
+          </form>
+        </section>
+
+        <hr>
+
+        <section>
+          <h4>Household members</h4>
+          <?php foreach ($mems as $m): ?>
+            <div class="cat-row" style="padding: 2px 0;">
+              <div style="flex:1; font-size:14px;"><?= h($m['name']) ?></div>
+              <?php if ($canDeleteMember): ?>
+                <button type="button" class="icon-btn" aria-label="Remove member"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/members/delete",
+                            "id"     => (int)$m['id'],
+                            "back"   => strtok($requestUri, '#') . '#profile',
+                            "csrf"   => csrfToken(),
+                            "title"  => "Remove member?",
+                            "body"   => "Existing entries for " . $m['name'] . " stay logged; new ones can no longer be attributed to them.",
+                            "ok"     => "Remove",
+                        ])) ?>)'>×</button>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+          <form method="post" action="/members" class="row-form" style="margin-top:6px;">
+            <?= csrfInput() ?>
+            <input type="hidden" name="back" value="<?= $back ?>">
+            <input class="input" name="name" placeholder="Add member" maxlength="60">
+            <button class="btn btn-primary" type="submit">Add</button>
+          </form>
+        </section>
+
+        <div style="flex:1;"></div>
+
+        <hr>
+
+        <section>
+          <a class="plain-link" href="/terms">Terms &amp; conditions</a>
+        </section>
+
+        <section>
+          <button class="btn btn-danger btn-block" type="button"
+                  onclick='askConfirm(<?= h(json_encode([
+                      "action" => "/signout",
+                      "csrf"   => csrfToken(),
+                      "title"  => "Sign out?",
+                      "body"   => "You will need to sign in with Google again.",
+                      "ok"     => "Sign out",
+                  ])) ?>)'>Sign out</button>
+        </section>
+      </div>
+    </aside>
+    <?php
 }
 
 // ─── Sign-in ────────────────────────────────────────────────────────
@@ -324,6 +484,9 @@ $sprite
 
     $devBlock
     $flashHtml
+  </div>
+  <div style="text-align:center; margin-top:14px;">
+    <a href="/terms" style="color:var(--color-neutral-800); font-size:12px; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
   </div>
 </div>
 </body></html>
@@ -427,7 +590,7 @@ function renderAdd(PDO $db, array $user): void {
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'add', $content, '/');
+    layout($db, $user, 'add', $content, '/');
 }
 
 // ─── History ────────────────────────────────────────────────────────
@@ -602,7 +765,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     </script>
     <?php
     $content = ob_get_clean();
-    layout($user, 'history', $content, "/history?m=$offset");
+    layout($db, $user, 'history', $content, "/history?m=$offset");
 }
 
 // ─── Investments ────────────────────────────────────────────────────
@@ -729,7 +892,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'invest', $content, '/invest');
+    layout($db, $user, 'invest', $content, '/invest');
 }
 
 // ─── Recurring ──────────────────────────────────────────────────────
@@ -860,88 +1023,60 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($user, 'recurring', $content, '/recurring');
+    layout($db, $user, 'recurring', $content, '/recurring');
 }
 
-// ─── Manage (categories + members) ──────────────────────────────────
-function renderManage(PDO $db, array $user): void {
-    $hid = (int)$user['household_id'];
-    $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
-    $cats->execute([$hid]); $cats = $cats->fetchAll();
-    $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
-    $canDeleteMember = count($mems) > 1;
-    $currency = $_SESSION['currency'] ?? '₹';
-
+// ─── Terms & Conditions ─────────────────────────────────────────────
+function renderTerms(PDO $db, array $user): void {
     ob_start();
     ?>
-    <div class="card" style="padding:var(--space-4); gap:var(--space-3);">
-      <h3 style="margin:0; font-size:16px;">Currency</h3>
-      <form method="post" action="/currency" class="note-row">
-        <?= csrfInput() ?>
-        <input class="input" name="symbol" value="<?= h($currency) ?>" maxlength="8" style="max-width:80px; text-align:center; font-family:var(--font-heading); font-size:20px;">
-        <button class="btn btn-primary" type="submit">Save</button>
-      </form>
-      <div class="muted" style="font-size:12px;">Any symbol (₹, $, €, £, Rs., etc.) — displays in front of every amount.</div>
-    </div>
+    <div class="card" style="padding: var(--space-6) var(--space-4); gap: var(--space-4); line-height:1.55;">
+      <h2 style="margin:0; font-family:var(--font-heading); font-size:24px;">Terms &amp; conditions</h2>
+      <div style="font-size:12px; color:var(--color-neutral-800);">Last updated 3 Aug 2026</div>
 
-    <div class="card" style="padding:var(--space-4); gap:var(--space-3);">
-      <h3 style="margin:0; font-size:16px;">Categories</h3>
-      <div style="display:flex; flex-wrap:wrap; gap:6px;">
-        <?php foreach ($cats as $c): ?>
-          <span class="tag tag-neutral" style="display:inline-flex; align-items:center; gap:6px;">
-            <?= icon($c['icon'], 14) ?> <?= h($c['name']) ?>
-            <?php if ($c['is_custom']): ?>
-              <button type="button" aria-label="Delete category"
-                      style="background:none;border:none;color:inherit;cursor:pointer;padding:0 0 0 2px;font-size:14px;line-height:1;"
-                      onclick='askConfirm(<?= h(json_encode([
-                          "action" => "/categories/delete",
-                          "id"     => (int)$c['id'],
-                          "csrf"   => csrfToken(),
-                          "title"  => "Delete category?",
-                          "body"   => 'Existing expenses in this category stay logged but become uncategorised: ' . $c['name'],
-                          "ok"     => "Delete",
-                      ])) ?>)'>×</button>
-            <?php endif; ?>
-          </span>
-        <?php endforeach; ?>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Open source</h3>
+        <p style="margin:0; font-size:14px;">Home Ledger is an open-source project. The source lives at
+          <a href="https://github.com/xpertxyz/HomeLedger" style="color:var(--color-accent-700);">github.com/xpertxyz/HomeLedger</a>.
+          Inspect it, contribute, or self-host to keep full control of your data.</p>
       </div>
-      <form method="post" action="/categories" class="note-row">
-        <?= csrfInput() ?>
-        <input class="input" name="name" placeholder="New category" maxlength="50">
-        <button class="btn btn-primary" type="submit">Add</button>
-      </form>
-    </div>
 
-    <div class="card" style="padding:var(--space-4); gap:var(--space-3);">
-      <h3 style="margin:0; font-size:16px;">Household members</h3>
-      <div class="stack">
-        <?php foreach ($mems as $m): ?>
-          <div class="row" style="padding: 6px 0;">
-            <div class="row-main"><?= h($m['name']) ?></div>
-            <?php if ($canDeleteMember): ?>
-              <button class="icon-btn" type="button" aria-label="Remove member"
-                      onclick='askConfirm(<?= h(json_encode([
-                          "action" => "/members/delete",
-                          "id"     => (int)$m['id'],
-                          "csrf"   => csrfToken(),
-                          "title"  => "Remove member?",
-                          "body"   => 'Existing entries for ' . $m['name'] . ' stay logged; new ones can no longer be attributed to them.',
-                          "ok"     => "Remove",
-                      ])) ?>)'>×</button>
-            <?php endif; ?>
-          </div>
-        <?php endforeach; ?>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Who can use it</h3>
+        <p style="margin:0; font-size:14px;">Anyone with a Google account can sign in. Authentication uses Google
+          Identity Services — this app never sees your Google password.</p>
       </div>
-      <form method="post" action="/members" class="note-row">
-        <?= csrfInput() ?>
-        <input class="input" name="name" placeholder="Add member" maxlength="60">
-        <button class="btn btn-primary" type="submit">Add</button>
-      </form>
-    </div>
 
-    <a class="btn btn-block" href="/" style="text-align:center;">Done</a>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">How your data is stored</h3>
+        <p style="margin:0; font-size:14px;">Your entries — expenses, investments, recurring items, categories and
+          household members — are stored in a MySQL database. <strong>The data is not encrypted at rest.</strong>
+          Anyone with access to the database server can read your entries. Only sign in with data you're comfortable
+          storing this way. If that isn't OK for you, self-host so the database is yours.</p>
+      </div>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">What we don't do</h3>
+        <p style="margin:0; font-size:14px;">We do not sell, share, or otherwise transfer your data to third parties.
+          No analytics tracker, no advertising, no third-party integrations receive your data. The only outbound
+          request is Google's sign-in endpoint (for verifying your ID token at login).</p>
+      </div>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">No warranty</h3>
+        <p style="margin:0; font-size:14px;">The app is provided as-is, without warranty. Keep backups of anything
+          you care about.</p>
+      </div>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Contact</h3>
+        <p style="margin:0; font-size:14px;">File issues at
+          <a href="https://github.com/xpertxyz/HomeLedger/issues" style="color:var(--color-accent-700);">github.com/xpertxyz/HomeLedger/issues</a>.</p>
+      </div>
+
+      <a class="btn btn-block" href="/" style="text-align:center; margin-top:8px;">Back</a>
+    </div>
     <?php
     $content = ob_get_clean();
-    layout($user, '', $content, '/manage');
+    layout($db, $user, '', $content, '/terms');
 }
