@@ -48,10 +48,12 @@ const SCHEMA_STATEMENTS = [
         amount DECIMAL(12,2) NOT NULL,
         category_id INT NULL,
         member_id INT NULL,
+        recurring_id INT NULL,
         note VARCHAR(200) NULL,
         date DATE NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX ix_household_date (household_id, date)
+        INDEX ix_household_date (household_id, date),
+        INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
     "CREATE TABLE IF NOT EXISTS investments (
@@ -114,11 +116,13 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v3';
+    $sentinel = __DIR__ . '/data/.schema-ok-v4';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); }
         catch (PDOException $e) { error_log('[migrate] add currency column: ' . $e->getMessage()); }
+        try { $db->exec("ALTER TABLE expenses ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)"); }
+        catch (PDOException $e) { error_log('[migrate] add recurring_id column: ' . $e->getMessage()); }
         // Backfill default investment types for households that predate the investment_types table.
         $orphaned = $db->query(
             "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
@@ -269,8 +273,8 @@ function sweepRecurring(PDO $db, int $hid): void {
     $rows = $db->prepare("SELECT * FROM recurring WHERE household_id = ? AND next_date <= ?");
     $rows->execute([$hid, $today]);
     $insExp = $db->prepare(
-        "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date)
-         VALUES (?, ?, ?, NULL, ?, ?)"
+        "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, recurring_id)
+         VALUES (?, ?, ?, NULL, ?, ?, ?)"
     );
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
@@ -278,7 +282,7 @@ function sweepRecurring(PDO $db, int $hid): void {
         // Cap iterations — a stale/bad next_date shouldn't insert years of catch-up rows
         // synchronously in one request. 120 = 10 years of monthly / 30 years of quarterly.
         for ($i = 0; $i < 120 && $nd <= $today; $i++) {
-            $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd]);
+            $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd, (int)$r['id']]);
             $nd = advanceDate($nd, $r['frequency']);
         }
         $upd->execute([$nd, $r['id']]);

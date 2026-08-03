@@ -266,9 +266,23 @@ if ($method === 'POST') {
                 redirect('/recurring');
 
             case '/recurring/delete':
-                $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
-                   ->execute([(int)$_POST['id'], $hid]);
-                flash('success', 'Recurring item deleted');
+                $rid = (int)($_POST['id'] ?? 0);
+                $cascade = !empty($_POST['cascade']);
+                $db->beginTransaction();
+                try {
+                    $expensesDeleted = 0;
+                    if ($cascade) {
+                        $del = $db->prepare("DELETE FROM expenses WHERE household_id = ? AND recurring_id = ?");
+                        $del->execute([$hid, $rid]);
+                        $expensesDeleted = $del->rowCount();
+                    }
+                    $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
+                       ->execute([$rid, $hid]);
+                    $db->commit();
+                } catch (Throwable $e) { $db->rollBack(); throw $e; }
+                flash('success', $cascade
+                    ? "Recurring item deleted (plus {$expensesDeleted} past expense(s))"
+                    : 'Recurring item deleted');
                 redirect('/recurring');
 
             case '/recurring/update':

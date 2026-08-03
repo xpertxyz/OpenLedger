@@ -264,6 +264,10 @@ HTML;
     <input type="hidden" name="back" id="confirm-back">
     <div class="dlg-title" id="dlg-title"></div>
     <div class="dlg-body" id="dlg-body"></div>
+    <label id="confirm-extra-wrap" style="display:none; font-size:13px; align-items:center; gap:8px; cursor:pointer;">
+      <input type="checkbox" name="cascade" value="1" id="confirm-extra-cb">
+      <span id="confirm-extra-label"></span>
+    </label>
     <div class="dlg-actions">
       <button type="button" class="btn btn-secondary" onclick="document.getElementById('confirm-dlg').close()">Cancel</button>
       <button type="submit" class="btn btn-danger" id="confirm-ok">Delete</button>
@@ -281,6 +285,15 @@ function askConfirm(opts) {
   document.getElementById('dlg-body').textContent  = opts.body  || '';
   document.getElementById('confirm-ok').textContent = opts.ok || 'Delete';
   document.getElementById('confirm-ok').className = 'btn ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
+  var wrap = document.getElementById('confirm-extra-wrap');
+  var cb   = document.getElementById('confirm-extra-cb');
+  cb.checked = false;
+  if (opts.extra) {
+    document.getElementById('confirm-extra-label').textContent = opts.extra;
+    wrap.style.display = 'flex';
+  } else {
+    wrap.style.display = 'none';
+  }
   document.getElementById('confirm-dlg').showModal();
 }
 function openProfile() {
@@ -1107,6 +1120,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
                         "title"  => "Delete recurring item?",
                         "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
                         "ok"     => "Delete",
+                        "extra"  => "Also delete all past auto-posted expenses for this item",
                     ])) ?>)'>
               <?= icon('trash-2', 15) ?>
             </button>
