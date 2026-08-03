@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://home.xpertxyz.com"><strong>🌐 Try it live at home.xpertxyz.com</strong></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#self-hosting">Self-hosting</a> ·
   <a href="#local-development">Local development</a> ·
@@ -17,6 +21,8 @@
   <a href="#architecture">Architecture</a> ·
   <a href="docs/DESIGN.md">Design spec</a>
 </p>
+
+> **Live instance disclaimer.** [home.xpertxyz.com](https://home.xpertxyz.com) is a real, running deployment you're welcome to use. **Data is not encrypted at rest** — see [`/terms`](https://home.xpertxyz.com/terms) inside the app. If that isn't OK for you, self-host in ten minutes with the [Quick start](#quick-start) below.
 
 ---
 
@@ -248,3 +254,10 @@ Coding style:
 ## License
 
 MIT. See `LICENSE` (add one if forking).
+
+---
+
+<p align="center">
+  Built by <a href="https://xpertxyz.in"><strong>XpertXYZ</strong></a> — digital solutions across platforms.<br>
+  <sub>Live at <a href="https://home.xpertxyz.com">home.xpertxyz.com</a> · Source at <a href="https://github.com/xpertxyz/HomeLedger">github.com/xpertxyz/HomeLedger</a></sub>
+</p>

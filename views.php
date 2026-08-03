@@ -550,8 +550,10 @@ $sprite
     $devBlock
     $flashHtml
   </div>
-  <div style="text-align:center; margin-top:14px;">
-    <a href="/terms" style="color:var(--color-neutral-800); font-size:12px; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
+  <div style="text-align:center; margin-top:14px; font-size:12px; color:var(--color-neutral-800);">
+    <a href="/terms" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
+    &nbsp;·&nbsp;
+    Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700); text-decoration:none;">XpertXYZ</a>
   </div>
 </div>
 </body></html>
