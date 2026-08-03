@@ -324,23 +324,49 @@ if ($method === 'POST') {
                 redirect($_POST['back'] ?? '/');
 
             case '/investment-types/update':
-                $id   = (int)($_POST['id'] ?? 0);
-                $name = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
-                $db->prepare("UPDATE investment_types SET name = ? WHERE id = ? AND household_id = ?")
-                   ->execute([$name, $id, $hid]);
+                $id      = (int)($_POST['id'] ?? 0);
+                $newName = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
+                // Fetch the old name so we can cascade-rename existing investments.
+                $old = $db->prepare("SELECT name FROM investment_types WHERE id = ? AND household_id = ?");
+                $old->execute([$id, $hid]);
+                $oldName = (string)$old->fetchColumn();
+                if ($oldName !== '' && $oldName !== $newName) {
+                    $db->beginTransaction();
+                    try {
+                        $db->prepare("UPDATE investment_types SET name = ? WHERE id = ? AND household_id = ?")
+                           ->execute([$newName, $id, $hid]);
+                        $db->prepare("UPDATE investments SET type = ? WHERE household_id = ? AND type = ?")
+                           ->execute([$newName, $hid, $oldName]);
+                        $db->commit();
+                    } catch (Throwable $e) { $db->rollBack(); throw $e; }
+                }
                 flash('success', 'Investment type renamed');
                 redirect($_POST['back'] ?? '/');
 
             case '/investment-types/delete':
+                $id = (int)($_POST['id'] ?? 0);
                 $countStmt = $db->prepare("SELECT COUNT(*) FROM investment_types WHERE household_id = ?");
                 $countStmt->execute([$hid]);
-                if ((int)$countStmt->fetchColumn() > 1) {
-                    $db->prepare("DELETE FROM investment_types WHERE id = ? AND household_id = ?")
-                       ->execute([(int)$_POST['id'], $hid]);
-                    flash('success', 'Investment type removed');
-                } else {
+                if ((int)$countStmt->fetchColumn() <= 1) {
                     flash('error', 'Keep at least one investment type.');
+                    redirect($_POST['back'] ?? '/');
                 }
+                // Refuse if any investment still uses this type — silent deletion would surprise the user.
+                $nameStmt = $db->prepare("SELECT name FROM investment_types WHERE id = ? AND household_id = ?");
+                $nameStmt->execute([$id, $hid]);
+                $typeName = (string)$nameStmt->fetchColumn();
+                if ($typeName !== '') {
+                    $useStmt = $db->prepare("SELECT COUNT(*) FROM investments WHERE household_id = ? AND type = ?");
+                    $useStmt->execute([$hid, $typeName]);
+                    $inUse = (int)$useStmt->fetchColumn();
+                    if ($inUse > 0) {
+                        flash('error', "Cannot delete — {$inUse} investment(s) still use '{$typeName}'. Change or delete them first.");
+                        redirect($_POST['back'] ?? '/');
+                    }
+                }
+                $db->prepare("DELETE FROM investment_types WHERE id = ? AND household_id = ?")
+                   ->execute([$id, $hid]);
+                flash('success', 'Investment type removed');
                 redirect($_POST['back'] ?? '/');
 
             case '/members':
