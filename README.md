@@ -43,16 +43,18 @@
 
 ## Screens
 
-> Drop screenshots into `docs/screenshots/` with these filenames and they'll render below.
-
-| Screen | Image |
-|---|---|
-| Sign-in | `docs/screenshots/signin.png` |
-| Add expense | `docs/screenshots/add.png` |
-| History | `docs/screenshots/history.png` |
-| Invest | `docs/screenshots/invest.png` |
-| Recurring | `docs/screenshots/recurring.png` |
-| Profile drawer | `docs/screenshots/profile.png` |
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/signin.png" alt="Sign-in" width="240"><br><sub><b>Sign in with Google</b></sub></td>
+    <td align="center"><img src="docs/screenshots/add.png" alt="Add expense" width="240"><br><sub><b>Add an expense</b></sub></td>
+    <td align="center"><img src="docs/screenshots/history.png" alt="History" width="240"><br><sub><b>History &amp; breakdown</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/invest.png" alt="Invest" width="240"><br><sub><b>Investments</b></sub></td>
+    <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring (expense &amp; investment)</b></sub></td>
+    <td align="center"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer</b></sub></td>
+  </tr>
+</table>
 
 ---
 
