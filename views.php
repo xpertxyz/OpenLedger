@@ -50,6 +50,28 @@ function fmt(float $amount): string {
     return ($_SESSION['currency'] ?? '₹') . number_format($amount, 2);
 }
 
+// Shared favicon / apple-touch / OG / Twitter / description / theme-color block.
+function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
+    $desc = 'Track household expenses, investments and recurring bills together.';
+    $og   = $origin . '/assets/logo/og-image.png';
+    $d    = htmlspecialchars($desc, ENT_QUOTES);
+    return <<<META
+<meta name="description" content="$d">
+<meta name="theme-color" content="$themeColor">
+<link rel="icon" type="image/svg+xml" href="/assets/logo/home-ledger-logo.svg">
+<link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
+<meta property="og:title" content="Home Ledger">
+<meta property="og:description" content="$d">
+<meta property="og:image" content="$og">
+<meta property="og:type" content="website">
+<meta property="og:url" content="$origin/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Home Ledger">
+<meta name="twitter:description" content="$d">
+<meta name="twitter:image" content="$og">
+META;
+}
+
 // Shared page frame: header, content, bottom tabnav, toasts.
 function layout(array $user, string $tab, string $content, string $requestUri = '/'): void {
     $darkAttr  = $user['is_dark'] ? ' style="' . h(THEME_DARK_VARS) . '"' : '';
@@ -62,6 +84,10 @@ function layout(array $user, string $tab, string $content, string $requestUri = 
     $csrf      = csrfInput();
     $csrfTok   = csrfJs();
 
+    $origin = ((!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    $themeColor = $user['is_dark'] ? '#201e1d' : '#f5ead8';
+    $meta = metaHead($origin, $themeColor);
+
     echo <<<HTML
 <!doctype html>
 <html lang="en">
@@ -69,6 +95,7 @@ function layout(array $user, string $tab, string $content, string $requestUri = 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Home Ledger</title>
+$meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <style>
   body { margin:0; background:var(--color-bg); -webkit-tap-highlight-color: transparent; }
@@ -257,12 +284,16 @@ function renderSignIn(): void {
     </div>
 DEV
     : '';
+    $origin = ((!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    $meta = metaHead($origin);
+
     echo <<<HTML
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home Ledger — Sign in</title>
+$meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
