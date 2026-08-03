@@ -71,7 +71,15 @@ function layout(array $user, string $tab, string $content, string $requestUri = 
 <title>Home Ledger</title>
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <style>
-  body { margin:0; background:var(--color-bg); }
+  body { margin:0; background:var(--color-bg); -webkit-tap-highlight-color: transparent; }
+  a, button, [role="button"], .row, .cat-chip, .pill-btn { -webkit-tap-highlight-color: transparent; }
+  .tabnav a { transition: background .15s, color .15s, opacity .15s; }
+  .tabnav a:active:not(.on) { opacity: 1; background: var(--color-neutral-200); }
+  .icon-btn { transition: background .12s; }
+  .icon-btn:active { background: var(--color-neutral-300); }
+  .btn { transition: filter .12s, transform .05s; }
+  .btn:active { transform: scale(.98); filter: brightness(.95); }
+  .amount-submit:active { transform: scale(.94); }
   .col { max-width:480px; margin:0 auto; min-height:100vh; padding: 0 0 104px; box-sizing:border-box; }
   .hdr { display:flex; align-items:center; justify-content:space-between; padding: var(--space-4) var(--space-4) var(--space-2); }
   .brand { font-family:var(--font-heading); font-size:22px; }
