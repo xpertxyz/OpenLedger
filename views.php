@@ -882,15 +882,15 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
       <div class="empty">Nothing logged yet.</div>
     <?php else: ?>
       <?php
-      $byDay = [];
-      foreach ($invs as $i) { $byDay[$i['date']][] = $i; }
-      foreach ($byDay as $day => $entries):
-        $dayLabel = (new DateTimeImmutable($day))->format('D, M j, Y');
-        $dayTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
+      $byMonth = [];
+      foreach ($invs as $i) { $byMonth[substr($i['date'], 0, 7)][] = $i; }
+      foreach ($byMonth as $ym => $entries):
+        $monthLabel = (new DateTimeImmutable($ym . '-01'))->format('F Y');
+        $monthTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
       ?>
       <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
-        <span><?= h($dayLabel) ?></span>
-        <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($dayTotal)) ?></span>
+        <span><?= h($monthLabel) ?></span>
+        <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($monthTotal)) ?></span>
       </div>
       <div class="stack">
         <?php foreach ($entries as $i): ?>
@@ -905,7 +905,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
             <div class="row-icon sage"><?= icon('trending-up', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($i['name']) ?></div>
-              <div class="sub"><?= h($i['type']) ?></div>
+              <div class="sub"><?= h($i['type']) ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
