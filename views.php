@@ -158,6 +158,7 @@ $meta
   .cat-bar .pct { font-size:11px; color:var(--color-neutral-800); margin-left:6px; }
   .bar { height:8px; background:var(--color-divider); border-radius:999px; margin-top:8px; overflow:hidden; }
   .bar > i { display:block; height:100%; background:var(--color-accent); border-radius:999px; }
+  .bar.sage > i { background:var(--color-accent-2); }
   .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-800); margin: var(--space-3) 2px var(--space-2); }
 
   .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:100; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
@@ -833,6 +834,23 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
       <div class="card total-card sage">
         <div class="sub">Total invested</div>
         <div class="big"><?= h(fmt((float)$total)) ?></div>
+      </div>
+
+      <?php
+      $byType = [];
+      foreach ($invs as $x) { $byType[$x['type']] = ($byType[$x['type']] ?? 0.0) + (float)$x['amount']; }
+      arsort($byType);
+      ?>
+      <div class="stack">
+        <?php foreach ($byType as $type => $amt): $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
+          <div class="card cat-bar">
+            <div class="top">
+              <div class="name"><?= icon('trending-up', 18) ?> <?= h($type) ?></div>
+              <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+            </div>
+            <div class="bar sage"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+          </div>
+        <?php endforeach; ?>
       </div>
     <?php endif; ?>
 
