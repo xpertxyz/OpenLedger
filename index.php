@@ -1,0 +1,281 @@
+<?php
+declare(strict_types=1);
+
+$config = require __DIR__ . '/config.php';
+require __DIR__ . '/lib.php';
+
+define('CURRENCY',         $config['currency']);
+define('GOOGLE_CLIENT_ID', $config['google_client_id']);
+
+// ────────────────────────────────────────────────────────────────────
+// CLI modes: --selfcheck (smoke tests), --cron (daily maintenance)
+// ────────────────────────────────────────────────────────────────────
+if (PHP_SAPI === 'cli') {
+    $mode = $argv[1] ?? '';
+    if ($mode === '--selfcheck') {
+        assert(advanceDate('2026-01-15', 'monthly')   === '2026-02-15');
+        assert(advanceDate('2026-01-15', 'quarterly') === '2026-04-15');
+        assert(advanceDate('2026-01-15', 'yearly')    === '2027-01-15');
+        // parseAmount edge cases
+        try { parseAmount('-1', $config); assert(false, 'neg should throw'); } catch (UserErr) {}
+        try { parseAmount('abc', $config); assert(false, 'nan should throw'); } catch (UserErr) {}
+        try { parseAmount('1e9', $config); assert(false, 'sci-notation should throw'); } catch (UserErr) {}
+        assert(parseAmount('12.34', $config) === 12.34);
+        echo "ok\n"; exit;
+    }
+    if ($mode === '--cron') {
+        // Runs from Hostinger cron. Daily is sufficient — the sweep is idempotent.
+        $db = makeDb($config);
+        $hids = $db->query("SELECT id FROM households")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($hids as $hid) sweepRecurring($db, (int)$hid);
+        $db->exec("DELETE FROM rate_limits WHERE window_end < UNIX_TIMESTAMP() - 3600");
+        echo "swept " . count($hids) . " households\n"; exit;
+    }
+    fwrite(STDERR, "usage: php index.php --selfcheck | --cron\n"); exit(1);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Session hardening — before session_start(), so cookie flags land.
+// ────────────────────────────────────────────────────────────────────
+session_name($config['session_name']);
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => '/',
+    'httponly' => true,
+    'samesite' => 'Lax',
+    'secure'   => !empty($_SERVER['HTTPS']),
+]);
+ini_set('session.use_only_cookies', '1');
+ini_set('session.use_strict_mode',  '1');
+session_start();
+
+// ────────────────────────────────────────────────────────────────────
+// DB
+// ────────────────────────────────────────────────────────────────────
+try {
+    $db = makeDb($config);
+} catch (PDOException $e) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit("Database connection failed. Edit config.php with your Hostinger MySQL credentials.\n\n" . $e->getMessage());
+}
+
+require __DIR__ . '/views.php';
+
+$path   = parse_url((string)$_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
+$method = $_SERVER['REQUEST_METHOD'];
+$user   = currentUser($db);
+
+// Every request gets a light global limiter to blunt scanners; the per-endpoint
+// limits below are the real controls.
+if ($method === 'POST') {
+    rateLimit($db, $config, 'post', $config['limits']['rate_post_per_min'], 60);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Unauthed: only the sign-in gate + Google callback are reachable.
+// ────────────────────────────────────────────────────────────────────
+if (!$user) {
+    if ($method === 'POST' && $path === '/signin') {
+        rateLimit($db, $config, 'signin', $config['limits']['rate_signin_per_15min'], 900);
+
+        // Dev-mode stub: only reachable while google_client_id is the placeholder.
+        if (isDevStubActive(GOOGLE_CLIENT_ID) && !empty($_POST['dev'])) {
+            $devSub = 'dev-local-user';
+            $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
+            $stmt->execute([$devSub]);
+            $uid = $stmt->fetchColumn() ?: bootstrapHousehold($db, 'You', 'you@localhost', $devSub);
+            session_regenerate_id(true);
+            $_SESSION['user_id'] = (int)$uid;
+            redirect('/');
+        }
+
+        // Google's own double-submit CSRF: g_csrf_token cookie must equal the POST field.
+        $cookie = $_COOKIE['g_csrf_token'] ?? '';
+        $body   = (string)($_POST['g_csrf_token'] ?? '');
+        if ($cookie === '' || !hash_equals($cookie, $body)) {
+            http_response_code(400); exit('CSRF token mismatch.');
+        }
+
+        $payload = verifyGoogleIdToken((string)($_POST['credential'] ?? ''), GOOGLE_CLIENT_ID);
+        if (!$payload) {
+            http_response_code(401); exit('Google sign-in failed.');
+        }
+
+        $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
+        $stmt->execute([$payload['sub']]);
+        $uid = $stmt->fetchColumn();
+        if (!$uid) {
+            $uid = bootstrapHousehold(
+                $db,
+                (string)($payload['name']  ?? 'User'),
+                (string)($payload['email'] ?? ''),
+                (string)$payload['sub']
+            );
+        }
+
+        session_regenerate_id(true);
+        $_SESSION['user_id'] = (int)$uid;
+        redirect('/');
+    }
+    renderSignIn();
+    exit;
+}
+
+$hid = (int)$user['household_id'];
+sweepRecurring($db, $hid);
+
+// ────────────────────────────────────────────────────────────────────
+// Authed POST actions — PRG pattern, CSRF-checked, limit-checked.
+// UserErr thrown by validators surfaces as an error toast on the next page.
+// ────────────────────────────────────────────────────────────────────
+$L = $config['limits'];
+
+if ($method === 'POST') {
+    try {
+        // All state-changing POSTs share one CSRF token.
+        csrfCheck();
+
+        switch ($path) {
+            case '/signout':
+                $_SESSION = []; session_destroy();
+                redirect('/');
+
+            case '/theme':
+                $db->prepare("UPDATE users SET is_dark = 1 - is_dark WHERE id = ?")->execute([$user['id']]);
+                redirect($_POST['back'] ?? '/');
+
+            case '/expenses':
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $note = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
+                $catId = (int)($_POST['category_id'] ?? 0);
+                $memId = (int)($_POST['member_id'] ?? 0);
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
+                    [$hid, $date],
+                    $L['expenses_per_day_max'],
+                    'Daily expenses'
+                );
+                $db->prepare(
+                    "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date)
+                     VALUES (?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $amt, $catId ?: null, $memId ?: null, $note, $date]);
+                redirect('/?toast=added');
+
+            case '/expenses/delete':
+                $db->prepare("DELETE FROM expenses WHERE id = ? AND household_id = ?")
+                   ->execute([(int)$_POST['id'], $hid]);
+                redirect($_POST['back'] ?? '/history');
+
+            case '/investments':
+                $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $type = in_array($_POST['type'] ?? '', ['SIP','Stocks','FD-RD','Gold','PPF-EPF','Other'], true)
+                        ? $_POST['type'] : 'Other';
+                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM investments WHERE household_id = ?",
+                    [$hid],
+                    $L['investments_total_max'],
+                    'Investments'
+                );
+                $db->prepare(
+                    "INSERT INTO investments (household_id, name, amount, type, date)
+                     VALUES (?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $type, $date]);
+                redirect('/invest');
+
+            case '/investments/delete':
+                $db->prepare("DELETE FROM investments WHERE id = ? AND household_id = ?")
+                   ->execute([(int)$_POST['id'], $hid]);
+                redirect('/invest');
+
+            case '/recurring':
+                $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $freq = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
+                        ? $_POST['frequency'] : 'monthly';
+                $date = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
+                $catId = (int)($_POST['category_id'] ?? 0);
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM recurring WHERE household_id = ?",
+                    [$hid],
+                    $L['recurring_total_max'],
+                    'Recurring items'
+                );
+                $db->prepare(
+                    "INSERT INTO recurring (household_id, name, amount, category_id, frequency, next_date)
+                     VALUES (?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $catId ?: null, $freq, $date]);
+                redirect('/recurring');
+
+            case '/recurring/delete':
+                $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
+                   ->execute([(int)$_POST['id'], $hid]);
+                redirect('/recurring');
+
+            case '/categories':
+                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM categories WHERE household_id = ?",
+                    [$hid],
+                    $L['categories_total_max'],
+                    'Categories'
+                );
+                $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, 'tag', 1)")
+                   ->execute([$hid, $name]);
+                redirect($_POST['back'] ?? '/manage');
+
+            case '/categories/delete':
+                $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
+                   ->execute([(int)$_POST['id'], $hid]);
+                redirect('/manage');
+
+            case '/members':
+                $name = requireStr((string)($_POST['name'] ?? ''), 60, 'Member name');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM members WHERE household_id = ?",
+                    [$hid],
+                    $L['members_total_max'],
+                    'Members'
+                );
+                $db->prepare("INSERT INTO members (household_id, name) VALUES (?, ?)")
+                   ->execute([$hid, $name]);
+                redirect('/manage');
+
+            case '/members/delete':
+                $countStmt = $db->prepare("SELECT COUNT(*) FROM members WHERE household_id = ?");
+                $countStmt->execute([$hid]);
+                if ((int)$countStmt->fetchColumn() > 1) {
+                    $db->prepare("DELETE FROM members WHERE id = ? AND household_id = ?")
+                       ->execute([(int)$_POST['id'], $hid]);
+                }
+                redirect('/manage');
+
+            default:
+                http_response_code(404); exit('404');
+        }
+    } catch (UserErr $e) {
+        flash('error', $e->getMessage());
+        redirect($_POST['back'] ?? ($_SERVER['HTTP_REFERER'] ?? '/'));
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Authed GET routes.
+// ────────────────────────────────────────────────────────────────────
+switch ($path) {
+    case '/':
+    case '/add':       renderAdd($db, $user, $_GET['toast'] ?? null); break;
+    case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
+    case '/invest':    renderInvest($db, $user, isset($_GET['new'])); break;
+    case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
+    case '/manage':    renderManage($db, $user); break;
+    default:           http_response_code(404); exit('404');
+}

@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# macOS
+.DS_Store
+
+# Local dev
+/data/
+/*.zip
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp

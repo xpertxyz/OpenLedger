@@ -1,0 +1,27 @@
+# Hostinger / Apache / LiteSpeed front-controller
+RewriteEngine On
+
+# Serve real files (styles.css, favicon, etc.) as-is.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Everything else -> index.php
+RewriteRule ^ index.php [L]
+
+# Belt & braces: block direct fetches of app internals (all still `require`-able from PHP).
+<FilesMatch "^(config\.php|views\.php|lib\.php|router\.php|CLAUDE\.md|README\.md|Home\ Expense\ Tracker\.dc\.html)$">
+    Require all denied
+</FilesMatch>
+
+# Deny any dotfile fetch (.env, .git*, .htaccess itself, etc.)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Basic hardening headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "same-origin"
+</IfModule>

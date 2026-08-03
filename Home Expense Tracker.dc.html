@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/organic-8363314c-1885-4e39-b269-fc818e3c0350/styles.css">
+  <script src="_ds/organic-8363314c-1885-4e39-b269-fc818e3c0350/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: var(--color-bg); }
+    @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; }
+  </style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute;overflow:hidden">
+  <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></symbol>
+  <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></symbol>
+  <symbol id="icon-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></symbol>
+  <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></symbol>
+  <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 10v6m11-7h-6M7 12H1m16.24-6.24-4.24 4.24M9 15l-4.24 4.24M19.24 18.24 15 14m-6-6L4.76 5.76"></path></symbol>
+  <symbol id="icon-trash-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></symbol>
+  <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></symbol>
+  <symbol id="icon-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></symbol>
+  <symbol id="icon-credit-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></symbol>
+  <symbol id="icon-trending-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></symbol>
+  <symbol id="icon-shopping-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></symbol>
+  <symbol id="icon-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-5H10v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"></path></symbol>
+  <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></symbol>
+  <symbol id="icon-utensils" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h1a2 2 0 0 0 2-2V2"></path><path d="M7 2v20"></path><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"></path></symbol>
+  <symbol id="icon-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a1 1 0 0 0-.8-.4H5.24a2 2 0 0 0-1.8 1.1l-.8 1.63A6 6 0 0 0 2 12.42V16h2"></path><circle cx="6.5" cy="16.5" r="2.5"></circle><circle cx="16.5" cy="16.5" r="2.5"></circle></symbol>
+  <symbol id="icon-heart-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"></path><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"></path></symbol>
+  <symbol id="icon-shopping-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"></path><path d="M3 6h18"></path><path d="M16 10a4 4 0 0 1-8 0"></path></symbol>
+  <symbol id="icon-landmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="21" y2="22"></line><line x1="6" y1="18" x2="6" y2="11"></line><line x1="10" y1="18" x2="10" y2="11"></line><line x1="14" y1="18" x2="14" y2="11"></line><line x1="18" y1="18" x2="18" y2="11"></line><polygon points="12 2 20 7 4 7"></polygon></symbol>
+  <symbol id="icon-film" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2.18"></rect><line x1="7" y1="3" x2="7" y2="21"></line><line x1="17" y1="3" x2="17" y2="21"></line><line x1="2" y1="8" x2="7" y2="8"></line><line x1="2" y1="16" x2="7" y2="16"></line><line x1="17" y1="8" x2="22" y2="8"></line><line x1="17" y1="16" x2="22" y2="16"></line></symbol>
+  <symbol id="icon-book-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></symbol>
+  <symbol id="icon-more-horizontal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></symbol>
+  <symbol id="icon-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42Z"></path><circle cx="7.5" cy="7.5" r="1.5"></circle></symbol>
+  <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.9" y1="4.9" x2="6.3" y2="6.3"></line><line x1="17.7" y1="17.7" x2="19.1" y2="19.1"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="4.9" y1="19.1" x2="6.3" y2="17.7"></line><line x1="17.7" y1="6.3" x2="19.1" y2="4.9"></line></symbol>
+  <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></symbol>
+  <symbol id="icon-google" viewBox="0 0 48 48">
+    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.9-2.26 5.36-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78z"></path>
+    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+  </symbol>
+</svg>
+
+<div style="{{ rootStyle }}">
+
+<sc-if value="{{ needsSignIn }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:var(--space-4);">
+    <div class="card elev-lg" style="width:100%;max-width:340px;padding:var(--space-6);align-items:center;text-align:center;gap:var(--space-4);">
+      <div style="font-family:var(--font-heading);font-size:24px;">Home Ledger</div>
+      <div style="font-size:14px;color:var(--color-neutral-700);">Track household expenses and investments together.</div>
+      <button class="btn btn-secondary btn-block" onClick="{{ signInWithGoogle }}" style="display:flex;align-items:center;justify-content:center;gap:10px;padding:12px;font-size:15px;background:var(--color-surface);margin-top:0;">
+        <svg width="18" height="18"><use href="#icon-google"></use></svg>
+        Sign in with Google
+      </button>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{ isSignedIn }}" hint-placeholder-val="{{ true }}">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-4) var(--space-4) var(--space-2);">
+    <div style="font-family:var(--font-heading);font-size:22px;">Home Ledger</div>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <button class="btn btn-icon" onClick="{{ toggleDarkMode }}" aria-label="Toggle theme" style="color:var(--color-text);">
+        <svg width="18" height="18"><use href="{{ themeIconHref }}"></use></svg>
+      </button>
+      <button class="btn btn-icon" onClick="{{ openManage }}" aria-label="Manage categories and members" style="color:var(--color-text);">
+        <svg width="19" height="19"><use href="#icon-settings"></use></svg>
+      </button>
+      <button onClick="{{ signOut }}" aria-label="Sign out" style="width:34px;height:34px;border-radius:999px;background:var(--color-accent-100);color:var(--color-accent-700);border:none;cursor:pointer;font-family:var(--font-heading);font-size:13px;">{{ userInitial }}</button>
+    </div>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding:0 var(--space-4) 104px;">
+
+    <sc-if value="{{ isAddTab }}" hint-placeholder-val="{{ true }}">
+      <div style="padding-top:var(--space-2);">
+        <div class="card elev-sm" style="align-items:center;text-align:center;padding:var(--space-6);margin-bottom:var(--space-6);gap:var(--space-1);">
+          <div style="font-size:13px;color:var(--color-neutral-700);">How much did you spend?</div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
+            <span style="font-family:var(--font-heading);font-size:30px;color:var(--color-accent-700);">{{ currencySymbol }}</span>
+            <input type="text" inputmode="decimal" placeholder="0" value="{{ amountInput }}" onChange="{{ onAmountChange }}" style="font-family:var(--font-heading);font-size:46px;border:none;outline:none;background:transparent;width:220px;text-align:left;color:var(--color-text);" />
+          </div>
+        </div>
+
+        <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:var(--space-3);">Category</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);margin-bottom:var(--space-4);">
+          <sc-for list="{{ categoryChips }}" as="cat" hint-placeholder-count="9">
+            <button onClick="{{ cat.select }}" style="{{ cat.chipStyle }}">
+              <svg width="21" height="21" style="{{ cat.iconStyle }}"><use href="{{ cat.iconHref }}"></use></svg>
+              <span style="font-size:11.5px;text-align:center;line-height:1.2;">{{ cat.name }}</span>
+            </button>
+          </sc-for>
+          <button onClick="{{ toggleAddCategory }}" style="{{ addChipStyle }}">
+            <svg width="21" height="21"><use href="#icon-plus"></use></svg>
+            <span style="font-size:11.5px;">New</span>
+          </button>
+        </div>
+
+        <sc-if value="{{ showAddCategory }}">
+          <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-4);">
+            <input class="input" placeholder="Category name" value="{{ newCategoryName }}" onChange="{{ onNewCategoryChange }}" style="flex:1;" />
+            <button class="btn btn-primary" onClick="{{ addCategory }}">Add</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ showMembers }}">
+          <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:var(--space-3);">Who spent it?</div>
+          <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4);">
+            <sc-for list="{{ memberChips }}" as="mem" hint-placeholder-count="2">
+              <button onClick="{{ mem.select }}" style="{{ mem.pillStyle }}">{{ mem.name }}</button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-4);">
+          <input class="input" placeholder="Add a note (optional)" value="{{ noteInput }}" onChange="{{ onNoteChange }}" style="flex:1.3;" />
+          <input type="date" class="input" value="{{ dateInput }}" onChange="{{ onDateChange }}" style="flex:1;" />
+        </div>
+
+        <button class="btn btn-primary btn-block" onClick="{{ saveExpense }}" disabled="{{ saveDisabled }}" style="font-size:16px;padding:var(--space-3);">Add Expense</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isHistoryTab }}">
+      <div style="padding-top:var(--space-2);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-4);">
+          <button class="btn btn-icon" onClick="{{ prevMonth }}"><svg width="17" height="17"><use href="#icon-chevron-left"></use></svg></button>
+          <div style="font-family:var(--font-heading);font-size:18px;">{{ monthLabel }}</div>
+          <button class="btn btn-icon" onClick="{{ nextMonth }}" disabled="{{ nextMonthDisabled }}"><svg width="17" height="17"><use href="#icon-chevron-right"></use></svg></button>
+        </div>
+
+        <div class="card" style="background:var(--color-accent-700);color:var(--color-bg);padding:var(--space-4);margin-bottom:var(--space-6);">
+          <div style="font-size:13px;opacity:0.85;">Total spent</div>
+          <div style="font-family:var(--font-heading);font-size:32px;">{{ monthTotalFormatted }}</div>
+          <div style="font-size:13px;opacity:0.85;">{{ monthCountLabel }}</div>
+        </div>
+
+        <sc-if value="{{ hasMonthExpenses }}" hint-placeholder-val="{{ true }}">
+          <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:var(--space-3);">By category</div>
+          <div style="display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-6);">
+            <sc-for list="{{ breakdown }}" as="b" hint-placeholder-count="4">
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+                  <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><use href="{{ b.iconHref }}"></use></svg>{{ b.name }}</span>
+                  <span>{{ b.amountFormatted }} · {{ b.pctLabel }}</span>
+                </div>
+                <div style="height:8px;background:var(--color-neutral-200);border-radius:999px;overflow:hidden;">
+                  <div style="{{ b.barStyle }}"></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="font-family:var(--font-heading);font-size:15px;margin-bottom:var(--space-3);">Transactions</div>
+          <div style="display:flex;flex-direction:column;gap:var(--space-4);">
+            <sc-for list="{{ dayGroups }}" as="g" hint-placeholder-count="3">
+              <div>
+                <div style="font-size:12px;color:var(--color-neutral-700);margin-bottom:var(--space-2);">{{ g.dateLabel }}</div>
+                <div style="display:flex;flex-direction:column;gap:var(--space-2);">
+                  <sc-for list="{{ g.items }}" as="tx" hint-placeholder-count="2">
+                    <div class="card elev-sm" style="display:flex;flex-direction:row;align-items:center;gap:var(--space-3);padding:var(--space-3);">
+                      <div style="width:36px;height:36px;border-radius:999px;background:var(--color-accent-100);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="17" height="17" style="color:var(--color-accent-700);"><use href="{{ tx.iconHref }}"></use></svg>
+                      </div>
+                      <div style="flex:1;min-width:0;">
+                        <div style="font-size:14px;font-weight:600;">{{ tx.categoryName }}</div>
+                        <div style="font-size:12px;color:var(--color-neutral-700);">{{ tx.subLabel }}</div>
+                      </div>
+                      <div style="font-size:15px;font-weight:600;">{{ tx.amountFormatted }}</div>
+                      <button onClick="{{ tx.remove }}" aria-label="Delete" style="background:none;border:none;padding:6px;cursor:pointer;color:var(--color-neutral-600);">
+                        <svg width="15" height="15"><use href="#icon-trash-2"></use></svg>
+                      </button>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ noMonthExpenses }}">
+          <div style="text-align:center;padding:var(--space-8) var(--space-4);color:var(--color-neutral-700);">
+            <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:6px;color:var(--color-text);">No expenses this month</div>
+            <div style="font-size:14px;">Entries you add will show up here.</div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isInvestTab }}">
+      <div style="padding-top:var(--space-2);">
+        <div class="card" style="background:var(--color-accent-2-700);color:var(--color-bg);padding:var(--space-4);margin-bottom:var(--space-6);">
+          <div style="font-size:13px;opacity:0.85;">Total invested</div>
+          <div style="font-family:var(--font-heading);font-size:32px;">{{ totalInvestedFormatted }}</div>
+        </div>
+
+        <sc-if value="{{ showInvestForm }}">
+          <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-4);gap:var(--space-3);">
+            <input class="input" placeholder="e.g. SIP - Mutual Fund" value="{{ invName }}" onChange="{{ onInvNameChange }}" />
+            <div style="display:flex;gap:var(--space-3);">
+              <input class="input" inputmode="decimal" placeholder="Amount" value="{{ invAmount }}" onChange="{{ onInvAmountChange }}" style="flex:1;" />
+              <select class="input" value="{{ invType }}" onChange="{{ onInvTypeChange }}" style="flex:1;">
+                <option value="SIP">SIP</option>
+                <option value="Stocks">Stocks</option>
+                <option value="FD/RD">FD / RD</option>
+                <option value="Gold">Gold</option>
+                <option value="PPF/EPF">PPF / EPF</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <input type="date" class="input" value="{{ invDate }}" onChange="{{ onInvDateChange }}" />
+            <div style="display:flex;gap:var(--space-3);">
+              <button class="btn btn-secondary" onClick="{{ cancelInvestForm }}" style="flex:1;">Cancel</button>
+              <button class="btn btn-primary" onClick="{{ saveInvestment }}" disabled="{{ investSaveDisabled }}" style="flex:1;">Save</button>
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showAddInvestButton }}">
+          <button class="btn btn-secondary btn-block" onClick="{{ openInvestForm }}" style="margin-bottom:var(--space-4);margin-top:0;">
+            <svg width="15" height="15"><use href="#icon-plus"></use></svg> Add investment
+          </button>
+        </sc-if>
+
+        <sc-if value="{{ hasInvestments }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:var(--space-3);">
+            <sc-for list="{{ investmentsList }}" as="inv" hint-placeholder-count="3">
+              <div class="card elev-sm" style="display:flex;flex-direction:row;align-items:center;gap:var(--space-3);padding:var(--space-3);">
+                <div style="width:36px;height:36px;border-radius:999px;background:var(--color-accent-2-100);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                  <svg width="17" height="17" style="color:var(--color-accent-2-700);"><use href="#icon-trending-up"></use></svg>
+                </div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:14px;font-weight:600;">{{ inv.name }}</div>
+                  <div style="font-size:12px;color:var(--color-neutral-700);">{{ inv.typeAndDate }}</div>
+                </div>
+                <div style="font-size:15px;font-weight:600;">{{ inv.amountFormatted }}</div>
+                <button onClick="{{ inv.remove }}" aria-label="Delete" style="background:none;border:none;padding:6px;cursor:pointer;color:var(--color-neutral-600);">
+                  <svg width="15" height="15"><use href="#icon-trash-2"></use></svg>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ noInvestments }}">
+          <div style="text-align:center;padding:var(--space-8) var(--space-4);color:var(--color-neutral-700);">
+            <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:6px;color:var(--color-text);">Nothing logged yet</div>
+            <div style="font-size:14px;">Track SIPs, stocks, FDs, gold and more.</div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isRecurringTab }}">
+      <div style="padding-top:var(--space-2);">
+        <div style="font-size:14px;color:var(--color-neutral-700);margin-bottom:var(--space-4);">Rent, EMIs and subscriptions that repeat.</div>
+
+        <sc-if value="{{ showRecurringForm }}">
+          <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-4);gap:var(--space-3);">
+            <input class="input" placeholder="e.g. Rent" value="{{ recName }}" onChange="{{ onRecNameChange }}" />
+            <div style="display:flex;gap:var(--space-3);">
+              <input class="input" inputmode="decimal" placeholder="Amount" value="{{ recAmount }}" onChange="{{ onRecAmountChange }}" style="flex:1;" />
+              <select class="input" value="{{ recCategory }}" onChange="{{ onRecCategoryChange }}" style="flex:1;">
+                <sc-for list="{{ categoryOptions }}" as="co" hint-placeholder-count="5">
+                  <option value="{{ co.id }}">{{ co.name }}</option>
+                </sc-for>
+              </select>
+            </div>
+            <div style="display:flex;gap:var(--space-3);">
+              <select class="input" value="{{ recFrequency }}" onChange="{{ onRecFrequencyChange }}" style="flex:1;">
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+              <input type="date" class="input" value="{{ recNextDate }}" onChange="{{ onRecNextDateChange }}" style="flex:1;" />
+            </div>
+            <div style="display:flex;gap:var(--space-3);">
+              <button class="btn btn-secondary" onClick="{{ cancelRecurringForm }}" style="flex:1;">Cancel</button>
+              <button class="btn btn-primary" onClick="{{ saveRecurring }}" disabled="{{ recurringSaveDisabled }}" style="flex:1;">Save</button>
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showAddRecurringButton }}">
+          <button class="btn btn-secondary btn-block" onClick="{{ openRecurringForm }}" style="margin-bottom:var(--space-4);margin-top:0;">
+            <svg width="15" height="15"><use href="#icon-plus"></use></svg> Add recurring expense
+          </button>
+        </sc-if>
+
+        <sc-if value="{{ hasRecurring }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:var(--space-3);">
+            <sc-for list="{{ recurringList }}" as="r" hint-placeholder-count="3">
+              <div class="card elev-sm" style="padding:var(--space-3);">
+                <div style="display:flex;align-items:center;gap:var(--space-3);">
+                  <div style="width:36px;height:36px;border-radius:999px;background:var(--color-accent-100);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="17" height="17" style="color:var(--color-accent-700);"><use href="#icon-repeat"></use></svg>
+                  </div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:14px;font-weight:600;">{{ r.name }}</div>
+                    <div style="font-size:12px;color:var(--color-neutral-700);">{{ r.detailLabel }}</div>
+                  </div>
+                  <div style="font-size:15px;font-weight:600;">{{ r.amountFormatted }}</div>
+                  <button onClick="{{ r.remove }}" aria-label="Delete" style="background:none;border:none;padding:6px;cursor:pointer;color:var(--color-neutral-600);">
+                    <svg width="15" height="15"><use href="#icon-trash-2"></use></svg>
+                  </button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ noRecurring }}">
+          <div style="text-align:center;padding:var(--space-8) var(--space-4);color:var(--color-neutral-700);">
+            <div style="font-family:var(--font-heading);font-size:17px;margin-bottom:6px;color:var(--color-text);">No recurring expenses</div>
+            <div style="font-size:14px;">Add rent, EMIs or subscriptions to track monthly.</div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+  </div>
+
+  <div style="position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;background:var(--color-surface);display:flex;border-top:1px solid var(--color-divider);padding:var(--space-2) var(--space-3);gap:var(--space-1);">
+    <sc-for list="{{ navTabs }}" as="tab" hint-placeholder-count="4">
+      <button onClick="{{ tab.select }}" style="{{ tab.buttonStyle }}">
+        <svg width="19" height="19"><use href="{{ tab.iconHref }}"></use></svg>
+        <span style="font-size:11px;">{{ tab.label }}</span>
+      </button>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{ showToast }}">
+    <div style="position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--color-accent-700);color:var(--color-bg);padding:10px 20px;border-radius:999px;font-size:14px;box-shadow:var(--shadow-md);animation:toast-in 0.2s ease-out;">Expense added</div>
+  </sc-if>
+
+  <sc-if value="{{ showManage }}">
+    <div class="dialog-backdrop" onClick="{{ closeManage }}">
+      <div class="dialog" onClick="{{ stopPropagation }}">
+        <div class="dialog-title">Categories &amp; members</div>
+        <div class="dialog-body" style="display:flex;flex-direction:column;gap:var(--space-6);max-height:60vh;overflow-y:auto;">
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:var(--space-2);color:var(--color-text);opacity:1;">Categories</div>
+            <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);">
+              <sc-for list="{{ manageCategories }}" as="mc" hint-placeholder-count="6">
+                <span class="tag tag-neutral" style="display:flex;align-items:center;gap:6px;">
+                  {{ mc.name }}
+                  <sc-if value="{{ mc.deletable }}">
+                    <button onClick="{{ mc.remove }}" aria-label="Remove category" style="background:none;border:none;padding:0;cursor:pointer;display:flex;color:inherit;">
+                      <svg width="11" height="11"><use href="#icon-x"></use></svg>
+                    </button>
+                  </sc-if>
+                </span>
+              </sc-for>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:var(--space-2);color:var(--color-text);opacity:1;">Household members</div>
+            <div style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-3);">
+              <sc-for list="{{ manageMembers }}" as="mm" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--color-neutral-100);border-radius:var(--radius-md);padding:var(--space-2) var(--space-3);">
+                  <span style="font-size:14px;">{{ mm.name }}</span>
+                  <sc-if value="{{ mm.deletable }}">
+                    <button onClick="{{ mm.remove }}" aria-label="Remove member" style="background:none;border:none;cursor:pointer;color:var(--color-neutral-600);">
+                      <svg width="14" height="14"><use href="#icon-x"></use></svg>
+                    </button>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:var(--space-2);">
+              <input class="input" placeholder="Add member name" value="{{ newMemberName }}" onChange="{{ onNewMemberChange }}" style="flex:1;" />
+              <button class="btn btn-secondary" onClick="{{ addMember }}">Add</button>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-primary" onClick="{{ closeManage }}">Done</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 420, &quot;height&quot;: 860}, &quot;currencySymbol&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;₹&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Behavior&quot;}, &quot;defaultTab&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;add&quot;, &quot;options&quot;: [&quot;add&quot;, &quot;history&quot;, &quot;investments&quot;, &quot;recurring&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Behavior&quot;}}">
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function defaultCategories() {
+  return [
+    { id: 'groceries', name: 'Groceries', icon: 'shopping-cart' },
+    { id: 'rent', name: 'Rent', icon: 'home' },
+    { id: 'utilities', name: 'Utilities', icon: 'zap' },
+    { id: 'dining', name: 'Dining Out', icon: 'utensils' },
+    { id: 'transport', name: 'Transport', icon: 'car' },
+    { id: 'health', name: 'Health', icon: 'heart-pulse' },
+    { id: 'shopping', name: 'Shopping', icon: 'shopping-bag' },
+    { id: 'emi', name: 'EMI / Loans', icon: 'landmark' },
+    { id: 'subscriptions', name: 'Subscriptions', icon: 'repeat' },
+    { id: 'creditcard', name: 'Credit Card Bill', icon: 'credit-card' },
+    { id: 'entertainment', name: 'Entertainment', icon: 'film' },
+    { id: 'education', name: 'Education', icon: 'book-open' },
+    { id: 'other', name: 'Other', icon: 'more-horizontal' }
+  ];
+}
+function defaultState() {
+  return {
+    activeTab: 'add',
+    expenses: [], investments: [], recurring: [],
+    categories: defaultCategories(),
+    members: [{ id: 'me', name: 'Me' }],
+    amountInput: '', selectedCategory: 'groceries', selectedMember: 'me', noteInput: '', dateInput: todayISO(),
+    showAddCategory: false, newCategoryName: '',
+    historyMonthOffset: 0,
+    showInvestForm: false, invName: '', invAmount: '', invType: 'SIP', invDate: todayISO(),
+    showRecurringForm: false, recName: '', recAmount: '', recCategory: 'groceries', recFrequency: 'monthly', recNextDate: todayISO(),
+    showManage: false, newMemberName: '',
+    showToast: false,
+    user: null, darkMode: false
+  };
+}
+function loadInitial() {
+  var user = null, darkMode = false;
+  try { var rawUser = localStorage.getItem('homeLedgerUser'); if (rawUser) user = JSON.parse(rawUser); } catch (e) {}
+  try { darkMode = localStorage.getItem('homeLedgerTheme') === 'dark'; } catch (e) {}
+  try {
+    var raw = localStorage.getItem('homeLedgerData_v1');
+    if (raw) {
+      var data = JSON.parse(raw);
+      var base = defaultState();
+      var categories = (data.categories && data.categories.length) ? data.categories : base.categories;
+      var members = (data.members && data.members.length) ? data.members : base.members;
+      return Object.assign({}, base, {
+        expenses: data.expenses || [], investments: data.investments || [], recurring: data.recurring || [],
+        categories: categories, members: members,
+        selectedCategory: categories[0].id, selectedMember: members[0].id, recCategory: categories[0].id,
+        user: user, darkMode: darkMode
+      });
+    }
+  } catch (e) {}
+  return Object.assign({}, defaultState(), { user: user, darkMode: darkMode });
+}
+function advanceDate(dateStr, freq) {
+  var d = new Date(dateStr + 'T00:00:00');
+  if (freq === 'quarterly') d.setMonth(d.getMonth() + 3);
+  else if (freq === 'yearly') d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+var THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text:#f3e9d8;' +
+  '--color-divider:color-mix(in srgb, #f3e9d8 18%, transparent);' +
+  '--color-neutral-100:#2c2822;--color-neutral-200:#363028;--color-neutral-300:#453d31;--color-neutral-400:#5a5040;--color-neutral-500:#786c56;--color-neutral-600:#9c8f76;--color-neutral-700:#bfb29a;--color-neutral-800:#dcd0ba;--color-neutral-900:#f3e9d8;' +
+  '--color-accent:#e0864c;--color-accent-100:#3a2a1c;--color-accent-200:#4d3320;--color-accent-300:#6b4324;--color-accent-400:#95592c;--color-accent-500:#c06f35;--color-accent-600:#d97f42;--color-accent-700:#e79968;--color-accent-800:#f0b78c;--color-accent-900:#f8d7b8;' +
+  '--color-accent-2:#93a86e;--color-accent-2-100:#2a301f;--color-accent-2-200:#333b26;--color-accent-2-300:#414c2f;--color-accent-2-400:#57643d;--color-accent-2-500:#71804f;--color-accent-2-600:#8a9863;--color-accent-2-700:#a8b884;--color-accent-2-800:#c4d1a8;--color-accent-2-900:#e2e8d0;' +
+  '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);';
+
+class Component extends DCLogic {
+  state = loadInitial();
+
+  componentDidMount() {
+    if (this.props.defaultTab && this.props.defaultTab !== this.state.activeTab) {
+      this.setState({ activeTab: this.props.defaultTab });
+    }
+    this.processDueRecurring();
+    var self = this;
+    this._dueTimer = setInterval(function () { self.processDueRecurring(); }, 60000);
+  }
+  componentWillUnmount() { clearInterval(this._dueTimer); }
+
+  processDueRecurring() {
+    var self = this;
+    this.setState(function (s) {
+      if (!s.recurring.length) return {};
+      var today = todayISO();
+      var newExpenses = s.expenses.slice();
+      var changed = false;
+      var updatedRecurring = s.recurring.map(function (r) {
+        var next = r.nextDate;
+        var guard = 0;
+        while (next <= today && guard < 36) {
+          changed = true;
+          newExpenses.push({ id: 'e_' + uid(), amount: r.amount, category: r.category, member: s.members[0] ? s.members[0].id : 'me', note: r.name + ' (recurring)', date: next });
+          next = advanceDate(next, r.frequency);
+          guard++;
+        }
+        return next === r.nextDate ? r : Object.assign({}, r, { nextDate: next });
+      });
+      return changed ? { expenses: newExpenses, recurring: updatedRecurring } : {};
+    }, function () { self.persist(); });
+  }
+
+  signInWithGoogle() {
+    var user = { name: 'You', email: 'you@gmail.com' };
+    try { localStorage.setItem('homeLedgerUser', JSON.stringify(user)); } catch (e) {}
+    this.setState({ user: user });
+  }
+  signOut() {
+    try { localStorage.removeItem('homeLedgerUser'); } catch (e) {}
+    this.setState({ user: null });
+  }
+  toggleDarkMode() {
+    this.setState(function (s) {
+      var next = !s.darkMode;
+      try { localStorage.setItem('homeLedgerTheme', next ? 'dark' : 'light'); } catch (e) {}
+      return { darkMode: next };
+    });
+  }
+
+  persist() {
+    try {
+      localStorage.setItem('homeLedgerData_v1', JSON.stringify({
+        expenses: this.state.expenses, investments: this.state.investments, recurring: this.state.recurring,
+        categories: this.state.categories, members: this.state.members
+      }));
+    } catch (e) {}
+  }
+
+  mutate(updater) { this.setState(updater, () => this.persist()); }
+
+  formatCurrency(n) {
+    var sym = this.props.currencySymbol || '₹';
+    return sym + Math.round(n).toLocaleString('en-IN');
+  }
+
+  getCategoryMeta(id) {
+    return this.state.categories.find(function (c) { return c.id === id; }) || { name: 'Other', icon: 'more-horizontal' };
+  }
+  getMemberName(id) {
+    var m = this.state.members.find(function (mm) { return mm.id === id; });
+    return m ? m.name : 'Me';
+  }
+
+  setTab(tab) { this.setState({ activeTab: tab }); }
+  selectCategory(id) { this.setState({ selectedCategory: id }); }
+  selectMember(id) { this.setState({ selectedMember: id }); }
+  onAmountChange(e) { this.setState({ amountInput: e.target.value.replace(/[^0-9.]/g, '') }); }
+  onNoteChange(e) { this.setState({ noteInput: e.target.value }); }
+  onDateChange(e) { this.setState({ dateInput: e.target.value }); }
+  toggleAddCategory() { this.setState(function (s) { return { showAddCategory: !s.showAddCategory, newCategoryName: '' }; }); }
+  onNewCategoryChange(e) { this.setState({ newCategoryName: e.target.value }); }
+  addCategory() {
+    var name = this.state.newCategoryName.trim();
+    if (!name) return;
+    var id = 'c_' + uid();
+    this.mutate(function (s) {
+      return { categories: s.categories.concat([{ id: id, name: name, icon: 'tag', custom: true }]), selectedCategory: id, showAddCategory: false, newCategoryName: '' };
+    });
+  }
+  removeCategory(id) {
+    this.mutate(function (s) {
+      var cat = s.categories.find(function (c) { return c.id === id; });
+      if (!cat || !cat.custom) return {};
+      var remaining = s.categories.filter(function (c) { return c.id !== id; });
+      return { categories: remaining, selectedCategory: s.selectedCategory === id ? remaining[0].id : s.selectedCategory };
+    });
+  }
+
+  saveExpense() {
+    var amt = parseFloat(this.state.amountInput);
+    if (!amt || amt <= 0) return;
+    var entry = { id: 'e_' + uid(), amount: amt, category: this.state.selectedCategory, member: this.state.selectedMember, note: this.state.noteInput.trim(), date: this.state.dateInput };
+    var self = this;
+    this.mutate(function (s) { return { expenses: s.expenses.concat([entry]), amountInput: '', noteInput: '', dateInput: todayISO(), showToast: true }; });
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(function () { self.setState({ showToast: false }); }, 1800);
+  }
+  removeExpense(id) { this.mutate(function (s) { return { expenses: s.expenses.filter(function (e) { return e.id !== id; }) }; }); }
+
+  prevMonth() { this.setState(function (s) { return { historyMonthOffset: s.historyMonthOffset - 1 }; }); }
+  nextMonth() { this.setState(function (s) { return s.historyMonthOffset < 0 ? { historyMonthOffset: s.historyMonthOffset + 1 } : s; }); }
+
+  openInvestForm() { this.setState({ showInvestForm: true, invDate: todayISO() }); }
+  cancelInvestForm() { this.setState({ showInvestForm: false, invName: '', invAmount: '' }); }
+  onInvNameChange(e) { this.setState({ invName: e.target.value }); }
+  onInvAmountChange(e) { this.setState({ invAmount: e.target.value.replace(/[^0-9.]/g, '') }); }
+  onInvTypeChange(e) { this.setState({ invType: e.target.value }); }
+  onInvDateChange(e) { this.setState({ invDate: e.target.value }); }
+  saveInvestment() {
+    var amt = parseFloat(this.state.invAmount);
+    var name = this.state.invName.trim();
+    if (!amt || amt <= 0 || !name) return;
+    var entry = { id: 'i_' + uid(), name: name, amount: amt, type: this.state.invType, date: this.state.invDate };
+    this.mutate(function (s) { return { investments: s.investments.concat([entry]), showInvestForm: false, invName: '', invAmount: '' }; });
+  }
+  removeInvestment(id) { this.mutate(function (s) { return { investments: s.investments.filter(function (i) { return i.id !== id; }) }; }); }
+
+  openRecurringForm() { this.setState({ showRecurringForm: true, recNextDate: todayISO() }); }
+  cancelRecurringForm() { this.setState({ showRecurringForm: false, recName: '', recAmount: '' }); }
+  onRecNameChange(e) { this.setState({ recName: e.target.value }); }
+  onRecAmountChange(e) { this.setState({ recAmount: e.target.value.replace(/[^0-9.]/g, '') }); }
+  onRecCategoryChange(e) { this.setState({ recCategory: e.target.value }); }
+  onRecFrequencyChange(e) { this.setState({ recFrequency: e.target.value }); }
+  onRecNextDateChange(e) { this.setState({ recNextDate: e.target.value }); }
+  saveRecurring() {
+    var amt = parseFloat(this.state.recAmount);
+    var name = this.state.recName.trim();
+    if (!amt || amt <= 0 || !name) return;
+    var entry = { id: 'r_' + uid(), name: name, amount: amt, category: this.state.recCategory, frequency: this.state.recFrequency, nextDate: this.state.recNextDate };
+    this.mutate(function (s) { return { recurring: s.recurring.concat([entry]), showRecurringForm: false, recName: '', recAmount: '' }; });
+  }
+  removeRecurring(id) { this.mutate(function (s) { return { recurring: s.recurring.filter(function (r) { return r.id !== id; }) }; }); }
+
+  openManage() { this.setState({ showManage: true }); }
+  closeManage() { this.setState({ showManage: false }); }
+  stopPropagation(e) { e.stopPropagation(); }
+  onNewMemberChange(e) { this.setState({ newMemberName: e.target.value }); }
+  addMember() {
+    var name = this.state.newMemberName.trim();
+    if (!name) return;
+    var id = 'm_' + uid();
+    this.mutate(function (s) { return { members: s.members.concat([{ id: id, name: name }]), newMemberName: '' }; });
+  }
+  removeMember(id) {
+    this.mutate(function (s) {
+      if (s.members.length <= 1) return {};
+      var remaining = s.members.filter(function (m) { return m.id !== id; });
+      return { members: remaining, selectedMember: s.selectedMember === id ? remaining[0].id : s.selectedMember };
+    });
+  }
+
+  renderVals() {
+    var self = this;
+    var s = this.state;
+    var currencySymbol = this.props.currencySymbol || '₹';
+
+    var categoryChips = s.categories.map(function (c) {
+      var selected = c.id === s.selectedCategory;
+      return {
+        id: c.id, name: c.name, iconHref: '#icon-' + c.icon,
+        iconStyle: 'color:' + (selected ? 'var(--color-accent-700)' : 'var(--color-neutral-700)') + ';',
+        chipStyle: 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:14px 4px;border-radius:var(--radius-md);border:2px solid ' + (selected ? 'var(--color-accent)' : 'var(--color-divider)') + ';background:' + (selected ? 'var(--color-accent-100)' : 'var(--color-surface)') + ';color:var(--color-text);cursor:pointer;',
+        select: function () { self.selectCategory(c.id); }
+      };
+    });
+    var addChipStyle = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:14px 4px;border-radius:var(--radius-md);border:2px dashed var(--color-divider);background:transparent;color:var(--color-neutral-700);font-family:var(--font-body);cursor:pointer;';
+
+    var memberChips = s.members.map(function (m) {
+      var selected = m.id === s.selectedMember;
+      return {
+        id: m.id, name: m.name,
+        pillStyle: 'padding:8px 16px;border-radius:999px;border:1.5px solid ' + (selected ? 'var(--color-accent)' : 'var(--color-divider)') + ';background:' + (selected ? 'var(--color-accent)' : 'var(--color-surface)') + ';color:' + (selected ? 'var(--color-bg)' : 'var(--color-text)') + ';font-size:13px;font-family:var(--font-body);cursor:pointer;',
+        select: function () { self.selectMember(m.id); }
+      };
+    });
+
+    var amt = parseFloat(s.amountInput);
+    var saveDisabled = !amt || amt <= 0;
+
+    // History
+    var now = new Date();
+    var targetMonth = new Date(now.getFullYear(), now.getMonth() + s.historyMonthOffset, 1);
+    var monthLabel = targetMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    var monthKey = targetMonth.getFullYear() + '-' + String(targetMonth.getMonth() + 1).padStart(2, '0');
+    var monthExpenses = s.expenses.filter(function (e) { return e.date && e.date.slice(0, 7) === monthKey; });
+    var monthTotal = monthExpenses.reduce(function (sum, e) { return sum + e.amount; }, 0);
+    var hasMonthExpenses = monthExpenses.length > 0;
+
+    var byCategory = {};
+    monthExpenses.forEach(function (e) {
+      byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
+    });
+    var breakdown = Object.keys(byCategory).map(function (catId) {
+      var meta = self.getCategoryMeta(catId);
+      var amount = byCategory[catId];
+      var pct = monthTotal > 0 ? (amount / monthTotal) * 100 : 0;
+      return {
+        name: meta.name, iconHref: '#icon-' + meta.icon,
+        amountFormatted: self.formatCurrency(amount),
+        pctLabel: Math.round(pct) + '%',
+        barStyle: 'height:100%;width:' + pct.toFixed(1) + '%;background:var(--color-accent);border-radius:999px;',
+        _amount: amount
+      };
+    }).sort(function (a, b) { return b._amount - a._amount; });
+
+    var byDate = {};
+    monthExpenses.forEach(function (e) {
+      (byDate[e.date] = byDate[e.date] || []).push(e);
+    });
+    var dayGroups = Object.keys(byDate).sort(function (a, b) { return b.localeCompare(a); }).map(function (date) {
+      var items = byDate[date].slice().reverse().map(function (e) {
+        var meta = self.getCategoryMeta(e.category);
+        var parts = [];
+        if (e.note) parts.push(e.note);
+        if (s.members.length > 1) parts.push(self.getMemberName(e.member));
+        return {
+          id: e.id, categoryName: meta.name, iconHref: '#icon-' + meta.icon,
+          subLabel: parts.join(' · ') || meta.name,
+          amountFormatted: self.formatCurrency(e.amount),
+          remove: function () { self.removeExpense(e.id); }
+        };
+      });
+      var d = new Date(date + 'T00:00:00');
+      return { dateLabel: d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }), items: items };
+    });
+
+    // Investments
+    var totalInvested = s.investments.reduce(function (sum, i) { return sum + i.amount; }, 0);
+    var investmentsList = s.investments.slice().reverse().map(function (inv) {
+      var d = new Date(inv.date + 'T00:00:00');
+      return {
+        id: inv.id, name: inv.name,
+        typeAndDate: inv.type + ' · ' + d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        amountFormatted: self.formatCurrency(inv.amount),
+        remove: function () { self.removeInvestment(inv.id); }
+      };
+    });
+
+    // Recurring
+    var freqLabel = { monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+    var recurringList = s.recurring.map(function (r) {
+      var meta = self.getCategoryMeta(r.category);
+      var d = new Date(r.nextDate + 'T00:00:00');
+      return {
+        id: r.id, name: r.name,
+        detailLabel: meta.name + ' · ' + freqLabel[r.frequency] + ' · next ' + d.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+        amountFormatted: self.formatCurrency(r.amount),
+        remove: function () { self.removeRecurring(r.id); }
+      };
+    });
+
+    var categoryOptions = s.categories.map(function (c) { return { id: c.id, name: c.name }; });
+
+    var manageCategories = s.categories.map(function (c) {
+      return { id: c.id, name: c.name, deletable: !!c.custom, remove: function () { self.removeCategory(c.id); } };
+    });
+    var manageMembers = s.members.map(function (m) {
+      return { id: m.id, name: m.name, deletable: s.members.length > 1, remove: function () { self.removeMember(m.id); } };
+    });
+
+    var navDefs = [
+      { id: 'add', label: 'Add', icon: 'plus' },
+      { id: 'history', label: 'History', icon: 'list' },
+      { id: 'investments', label: 'Invest', icon: 'trending-up' },
+      { id: 'recurring', label: 'Recurring', icon: 'repeat' }
+    ];
+    var navTabs = navDefs.map(function (n) {
+      var active = s.activeTab === n.id;
+      return {
+        id: n.id, label: n.label, iconHref: '#icon-' + n.icon,
+        buttonStyle: 'flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;background:none;border:none;cursor:pointer;color:' + (active ? 'var(--color-accent-700)' : 'var(--color-neutral-600)') + ';font-family:var(--font-body);',
+        select: function () { self.setTab(n.id); }
+      };
+    });
+
+    var rootStyle = 'max-width:480px;margin:0 auto;min-height:100vh;background:var(--color-bg);display:flex;flex-direction:column;font-family:var(--font-body);color:var(--color-text);position:relative;' + (s.darkMode ? THEME_DARK_VARS : '');
+
+    return {
+      rootStyle: rootStyle,
+      needsSignIn: !s.user, isSignedIn: !!s.user,
+      signInWithGoogle: this.signInWithGoogle.bind(this), signOut: this.signOut.bind(this),
+      userInitial: s.user && s.user.name ? s.user.name.charAt(0).toUpperCase() : '?',
+      toggleDarkMode: this.toggleDarkMode.bind(this), themeIconHref: s.darkMode ? '#icon-sun' : '#icon-moon',
+      currencySymbol: currencySymbol,
+      isAddTab: s.activeTab === 'add', isHistoryTab: s.activeTab === 'history', isInvestTab: s.activeTab === 'investments', isRecurringTab: s.activeTab === 'recurring',
+      amountInput: s.amountInput, onAmountChange: this.onAmountChange.bind(this),
+      categoryChips: categoryChips, addChipStyle: addChipStyle, toggleAddCategory: this.toggleAddCategory.bind(this),
+      showAddCategory: s.showAddCategory, newCategoryName: s.newCategoryName, onNewCategoryChange: this.onNewCategoryChange.bind(this), addCategory: this.addCategory.bind(this),
+      showMembers: s.members.length > 1, memberChips: memberChips,
+      noteInput: s.noteInput, onNoteChange: this.onNoteChange.bind(this),
+      dateInput: s.dateInput, onDateChange: this.onDateChange.bind(this),
+      saveDisabled: saveDisabled, saveExpense: this.saveExpense.bind(this),
+      showToast: s.showToast,
+
+      monthLabel: monthLabel, prevMonth: this.prevMonth.bind(this), nextMonth: this.nextMonth.bind(this), nextMonthDisabled: s.historyMonthOffset >= 0,
+      monthTotalFormatted: this.formatCurrency(monthTotal), monthCountLabel: monthExpenses.length + (monthExpenses.length === 1 ? ' entry' : ' entries'),
+      hasMonthExpenses: hasMonthExpenses, noMonthExpenses: !hasMonthExpenses,
+      breakdown: breakdown, dayGroups: dayGroups,
+
+      totalInvestedFormatted: this.formatCurrency(totalInvested),
+      showInvestForm: s.showInvestForm, showAddInvestButton: !s.showInvestForm,
+      invName: s.invName, onInvNameChange: this.onInvNameChange.bind(this),
+      invAmount: s.invAmount, onInvAmountChange: this.onInvAmountChange.bind(this),
+      invType: s.invType, onInvTypeChange: this.onInvTypeChange.bind(this),
+      invDate: s.invDate, onInvDateChange: this.onInvDateChange.bind(this),
+      investSaveDisabled: !parseFloat(s.invAmount) || !s.invName.trim(),
+      openInvestForm: this.openInvestForm.bind(this), cancelInvestForm: this.cancelInvestForm.bind(this), saveInvestment: this.saveInvestment.bind(this),
+      hasInvestments: s.investments.length > 0, noInvestments: s.investments.length === 0, investmentsList: investmentsList,
+
+      showRecurringForm: s.showRecurringForm, showAddRecurringButton: !s.showRecurringForm,
+      recName: s.recName, onRecNameChange: this.onRecNameChange.bind(this),
+      recAmount: s.recAmount, onRecAmountChange: this.onRecAmountChange.bind(this),
+      recCategory: s.recCategory, onRecCategoryChange: this.onRecCategoryChange.bind(this),
+      recFrequency: s.recFrequency, onRecFrequencyChange: this.onRecFrequencyChange.bind(this),
+      recNextDate: s.recNextDate, onRecNextDateChange: this.onRecNextDateChange.bind(this),
+      recurringSaveDisabled: !parseFloat(s.recAmount) || !s.recName.trim(),
+      openRecurringForm: this.openRecurringForm.bind(this), cancelRecurringForm: this.cancelRecurringForm.bind(this), saveRecurring: this.saveRecurring.bind(this),
+      hasRecurring: s.recurring.length > 0, noRecurring: s.recurring.length === 0, recurringList: recurringList,
+      categoryOptions: categoryOptions,
+
+      navTabs: navTabs,
+
+      showManage: s.showManage, openManage: this.openManage.bind(this), closeManage: this.closeManage.bind(this), stopPropagation: this.stopPropagation.bind(this),
+      manageCategories: manageCategories, manageMembers: manageMembers,
+      newMemberName: s.newMemberName, onNewMemberChange: this.onNewMemberChange.bind(this), addMember: this.addMember.bind(this)
+    };
+  }
+}
+</script>
+</body>
+</html>
