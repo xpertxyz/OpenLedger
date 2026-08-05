@@ -200,6 +200,23 @@ function safeRedirectTarget(string $to): string {
 function redirect(string $to): never { header('Location: ' . safeRedirectTarget($to)); exit; }
 function today(): string { return date('Y-m-d'); }
 
+// Shared hosts, CDNs and load balancers commonly terminate TLS at a proxy: PHP then sees a
+// plain HTTP request with $_SERVER['HTTPS'] unset, and the real scheme only in
+// X-Forwarded-Proto. Missing that would silently drop the `Secure` flag from the session
+// cookie and emit http:// canonical/OG URLs on an https site.
+// Trusting the header errs safe — a spoofed value only makes the cookie stricter, never laxer.
+function isHttps(): bool {
+    if (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off') return true;
+    // May arrive as a comma-separated chain ("https, http"); the client-facing hop is first.
+    $proto = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    if ($proto === 'https') return true;
+    return (int)($_SERVER['SERVER_PORT'] ?? 0) === 443;
+}
+
+function originUrl(): string {
+    return (isHttps() ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+}
+
 function advanceDate(string $dateStr, string $freq): string {
     $spec = match ($freq) { 'quarterly' => 'P3M', 'yearly' => 'P1Y', default => 'P1M' };
     return (new DateTimeImmutable($dateStr))->add(new DateInterval($spec))->format('Y-m-d');

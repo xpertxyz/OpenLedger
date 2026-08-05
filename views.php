@@ -98,6 +98,9 @@ function swipeNavScript(?string $older, ?string $newer): string {
 // Shared favicon / apple-touch / OG / Twitter / description / theme-color block.
 function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
     $desc = 'Track household expenses, investments and recurring bills together.';
+    // $origin is built from HTTP_HOST, which the client controls — escape before it lands
+    // in content="" attributes.
+    $origin = h($origin);
     $og   = $origin . '/assets/logo/og-image.png';
     $d    = htmlspecialchars($desc, ENT_QUOTES);
     return <<<META
@@ -131,7 +134,7 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
     $csrf      = csrfInput();
     $csrfTok   = csrfJs();
 
-    $origin = ((!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    $origin = originUrl();
     $themeColor = $user['is_dark'] ? '#201e1d' : '#f5ead8';
     $meta = metaHead($origin, $themeColor);
 
@@ -672,7 +675,7 @@ function renderSignIn(): void {
     </div>
 DEV
     : '';
-    $origin = ((!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    $origin = originUrl();
     $meta = metaHead($origin);
 
     echo <<<HTML

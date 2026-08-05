@@ -58,6 +58,20 @@ if (PHP_SAPI === 'cli') {
         assert(safeRedirectTarget("/ok\r\nX-Injected: 1")  === '/');
         assert(safeRedirectTarget('javascript:alert(1)')   === '/');
         assert(safeRedirectTarget('')                      === '/');
+        // HTTPS detection must survive a TLS-terminating proxy, or the session cookie
+        // silently loses its Secure flag in production.
+        $srv = $_SERVER;
+        $_SERVER = [];                                             assert(isHttps() === false);
+        $_SERVER = ['HTTPS' => 'off'];                             assert(isHttps() === false);
+        $_SERVER = ['HTTPS' => 'on'];                              assert(isHttps() === true);
+        $_SERVER = ['HTTP_X_FORWARDED_PROTO' => 'https'];          assert(isHttps() === true);
+        $_SERVER = ['HTTP_X_FORWARDED_PROTO' => 'https, http'];    assert(isHttps() === true);
+        $_SERVER = ['HTTP_X_FORWARDED_PROTO' => 'http'];           assert(isHttps() === false);
+        $_SERVER = ['SERVER_PORT' => 443];                         assert(isHttps() === true);
+        $_SERVER = ['SERVER_PORT' => 80];                          assert(isHttps() === false);
+        $_SERVER = ['HTTPS' => 'on', 'HTTP_HOST' => 'ledger.xpertxyz.com'];
+        assert(originUrl() === 'https://ledger.xpertxyz.com');
+        $_SERVER = $srv;
         echo "ok\n"; exit;
     }
     if ($mode === '--preflight') {
@@ -219,7 +233,7 @@ session_set_cookie_params([
     'path'     => '/',
     'httponly' => true,
     'samesite' => 'Lax',
-    'secure'   => !empty($_SERVER['HTTPS']),
+    'secure'   => isHttps(),
 ]);
 ini_set('session.use_only_cookies', '1');
 ini_set('session.use_strict_mode',  '1');

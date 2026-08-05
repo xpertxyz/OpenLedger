@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://home.xpertxyz.com"><strong>🌐 Try it live at home.xpertxyz.com</strong></a>
+  <a href="https://ledger.xpertxyz.com"><strong>🌐 Try it live at ledger.xpertxyz.com</strong></a>
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
   <a href="docs/DESIGN.md">Design spec</a>
 </p>
 
-> **Live instance disclaimer.** [home.xpertxyz.com](https://home.xpertxyz.com) is a real, running deployment you're welcome to use. **Data is not encrypted at rest** — see [`/terms`](https://home.xpertxyz.com/terms) inside the app. If that isn't OK for you, self-host in ten minutes with the [Quick start](#quick-start) below.
+> **Live instance disclaimer.** [ledger.xpertxyz.com](https://ledger.xpertxyz.com) is a real, running deployment you're welcome to use. **Data is not encrypted at rest** — see [`/terms`](https://ledger.xpertxyz.com/terms) inside the app. If that isn't OK for you, self-host in ten minutes with the [Quick start](#quick-start) below.
 
 ---
 
@@ -117,6 +117,8 @@ Open Ledger is designed for typical PHP shared hosts (Hostinger, cPanel, Bluehos
 4. **Authorised JavaScript origins** — add your deploy URL (e.g. `https://ledger.example.com`) plus `http://localhost:8152` for local dev if you'll test that way.
 5. No client secret is used (Google Identity Services doesn't need it for ID token flow). Copy the **Client ID** (looks like `1234567890-abcdef.apps.googleusercontent.com`).
 
+> **Changing domains later?** The origin list is exact-match — no wildcards, and a subdomain change counts as a different origin. If you move the app, add the new origin *before* cutting over, or sign-in breaks for everyone with a silent `origin_mismatch` in the browser console. Keep the old origin listed until DNS has fully propagated.
+
 ### 2. Provision the MySQL database
 
 In your host's control panel (Hostinger: hPanel → Databases → MySQL Databases), create:
@@ -179,6 +181,12 @@ The sweep also runs opportunistically on every authed request as a fallback — 
 ### 6. Visit the site
 
 Hit your domain. The schema installs on the first request. Sign in with Google. Done.
+
+### HTTPS behind a proxy
+
+Serve the site over HTTPS. Many shared hosts and CDNs terminate TLS at a proxy and forward plain HTTP to PHP, so `$_SERVER['HTTPS']` is unset even though the visitor is on `https://`. The app therefore also honours `X-Forwarded-Proto` (and port 443) when deciding whether to set the session cookie's `Secure` flag and which scheme to use in canonical/OG URLs.
+
+If your host does something non-standard, check `isHttps()` in `lib.php`. Getting this wrong means session cookies are sent without `Secure` and link previews point at `http://`.
 
 ---
 
@@ -286,5 +294,5 @@ MIT. See `LICENSE` (add one if forking).
 
 <p align="center">
   Built by <a href="https://xpertxyz.in"><strong>XpertXYZ</strong></a> — digital solutions across platforms.<br>
-  <sub>Live at <a href="https://home.xpertxyz.com">home.xpertxyz.com</a> · Source at <a href="https://github.com/xpertxyz/HomeLedger">github.com/xpertxyz/HomeLedger</a></sub>
+  <sub>Live at <a href="https://ledger.xpertxyz.com">ledger.xpertxyz.com</a> · Source at <a href="https://github.com/xpertxyz/HomeLedger">github.com/xpertxyz/HomeLedger</a></sub>
 </p>
