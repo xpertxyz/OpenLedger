@@ -38,16 +38,15 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
   <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
   <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
+  <symbol id="icon-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
+  <symbol id="icon-archive-restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h2"/><path d="M20 8v11a2 2 0 0 1-2 2h-2"/><path d="m9 15 3-3 3 3"/><path d="M12 12v9"/></symbol>
+  <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
 </svg>
 SVG;
 
 function icon(string $name, int $size = 20): string {
     $n = htmlspecialchars($name, ENT_QUOTES);
     return "<svg width=\"$size\" height=\"$size\" aria-hidden=\"true\"><use href=\"#icon-$n\"/></svg>";
-}
-
-function fmt(float $amount): string {
-    return ($_SESSION['currency'] ?? '₹') . number_format($amount, 2);
 }
 
 // Shared favicon / apple-touch / OG / Twitter / description / theme-color block.
@@ -58,15 +57,15 @@ function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
     return <<<META
 <meta name="description" content="$d">
 <meta name="theme-color" content="$themeColor">
-<link rel="icon" type="image/svg+xml" href="/assets/logo/home-ledger-logo.svg">
+<link rel="icon" type="image/svg+xml" href="/assets/logo/open-ledger-logo.svg">
 <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
-<meta property="og:title" content="Home Ledger">
+<meta property="og:title" content="Open Ledger">
 <meta property="og:description" content="$d">
 <meta property="og:image" content="$og">
 <meta property="og:type" content="website">
 <meta property="og:url" content="$origin/">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Home Ledger">
+<meta name="twitter:title" content="Open Ledger">
 <meta name="twitter:description" content="$d">
 <meta name="twitter:image" content="$og">
 META;
@@ -93,7 +92,7 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Home Ledger</title>
+<title>Open Ledger</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <style>
@@ -159,6 +158,24 @@ $meta
   .bar { height:8px; background:var(--color-divider); border-radius:999px; margin-top:8px; overflow:hidden; }
   .bar > i { display:block; height:100%; background:var(--color-accent); border-radius:999px; }
   .bar.sage > i { background:var(--color-accent-2); }
+  /* Budget states: at/under budget stays sage, over budget goes red. */
+  .bar.under > i { background:var(--color-accent-2); }
+  .bar.over  > i { background:#c0392b; }
+  .cat-bar .budget-note { font-size:11px; color:var(--color-neutral-800); margin-top:5px; display:flex; justify-content:space-between; gap:8px; }
+  .cat-bar .budget-note .over-amt { color:#c0392b; font-weight:600; }
+
+  /* Invest tab: three-up active / archived / total summary.
+     Same trap as .row.card — the design system's .card is flex-direction:column. */
+  .split-card { display:flex; flex-direction:row !important; padding:0; overflow:hidden; text-align:center; }
+  .split-card > div { flex:1; padding: var(--space-3) var(--space-2); min-width:0; }
+  .split-card > div + div { border-left:1px solid color-mix(in srgb, var(--color-bg) 25%, transparent); }
+  .split-card .k { font-size:11px; opacity:.85; text-transform:uppercase; letter-spacing:.05em; }
+  /* Never break a number mid-digit — shrink the whole figure instead. Sized so a crore
+     (₹1,50,25,000) still fits one line across a third of a 360px screen. */
+  .split-card .v { font-family:var(--font-heading); font-size:clamp(11px, 3.6vw, 17px); margin-top:2px; white-space:nowrap; }
+  .split-card .n { font-size:10.5px; opacity:.75; }
+  .row.card.archived { opacity:.62; }
+  .tag-archived { font-size:10px; padding:1px 7px; border-radius:999px; background:var(--color-neutral-300); color:var(--color-neutral-800); margin-left:6px; vertical-align:1px; }
   .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-800); margin: var(--space-3) 2px var(--space-2); }
 
   .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:100; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
@@ -202,6 +219,8 @@ $meta
   .cat-row { display:flex; gap:6px; align-items:center; }
   .cat-row form { display:flex; gap:6px; align-items:center; margin:0; flex:1; }
   .cat-row .input { flex:1; padding: 6px 12px; font-size: 13px; }
+  .cat-row .budget-in { flex:0 0 68px; text-align:right; padding: 6px 10px; }
+  .cat-row.archived .input { opacity:.6; }
   .cat-icon-mini { width:26px; height:26px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
   /* Collapsible <details> sections in the drawer */
   .drawer-body details > summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; padding: 2px 0; }
@@ -224,7 +243,7 @@ $meta
 $sprite
 <div class="col">
   <div class="hdr">
-    <div class="brand">Home Ledger</div>
+    <div class="brand">Open Ledger</div>
     <div class="hdr-actions">
       <form method="post" action="/theme">$csrf<input type="hidden" name="back" value="{$backUri}"><button class="btn btn-icon" type="submit" aria-label="Toggle theme" style="color:var(--color-text);">$themeBtn</button></form>
       <button class="avatar" type="button" aria-label="Profile" onclick="openProfile()">$initial</button>
@@ -323,7 +342,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
     $mems->execute([$hid]); $mems = $mems->fetchAll();
     $canDeleteMember = count($mems) > 1;
-    $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY id");
+    $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY archived, id");
     $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
     $canDeleteType = count($iTypes) > 1;
 
@@ -359,6 +378,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
         <details>
           <summary><h4>Categories</h4></summary>
           <div class="details-body">
+            <div class="muted" style="font-size:11.5px;">Set a monthly budget per category. Blank or 0 means no budget — spending is never blocked either way.</div>
             <?php foreach ($cats as $c): ?>
               <div class="cat-row">
                 <form method="post" action="/categories/update">
@@ -367,6 +387,10 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                   <input type="hidden" name="back" value="<?= $back ?>">
                   <div class="cat-icon-mini"><?= icon($c['icon'], 14) ?></div>
                   <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
+                  <input class="input budget-in" name="budget" type="text" inputmode="decimal"
+                         pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+                         value="<?= (float)$c['budget'] > 0 ? h(rtrim(rtrim(number_format((float)$c['budget'], 2, '.', ''), '0'), '.')) : '' ?>"
+                         placeholder="<?= h($currency) ?>" aria-label="Monthly budget for <?= h($c['name']) ?>">
                   <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
                 </form>
                 <?php if ($c['is_custom']): ?>
@@ -387,6 +411,9 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
               <?= csrfInput() ?>
               <input type="hidden" name="back" value="<?= $back ?>">
               <input class="input" name="name" placeholder="New category" maxlength="50">
+              <input class="input budget-in" name="budget" type="text" inputmode="decimal"
+                     pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+                     placeholder="<?= h($currency) ?>" aria-label="Monthly budget">
               <button class="btn btn-primary" type="submit">Add</button>
             </form>
           </div>
@@ -397,14 +424,25 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
         <details>
           <summary><h4>Investment types</h4></summary>
           <div class="details-body">
-            <?php foreach ($iTypes as $t): ?>
-              <div class="cat-row">
+            <div class="muted" style="font-size:11.5px;">Archive a type when a scheme ends — its entries stay logged but drop out of active investments.</div>
+            <?php foreach ($iTypes as $t): $isArch = (int)$t['archived'] === 1; ?>
+              <div class="cat-row<?= $isArch ? ' archived' : '' ?>">
                 <form method="post" action="/investment-types/update">
                   <?= csrfInput() ?>
                   <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
                   <input type="hidden" name="back" value="<?= $back ?>">
                   <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="40">
                   <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
+                </form>
+                <form method="post" action="/investment-types/archive" style="margin:0; display:inline-flex;">
+                  <?= csrfInput() ?>
+                  <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+                  <input type="hidden" name="back" value="<?= $back ?>">
+                  <button class="icon-btn" type="submit"
+                          aria-label="<?= $isArch ? 'Restore' : 'Archive' ?> <?= h($t['name']) ?>"
+                          title="<?= $isArch ? 'Restore to active' : 'Archive' ?>">
+                    <?= icon($isArch ? 'archive-restore' : 'archive', 15) ?>
+                  </button>
                 </form>
                 <?php if ($canDeleteType): ?>
                   <button type="button" class="icon-btn" aria-label="Delete type"
@@ -517,7 +555,7 @@ DEV
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Home Ledger — Sign in</title>
+<title>Open Ledger — Sign in</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -530,7 +568,7 @@ $meta
 $sprite
 <div style="width:100%;max-width:340px;padding:var(--space-4);">
   <div class="card elev-lg" style="padding:var(--space-6);align-items:center;text-align:center;gap:var(--space-4);">
-    <img src="/assets/logo/home-ledger-logo-wordmark.svg" alt="Home Ledger" style="max-width:220px;width:100%;height:auto;">
+    <img src="/assets/logo/open-ledger-logo-wordmark.svg" alt="Open Ledger" style="max-width:220px;width:100%;height:auto;">
     <div style="font-size:14px;color:var(--color-neutral-800);">Track household expenses and investments together.</div>
 
     <div id="g_id_onload"
@@ -686,16 +724,25 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $total      = (float)$agg['total'];
 
     // Category breakdown from an indexed GROUP BY, not from PHP-side accumulation.
+    // ponytail: a budgeted category with zero spend this month is absent from this grouping,
+    // so it shows no bar. Under-budget-with-no-spend needs no warning; if a full "every budget,
+    // spent or not" view is wanted later, LEFT JOIN from categories instead of from expenses.
     $catStmt = $db->prepare(
         "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS cat_name,
-                COALESCE(c.icon, 'tag') AS cat_icon, SUM(e.amount) AS amt
+                COALESCE(c.icon, 'tag') AS cat_icon, COALESCE(c.budget, 0) AS budget,
+                SUM(e.amount) AS amt
          FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
          WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
-         GROUP BY c.id, c.name, c.icon
+         GROUP BY c.id, c.name, c.icon, c.budget
          ORDER BY amt DESC"
     );
     $catStmt->execute([$hid, $monthStart, $monthEnd]);
     $byCat = $catStmt->fetchAll();
+
+    // Household budget = sum of every category budget, including ones with no spend this month.
+    $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ?");
+    $budStmt->execute([$hid]);
+    $budgetTotal = (float)$budStmt->fetchColumn();
 
     // Paginated transaction list — LIMIT + OFFSET on the (household_id, date) index.
     $rows = $db->prepare(
@@ -734,16 +781,43 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <div class="card total-card accent">
         <div class="big"><?= h(fmt($total)) ?></div>
         <div class="sub"><?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?></div>
+        <?php if ($budgetTotal > 0): $left = $budgetTotal - $total; ?>
+          <div class="sub" style="margin-top:4px;">
+            <?= h(fmt($budgetTotal)) ?> budgeted ·
+            <?php if ($left >= 0): ?>
+              <?= h(fmt($left)) ?> left
+            <?php else: ?>
+              <strong><?= h(fmt(-$left)) ?> over</strong>
+            <?php endif; ?>
+          </div>
+        <?php endif; ?>
       </div>
 
       <div class="stack">
-        <?php foreach ($byCat as $c): $pct = $total > 0 ? ((float)$c['amt'] / $total) * 100 : 0; ?>
+        <?php foreach ($byCat as $c):
+          $amt    = (float)$c['amt'];
+          $budget = (float)$c['budget'];
+          $pct    = $total > 0 ? ($amt / $total) * 100 : 0;
+          // With a budget the bar tracks budget consumption, not share of spend.
+          $barPct = $budget > 0 ? min(100, ($amt / $budget) * 100) : $pct;
+          $barCls = $budget > 0 ? ($amt > $budget ? ' over' : ' under') : '';
+        ?>
           <div class="card cat-bar">
             <div class="top">
               <div class="name"><?= icon($c['cat_icon'], 18) ?> <?= h($c['cat_name']) ?></div>
-              <div><span class="amt"><?= h(fmt((float)$c['amt'])) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+              <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
-            <div class="bar"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+            <div class="bar<?= $barCls ?>"><i style="width: <?= number_format(max(2, $barPct), 2) ?>%"></i></div>
+            <?php if ($budget > 0): $left = $budget - $amt; ?>
+              <div class="budget-note">
+                <span><?= h(fmt($budget)) ?> budget · <?= number_format(($amt / $budget) * 100, 0) ?>% used</span>
+                <?php if ($left >= 0): ?>
+                  <span><?= h(fmt($left)) ?> left</span>
+                <?php else: ?>
+                  <span class="over-amt"><?= h(fmt(-$left)) ?> over</span>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -871,42 +945,97 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 }
 
 // ─── Investments ────────────────────────────────────────────────────
-function renderInvest(PDO $db, array $user, bool $showForm): void {
+function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'active'): void {
     $hid = (int)$user['household_id'];
+    if (!in_array($filter, ['all', 'active', 'archived'], true)) $filter = 'active';
 
-    // Aggregates via indexed SUM (no PHP-side accumulation over unbounded fetchAll).
-    $agg = $db->prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS t FROM investments WHERE household_id = ?");
-    $agg->execute([$hid]); $agg = $agg->fetch();
-    $entryCount = (int)$agg['n'];
-    $total      = (float)$agg['t'];
+    // Archiving lives on the type, so an investment is archived iff its type name is.
+    $archived = archivedTypeNames($db, $hid);
+    $archSet  = array_flip($archived);
 
-    $typeSum = $db->prepare(
-        "SELECT type, SUM(amount) AS amt FROM investments WHERE household_id = ? GROUP BY type ORDER BY amt DESC"
+    // One grouped scan powers the three summary figures AND the per-type bars — the split
+    // is a name lookup in PHP, which beats three near-identical SUM queries.
+    $grp = $db->prepare(
+        "SELECT type, COUNT(*) AS n, SUM(amount) AS amt FROM investments WHERE household_id = ? GROUP BY type"
     );
-    $typeSum->execute([$hid]); $byType = $typeSum->fetchAll();
+    $grp->execute([$hid]);
+    $allTypes = $grp->fetchAll();
 
-    // Paginated list.
+    $sum = [
+        'active'   => ['n' => 0, 'amt' => 0.0],
+        'archived' => ['n' => 0, 'amt' => 0.0],
+        'all'      => ['n' => 0, 'amt' => 0.0],
+    ];
+    foreach ($allTypes as $t) {
+        $k = isset($archSet[$t['type']]) ? 'archived' : 'active';
+        $sum[$k]['n']    += (int)$t['n'];
+        $sum[$k]['amt']  += (float)$t['amt'];
+        $sum['all']['n']   += (int)$t['n'];
+        $sum['all']['amt'] += (float)$t['amt'];
+    }
+    $grandCount = $sum['all']['n'];
+    $entryCount = $sum[$filter]['n'];      // rows the current filter will list
+    $total      = $sum[$filter]['amt'];    // denominator for the visible bars
+
+    // Bars for the filtered subset only.
+    $byType = array_values(array_filter(
+        $allTypes,
+        fn($t) => $filter === 'all' || (isset($archSet[$t['type']]) === ($filter === 'archived'))
+    ));
+    usort($byType, fn($a, $b) => (float)$b['amt'] <=> (float)$a['amt']);
+
+    // Paginated list, scoped to the filter.
     $pageSize  = 200;
     $rowOffset = max(0, (int)($_GET['o'] ?? 0));
-    $rows = $db->prepare("SELECT * FROM investments WHERE household_id = ? ORDER BY date DESC, id DESC LIMIT $pageSize OFFSET $rowOffset");
-    $rows->execute([$hid]); $invs = $rows->fetchAll();
+    [$clause, $clauseParams] = investmentFilterSql($filter, $archived);
+    $rows = $db->prepare(
+        "SELECT * FROM investments WHERE household_id = ?$clause ORDER BY date DESC, id DESC LIMIT $pageSize OFFSET $rowOffset"
+    );
+    $rows->execute(array_merge([$hid], $clauseParams)); $invs = $rows->fetchAll();
 
-    $typeList = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? ORDER BY id");
-    $typeList->execute([$hid]); $typeList = $typeList->fetchAll(PDO::FETCH_COLUMN);
+    // Archived types stay in the edit dialog (so existing entries remain editable) but drop
+    // out of the add form — you don't log new money into a scheme that has ended.
+    $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
+    $typeStmt->execute([$hid]); $typeList = $typeStmt->fetchAll();
+    $activeTypes = array_values(array_filter($typeList, fn($t) => !(int)$t['archived']));
+
+    $qs = fn(string $f) => '/invest?f=' . $f;
 
     ob_start();
     ?>
-    <?php if ($entryCount > 0): ?>
-      <div class="card total-card sage">
-        <div class="sub">Total invested</div>
-        <div class="big"><?= h(fmt($total)) ?></div>
+    <?php if ($grandCount > 0): ?>
+      <div class="card total-card sage split-card">
+        <div>
+          <div class="k">Active</div>
+          <div class="v"><?= h(fmtShort($sum['active']['amt'])) ?></div>
+          <div class="n"><?= $sum['active']['n'] ?> <?= $sum['active']['n'] === 1 ? 'entry' : 'entries' ?></div>
+        </div>
+        <div>
+          <div class="k">Archived</div>
+          <div class="v"><?= h(fmtShort($sum['archived']['amt'])) ?></div>
+          <div class="n"><?= $sum['archived']['n'] ?> <?= $sum['archived']['n'] === 1 ? 'entry' : 'entries' ?></div>
+        </div>
+        <div>
+          <div class="k">Total</div>
+          <div class="v"><?= h(fmtShort($sum['all']['amt'])) ?></div>
+          <div class="n"><?= $sum['all']['n'] ?> <?= $sum['all']['n'] === 1 ? 'entry' : 'entries' ?></div>
+        </div>
+      </div>
+
+      <div class="pill-row">
+        <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
+        <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
+        <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
       </div>
 
       <div class="stack">
         <?php foreach ($byType as $t): $amt = (float)$t['amt']; $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
           <div class="card cat-bar">
             <div class="top">
-              <div class="name"><?= icon('trending-up', 18) ?> <?= h($t['type']) ?></div>
+              <div class="name">
+                <?= icon(isset($archSet[$t['type']]) ? 'archive' : 'trending-up', 18) ?> <?= h($t['type']) ?>
+                <?php if (isset($archSet[$t['type']])): ?><span class="tag-archived">archived</span><?php endif; ?>
+              </div>
               <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
             <div class="bar sage"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
@@ -915,7 +1044,11 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
       </div>
     <?php endif; ?>
 
-    <?php if ($showForm): ?>
+    <?php if ($showForm && !$activeTypes): ?>
+      <div class="card" style="padding:var(--space-4);">
+        <div class="muted">Every investment type is archived. Restore one from the profile drawer before adding a new investment.</div>
+      </div>
+    <?php elseif ($showForm): ?>
       <form method="post" action="/investments" class="card stack" style="padding:var(--space-4); gap:10px;">
         <?= csrfInput() ?>
         <input class="input" name="name" placeholder="e.g. SIP - Mutual Fund" required maxlength="80" id="inv-name"
@@ -924,23 +1057,25 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
           <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
                  oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
           <select class="select" name="type">
-            <?php foreach ($typeList as $t): ?>
-              <option><?= h($t) ?></option>
+            <?php foreach ($activeTypes as $t): ?>
+              <option><?= h($t['name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
         <input class="input" name="date" type="date" value="<?= h(today()) ?>">
         <div class="field-row">
-          <a class="btn btn-secondary btn-block" href="/invest">Cancel</a>
+          <a class="btn btn-secondary btn-block" href="<?= $qs($filter) ?>">Cancel</a>
           <button class="btn btn-primary btn-block" type="submit" id="inv-save" disabled>Save</button>
         </div>
       </form>
     <?php else: ?>
-      <a class="btn btn-secondary btn-block" href="/invest?new=1"><?= icon('plus', 16) ?> &nbsp;Add investment</a>
+      <a class="btn btn-secondary btn-block" href="/invest?new=1&amp;f=<?= h($filter) ?>"><?= icon('plus', 16) ?> &nbsp;Add investment</a>
     <?php endif; ?>
 
-    <?php if ($entryCount === 0): ?>
+    <?php if ($grandCount === 0): ?>
       <div class="empty">Nothing logged yet.</div>
+    <?php elseif ($entryCount === 0): ?>
+      <div class="empty">No <?= h($filter) ?> investments.</div>
     <?php else: ?>
       <?php
       $byMonth = [];
@@ -962,11 +1097,12 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
               'type'   => $i['type'],
               'date'   => $i['date'],
           ]); ?>
-          <div class="card elev-sm row">
-            <div class="row-icon sage"><?= icon('trending-up', 16) ?></div>
+          <?php $rowArch = isset($archSet[$i['type']]); ?>
+          <div class="card elev-sm row<?= $rowArch ? ' archived' : '' ?>">
+            <div class="row-icon sage"><?= icon($rowArch ? 'archive' : 'trending-up', 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($i['name']) ?></div>
-              <div class="sub"><?= h($i['type']) ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j')) ?></div>
+              <div class="sub"><?= h($i['type']) ?><?= $rowArch ? ' (archived)' : '' ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
@@ -977,6 +1113,7 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
                     onclick='askConfirm(<?= h(json_encode([
                         "action" => "/investments/delete",
                         "id"     => (int)$i['id'],
+                        "back"   => "/invest?f=$filter",
                         "csrf"   => csrfToken(),
                         "title"  => "Delete investment?",
                         "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
@@ -997,11 +1134,11 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
       <?php if ($hasMore || $hasPrev): ?>
         <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
           <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
-            <a class="btn btn-secondary" href="/invest?o=<?= $prev ?>">← Newer</a>
+            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?>&amp;o=<?= $prev ?>">← Newer</a>
           <?php else: ?><span></span><?php endif; ?>
           <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
           <?php if ($hasMore): ?>
-            <a class="btn btn-secondary" href="/invest?o=<?= $rowOffset + $pageSize ?>">Older →</a>
+            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
           <?php else: ?><span></span><?php endif; ?>
         </div>
       <?php endif; ?>
@@ -1010,13 +1147,15 @@ function renderInvest(PDO $db, array $user, bool $showForm): void {
         <form method="post" action="/investments/update">
           <?= csrfInput() ?>
           <input type="hidden" name="id" id="ei-id">
+          <input type="hidden" name="back" value="/invest?f=<?= h($filter) ?>">
           <div class="dlg-title">Edit investment</div>
           <input class="input" name="name" id="ei-name" required maxlength="80" placeholder="Name">
           <div class="field-row">
             <input class="input" name="amount" id="ei-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+            <!-- Archived types are listed here so an existing entry keeps its own type on save. -->
             <select class="select" name="type" id="ei-type">
               <?php foreach ($typeList as $t): ?>
-                <option><?= h($t) ?></option>
+                <option value="<?= h($t['name']) ?>"><?= h($t['name']) ?><?= (int)$t['archived'] ? ' (archived)' : '' ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -1048,8 +1187,11 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = $cats->fetchAll();
-    $typeList = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? ORDER BY id");
-    $typeList->execute([$hid]); $typeList = $typeList->fetchAll(PDO::FETCH_COLUMN);
+    // Same split as the Invest tab: new recurring investments can only target a live type,
+    // but the edit dialog lists archived ones so an existing item keeps its type on save.
+    $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
+    $typeStmt->execute([$hid]); $typeList = $typeStmt->fetchAll();
+    $activeTypes = array_values(array_filter($typeList, fn($t) => !(int)$t['archived']));
     $rows = $db->prepare(
         "SELECT r.*, c.name AS cat_name FROM recurring r
          LEFT JOIN categories c ON c.id = r.category_id
@@ -1079,8 +1221,8 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             <?php endforeach; ?>
           </select>
           <select class="select" name="type" id="rec-type" style="display:none;">
-            <?php foreach ($typeList as $t): ?>
-              <option value="<?= h($t) ?>"><?= h($t) ?></option>
+            <?php foreach ($activeTypes as $t): ?>
+              <option value="<?= h($t['name']) ?>"><?= h($t['name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -1172,7 +1314,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             </select>
             <select class="select" name="type" id="er-type" style="display:none;">
               <?php foreach ($typeList as $t): ?>
-                <option value="<?= h($t) ?>"><?= h($t) ?></option>
+                <option value="<?= h($t['name']) ?>"><?= h($t['name']) ?><?= (int)$t['archived'] ? ' (archived)' : '' ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -1229,7 +1371,7 @@ function termsBody(): string {
 
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Open source</h3>
-        <p style="margin:0; font-size:14px;">Home Ledger is an open-source project. The source lives at
+        <p style="margin:0; font-size:14px;">Open Ledger is an open-source project. The source lives at
           <a href="https://github.com/xpertxyz/HomeLedger" style="color:var(--color-accent-700);">github.com/xpertxyz/HomeLedger</a>.
           Inspect it, contribute, or self-host to keep full control of your data.</p>
       </div>
@@ -1287,7 +1429,7 @@ function renderTermsPublic(): void {
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Home Ledger — Terms &amp; conditions</title>
+<title>Open Ledger — Terms &amp; conditions</title>
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <style>
   body { margin:0; background:var(--color-bg); }

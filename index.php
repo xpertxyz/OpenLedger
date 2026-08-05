@@ -21,6 +21,35 @@ if (PHP_SAPI === 'cli') {
         try { parseAmount('abc', $config); assert(false, 'nan should throw'); } catch (UserErr) {}
         try { parseAmount('1e9', $config); assert(false, 'sci-notation should throw'); } catch (UserErr) {}
         assert(parseAmount('12.34', $config) === 12.34);
+        // parseBudget: blank and 0 are valid ("no budget"), garbage is not.
+        assert(parseBudget('', $config)     === 0.0);
+        assert(parseBudget('0', $config)    === 0.0);
+        assert(parseBudget('5000', $config) === 5000.0);
+        assert(parseBudget('99.50', $config) === 99.5);
+        try { parseBudget('abc', $config); assert(false, 'nan budget should throw'); } catch (UserErr) {}
+        try { parseBudget('-5', $config);  assert(false, 'neg budget should throw'); } catch (UserErr) {}
+        // investmentFilterSql: "archived" with nothing archived must match zero rows,
+        // not silently degrade into an unfiltered list.
+        assert(investmentFilterSql('all', ['Gold'])      === ['', []]);
+        assert(investmentFilterSql('archived', [])       === [' AND 1 = 0', []]);
+        assert(investmentFilterSql('active', [])         === ['', []]);
+        assert(investmentFilterSql('archived', ['Gold']) === [' AND type IN (?)', ['Gold']]);
+        assert(investmentFilterSql('active', ['Gold','FD']) === [' AND type NOT IN (?,?)', ['Gold','FD']]);
+        // Indian grouping: identical to Western up to 5 digits, then diverges.
+        assert(groupIndian(0)          === '0.00');
+        assert(groupIndian(999.99)     === '999.99');
+        assert(groupIndian(1000)       === '1,000.00');
+        assert(groupIndian(10000)      === '10,000.00');
+        assert(groupIndian(100000)     === '1,00,000.00');        // 1 lakh
+        assert(groupIndian(1000000)    === '10,00,000.00');       // 10 lakh
+        assert(groupIndian(10000000)   === '1,00,00,000.00');     // 1 crore
+        assert(groupIndian(1234567.89) === '12,34,567.89');
+        assert(groupIndian(-1200)      === '-1,200.00');
+        assert(groupIndian(-250000)    === '-2,50,000.00');
+        // Rounded variant used by the summary tiles.
+        assert(groupIndian(1234567.89, 0) === '12,34,568');   // rounds, no orphaned paise
+        assert(groupIndian(10000000, 0)   === '1,00,00,000');
+        assert(groupIndian(999.49, 0)     === '999');
         echo "ok\n"; exit;
     }
     if ($mode === '--preflight') {
@@ -33,7 +62,7 @@ if (PHP_SAPI === 'cli') {
             echo "  {$icons[$tag]} {$msg}\n";
             if ($tag === 'OK') $pass++; elseif ($tag === 'FAIL') $fail++; else $warn++;
         };
-        echo "Home Ledger — preflight\n\n";
+        echo "Open Ledger — preflight\n\n";
 
         echo "PHP syntax:\n";
         foreach (['index.php','lib.php','views.php','config.php','router.php'] as $f) {
@@ -52,7 +81,12 @@ if (PHP_SAPI === 'cli') {
             try { parseAmount('abc', $config);  assert(false); } catch (UserErr) {}
             try { parseAmount('1e9', $config);  assert(false); } catch (UserErr) {}
             assert(parseAmount('12.34', $config) === 12.34);
-            $line('OK', 'date math + parseAmount edge cases');
+            assert(parseBudget('', $config) === 0.0 && parseBudget('5000', $config) === 5000.0);
+            try { parseBudget('abc', $config); assert(false); } catch (UserErr) {}
+            assert(investmentFilterSql('archived', []) === [' AND 1 = 0', []]);
+            assert(investmentFilterSql('active', ['Gold']) === [' AND type NOT IN (?)', ['Gold']]);
+            assert(groupIndian(1000000) === '10,00,000.00' && groupIndian(10000000) === '1,00,00,000.00');
+            $line('OK', 'date math + parseAmount/parseBudget + investment filter + lakh/crore formatting');
         } catch (Throwable $e) { $line('FAIL', 'selfcheck: ' . $e->getMessage()); }
 
         echo "\nDatabase:\n";
@@ -74,6 +108,15 @@ if (PHP_SAPI === 'cli') {
             in_array('recurring_id', $icols, true) ? $line('OK', 'investments.recurring_id') : $line('FAIL', 'investments.recurring_id missing');
             $ucols = $db->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
             in_array('currency', $ucols, true) ? $line('OK', 'users.currency') : $line('FAIL', 'users.currency missing');
+            $ccols = $db->query("SHOW COLUMNS FROM categories")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('budget', $ccols, true) ? $line('OK', 'categories.budget') : $line('FAIL', 'categories.budget missing');
+            $tcols = $db->query("SHOW COLUMNS FROM investment_types")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('archived', $tcols, true) ? $line('OK', 'investment_types.archived') : $line('FAIL', 'investment_types.archived missing');
+            // The Invest tab paginates with ORDER BY date DESC — without this composite index it filesorts.
+            $idx = $db->query("SHOW INDEX FROM investments")->fetchAll(PDO::FETCH_COLUMN, 2);
+            in_array('ix_household_date', $idx, true)
+                ? $line('OK',   'investments.ix_household_date')
+                : $line('FAIL', 'investments.ix_household_date missing — list queries will filesort');
         } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
 
         echo "\nConfig / env:\n";
@@ -91,8 +134,8 @@ if (PHP_SAPI === 'cli') {
         echo "\nStatic assets:\n";
         foreach ([
             'design-tokens/styles.css',
-            'assets/logo/home-ledger-logo.svg',
-            'assets/logo/home-ledger-logo-wordmark.svg',
+            'assets/logo/open-ledger-logo.svg',
+            'assets/logo/open-ledger-logo-wordmark.svg',
             'assets/logo/apple-touch-icon.png',
             'assets/logo/og-image.png',
             '.htaccess',
@@ -329,7 +372,7 @@ if ($method === 'POST') {
                 $db->prepare("DELETE FROM investments WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Investment deleted');
-                redirect('/invest');
+                redirect($_POST['back'] ?? '/invest');
 
             case '/investments/update':
                 $id   = (int)($_POST['id'] ?? 0);
@@ -342,7 +385,7 @@ if ($method === 'POST') {
                      WHERE id = ? AND household_id = ?"
                 )->execute([$name, $amt, $type, $date, $id, $hid]);
                 flash('success', 'Investment updated');
-                redirect('/invest');
+                redirect($_POST['back'] ?? '/invest');
 
             case '/recurring':
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
@@ -417,7 +460,8 @@ if ($method === 'POST') {
                 redirect('/recurring');
 
             case '/categories':
-                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
+                $name   = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
+                $budget = parseBudget((string)($_POST['budget'] ?? ''), $config);
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM categories WHERE household_id = ?",
@@ -425,17 +469,18 @@ if ($method === 'POST') {
                     $L['categories_total_max'],
                     'Categories'
                 );
-                $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, 'tag', 1)")
-                   ->execute([$hid, $name]);
+                $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom, budget) VALUES (?, ?, 'tag', 1, ?)")
+                   ->execute([$hid, $name, $budget]);
                 flash('success', 'Category added');
                 redirect($_POST['back'] ?? '/');
 
             case '/categories/update':
-                $id   = (int)($_POST['id'] ?? 0);
-                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
-                $db->prepare("UPDATE categories SET name = ? WHERE id = ? AND household_id = ?")
-                   ->execute([$name, $id, $hid]);
-                flash('success', 'Category renamed');
+                $id     = (int)($_POST['id'] ?? 0);
+                $name   = requireStr((string)($_POST['name'] ?? ''), 50, 'Category');
+                $budget = parseBudget((string)($_POST['budget'] ?? ''), $config);
+                $db->prepare("UPDATE categories SET name = ?, budget = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$name, $budget, $id, $hid]);
+                flash('success', 'Category saved');
                 redirect($_POST['back'] ?? '/');
 
             case '/categories/delete':
@@ -477,6 +522,17 @@ if ($method === 'POST') {
                 }
                 flash('success', 'Investment type renamed');
                 redirect($_POST['back'] ?? '/');
+
+            case '/investment-types/archive':
+                // Toggle. Archiving hides a type's investments from the active view and
+                // removes it from the "add" pickers; existing entries are untouched.
+                $id = (int)($_POST['id'] ?? 0);
+                $db->prepare("UPDATE investment_types SET archived = 1 - archived WHERE id = ? AND household_id = ?")
+                   ->execute([$id, $hid]);
+                $now = $db->prepare("SELECT archived FROM investment_types WHERE id = ? AND household_id = ?");
+                $now->execute([$id, $hid]);
+                flash('success', $now->fetchColumn() ? 'Type archived' : 'Type restored');
+                redirect($_POST['back'] ?? '/invest');
 
             case '/investment-types/delete':
                 $id = (int)($_POST['id'] ?? 0);
@@ -546,7 +602,7 @@ switch ($path) {
     case '/':
     case '/add':       renderAdd($db, $user); break;
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
-    case '/invest':    renderInvest($db, $user, isset($_GET['new'])); break;
+    case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/terms':     renderTerms($db, $user); break;
     case '/manage':    redirect('/#profile');           // legacy path

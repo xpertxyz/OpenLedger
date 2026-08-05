@@ -1,5 +1,5 @@
 <?php
-// Home Ledger — configuration. Real values come from .env (copy .env.example).
+// Open Ledger — configuration. Real values come from .env (copy .env.example).
 // Never commit .env. This file itself ships with placeholders only.
 
 // Minimal .env loader — supports KEY=value, quoted values, and # comments.

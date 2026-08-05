@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo/og-image.png" alt="Home Ledger" width="640">
+  <img src="assets/logo/og-image.png" alt="Open Ledger" width="640">
 </p>
 
-<h1 align="center">Home Ledger</h1>
+<h1 align="center">Open Ledger</h1>
 
 <p align="center">
   A warm, mobile-first household ledger — expenses, investments, recurring bills — for one shared household.<br>
@@ -93,7 +93,7 @@ Open <http://127.0.0.1:8152/> and click **Continue as dev user**.
 
 ## Self-hosting
 
-Home Ledger is designed for typical PHP shared hosts (Hostinger, cPanel, Bluehost, DreamHost, etc). You need:
+Open Ledger is designed for typical PHP shared hosts (Hostinger, cPanel, Bluehost, DreamHost, etc). You need:
 
 - PHP **8.1+** with PDO/MySQL enabled (default on all modern hosts)
 - **MySQL 5.7+** or **MariaDB 10.3+**
@@ -235,7 +235,7 @@ Full audit and disclosures live in `docs/DESIGN.md` and the `/terms` route in-ap
 
 ### What's intentionally missing
 
-Home Ledger is **not** encrypted at rest. Anyone with database access can read your entries. Self-host if that isn't OK.
+Open Ledger is **not** encrypted at rest. Anyone with database access can read your entries. Self-host if that isn't OK.
 
 No analytics, no third-party trackers, no ad SDKs. The only outbound request the app makes is to Google's `tokeninfo` endpoint at sign-in time.
 

@@ -39,6 +39,7 @@ const SCHEMA_STATEMENTS = [
         name VARCHAR(50) NOT NULL,
         icon VARCHAR(30) NOT NULL,
         is_custom TINYINT(1) NOT NULL DEFAULT 0,
+        budget DECIMAL(12,2) NOT NULL DEFAULT 0,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -64,7 +65,7 @@ const SCHEMA_STATEMENTS = [
         type VARCHAR(40) NOT NULL,
         recurring_id INT NULL,
         date DATE NOT NULL,
-        INDEX ix_household (household_id),
+        INDEX ix_household_date (household_id, date),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -92,8 +93,25 @@ const SCHEMA_STATEMENTS = [
         id INT AUTO_INCREMENT PRIMARY KEY,
         household_id INT NOT NULL,
         name VARCHAR(40) NOT NULL,
+        archived TINYINT(1) NOT NULL DEFAULT 0,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+];
+
+// Applied in order after SCHEMA_STATEMENTS, each independently. Re-running is a no-op —
+// MySQL errors on a duplicate column/index and the loop logs it and moves on. Append only.
+const MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'",
+    "ALTER TABLE expenses ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)",
+    "ALTER TABLE investments ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)",
+    "ALTER TABLE investments MODIFY COLUMN type VARCHAR(40) NOT NULL",
+    "ALTER TABLE recurring ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'expense'",
+    "ALTER TABLE recurring ADD COLUMN type VARCHAR(40) NULL",
+    // v6 — investments paginate with ORDER BY date DESC; ix_household alone forced a filesort.
+    "ALTER TABLE investments ADD INDEX ix_household_date (household_id, date)",
+    "ALTER TABLE investments DROP INDEX ix_household",
+    "ALTER TABLE categories ADD COLUMN budget DECIMAL(12,2) NOT NULL DEFAULT 0",
+    "ALTER TABLE investment_types ADD COLUMN archived TINYINT(1) NOT NULL DEFAULT 0",
 ];
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
@@ -120,21 +138,13 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v5';
+    $sentinel = __DIR__ . '/data/.schema-ok-v6';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
-        try { $db->exec("ALTER TABLE users ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'"); }
-        catch (PDOException $e) { error_log('[migrate] add currency column: ' . $e->getMessage()); }
-        try { $db->exec("ALTER TABLE expenses ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)"); }
-        catch (PDOException $e) { error_log('[migrate] add expenses.recurring_id: ' . $e->getMessage()); }
-        try { $db->exec("ALTER TABLE investments ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)"); }
-        catch (PDOException $e) { error_log('[migrate] add investments.recurring_id: ' . $e->getMessage()); }
-        try { $db->exec("ALTER TABLE investments MODIFY COLUMN type VARCHAR(40) NOT NULL"); }
-        catch (PDOException $e) { error_log('[migrate] widen investments.type: ' . $e->getMessage()); }
-        try { $db->exec("ALTER TABLE recurring ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'expense'"); }
-        catch (PDOException $e) { error_log('[migrate] add recurring.kind: ' . $e->getMessage()); }
-        try { $db->exec("ALTER TABLE recurring ADD COLUMN type VARCHAR(40) NULL"); }
-        catch (PDOException $e) { error_log('[migrate] add recurring.type: ' . $e->getMessage()); }
+        foreach (MIGRATIONS as $sql) {
+            try { $db->exec($sql); }
+            catch (PDOException $e) { error_log('[migrate] ' . $sql . ' — ' . $e->getMessage()); }
+        }
         // Backfill default investment types for households that predate the investment_types table.
         $orphaned = $db->query(
             "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
@@ -155,6 +165,23 @@ function makeDb(array $cfg): PDO {
 // Helpers
 // ────────────────────────────────────────────────────────────────────
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+
+// Indian digit grouping (lakh/crore): the last three digits, then pairs.
+// 10,00,000.00 — not number_format()'s 1,000,000.00. Applies to every money value in the
+// app; percentages, CSS widths and byte counts deliberately keep plain number_format().
+function groupIndian(float $amount, int $decimals = 2): string {
+    $n   = number_format(abs($amount), $decimals, '.', '');
+    $int = $n; $dec = '';
+    if ($decimals > 0) { [$int, $frac] = explode('.', $n); $dec = '.' . $frac; }
+    if (strlen($int) > 3) {
+        $int = preg_replace('/\B(?=(\d{2})+(?!\d))/', ',', substr($int, 0, -3)) . ',' . substr($int, -3);
+    }
+    return ($amount < 0 ? '-' : '') . $int . $dec;
+}
+function fmt(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupIndian($amount); }
+// Rounded to the rupee — for summary tiles, where paise are noise and three figures
+// share one row. Detail rows keep full precision via fmt().
+function fmtShort(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupIndian($amount, 0); }
 function redirect(string $to): never { header("Location: $to"); exit; }
 function today(): string { return date('Y-m-d'); }
 
@@ -268,6 +295,36 @@ function validInvestmentType(PDO $db, int $hid, string $type): string {
     $s->execute([$hid, $type]);
     if ($row = $s->fetchColumn()) return (string)$row;
     throw new UserErr('Unknown investment type — pick one from the list (edit types in the profile drawer).');
+}
+
+// Budgets are optional and 0 means "no budget", so this can't reuse parseAmount (which
+// rejects 0). Blank input is also 0 — clearing the field removes the budget.
+function parseBudget(string $raw, array $cfg): float {
+    $raw = trim($raw);
+    if ($raw === '') return 0.0;
+    if (!preg_match('/^\d{1,10}(\.\d{1,2})?$/', $raw)) throw new UserErr('Invalid budget.');
+    $b = round((float)$raw, 2);
+    if ($b > $cfg['limits']['amount_max']) throw new UserErr('Budget too large.');
+    return $b;
+}
+
+// Archiving is per investment *type*. `investments.type` stores the type name (not an FK —
+// renames cascade in /investment-types/update), so membership is a name match. Types are
+// capped at 30 per household, so callers can safely splat this into an IN() list.
+function archivedTypeNames(PDO $db, int $hid): array {
+    $s = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? AND archived = 1");
+    $s->execute([$hid]);
+    return $s->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// Type-scoping clause for an investment list: returns [sqlFragment, params] to append to
+// "WHERE household_id = ?". The nothing-archived case is the trap — "archived" must match
+// zero rows, not fall through to an unfiltered list of everything.
+function investmentFilterSql(string $filter, array $archivedNames): array {
+    if ($filter === 'all')      return ['', []];
+    if (!$archivedNames)        return $filter === 'archived' ? [' AND 1 = 0', []] : ['', []];
+    $in = implode(',', array_fill(0, count($archivedNames), '?'));
+    return [$filter === 'archived' ? " AND type IN ($in)" : " AND type NOT IN ($in)", $archivedNames];
 }
 
 // ────────────────────────────────────────────────────────────────────
