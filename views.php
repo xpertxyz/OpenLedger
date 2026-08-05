@@ -1746,7 +1746,7 @@ function termsBody(): string {
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Open source</h3>
         <p style="margin:0; font-size:14px;">Open Ledger is an open-source project. The source lives at
-          <a href="https://github.com/xpertxyz/HomeLedger" style="color:var(--color-accent-700);">github.com/xpertxyz/HomeLedger</a>.
+          <a href="https://github.com/xpertxyz/OpenLedger" style="color:var(--color-accent-700);">github.com/xpertxyz/OpenLedger</a>.
           Inspect it, contribute, or self-host to keep full control of your data.</p>
       </div>
 
@@ -1780,7 +1780,7 @@ function termsBody(): string {
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Contact</h3>
         <p style="margin:0; font-size:14px;">File issues at
-          <a href="https://github.com/xpertxyz/HomeLedger/issues" style="color:var(--color-accent-700);">github.com/xpertxyz/HomeLedger/issues</a>.</p>
+          <a href="https://github.com/xpertxyz/OpenLedger/issues" style="color:var(--color-accent-700);">github.com/xpertxyz/OpenLedger/issues</a>.</p>
       </div>
 
       <a class="btn btn-block" href="/" style="text-align:center; margin-top:8px;">Back</a>
