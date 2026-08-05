@@ -29,12 +29,17 @@
 ## Features
 
 - **Add expense in three taps** — amount, category, done.
-- **History** grouped by day with per-day totals + monthly category breakdown.
+- **History** grouped by day with per-day totals + monthly category breakdown. Swipe left/right to change month.
+- **Per-category monthly budgets** — set a limit per category and History shows spent / % used / left, turning red when you go over. Budgets **never block a spend**; they report, they don't police.
 - **Investments** grouped by month with per-type breakdown (SIP, Stocks, FD-RD, Gold, PPF-EPF, and any custom types you add).
+- **Archive an investment type** when a scheme ends — its entries stay logged but drop out of the active view. The Invest tab summarises **Active / Archived / Total**, and the list filters between them.
+- **Yearly summary** — calendar year *or* Indian financial year (Apr–Mar), with a twelve-month expenses-vs-investments chart, category and type breakdowns, and per-month averages that divide by *elapsed* months so a year in progress isn't understated. Tap any month to open it in History.
 - **Recurring items** that auto-post on their due date — for both expenses (rent, EMIs, subscriptions) and investments (SIPs, RDs, auto-debits). Cascade delete of past auto-entries is optional per item.
 - **Household sharing** — multiple members share one ledger. Attribute each expense to a member.
 - **Editable everything** — every list row opens an inline edit modal. Rename categories and investment types anywhere and it reflects app-wide.
 - **Google One Tap sign-in** — no passwords, no signup form, no account management surface.
+- **Indian number formatting** — ₹10,00,000 (lakh/crore grouping), not ₹1,000,000.
+- **Installable** — web app manifest + full app-icon set, so "Add to Home Screen" gets a real icon and standalone chrome on iOS and Android.
 - **Warm light + dark themes**, per-user, persisted.
 - **Any currency symbol** — free text, per user.
 - **CSRF-guarded**, rate-limited (10 sign-ins / 15 min, 60 POSTs / min per IP), data-caps enforced server-side.
@@ -47,12 +52,15 @@
   <tr>
     <td align="center"><img src="docs/screenshots/signin.png" alt="Sign-in" width="240"><br><sub><b>Sign in with Google</b></sub></td>
     <td align="center"><img src="docs/screenshots/add.png" alt="Add expense" width="240"><br><sub><b>Add an expense</b></sub></td>
-    <td align="center"><img src="docs/screenshots/history.png" alt="History" width="240"><br><sub><b>History &amp; breakdown</b></sub></td>
+    <td align="center"><img src="docs/screenshots/history.png" alt="History with budgets" width="240"><br><sub><b>History — budget per category</b></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/invest.png" alt="Invest" width="240"><br><sub><b>Investments</b></sub></td>
+    <td align="center"><img src="docs/screenshots/invest.png" alt="Investments" width="240"><br><sub><b>Investments — active / archived</b></sub></td>
+    <td align="center"><img src="docs/screenshots/year.png" alt="Yearly summary" width="240"><br><sub><b>Yearly summary — calendar or FY</b></sub></td>
     <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring (expense &amp; investment)</b></sub></td>
-    <td align="center"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — budgets, archiving, members</b></sub></td>
   </tr>
 </table>
 
@@ -124,11 +132,15 @@ In your host's control panel (Hostinger: hPanel → Databases → MySQL Database
 Most hosts support automatic git deploys. Point their integration at your fork of this repo. Every push pulls into `public_html/`.
 
 **Option B — SFTP**
-Upload everything to `public_html/` except:
+Run `php index.php --preflight` locally first; it fails on anything that would break the deploy. Then upload everything to `public_html/` except:
 - `.env` (create on server — see step 4)
-- `data/` (created automatically)
+- `data/` (created automatically — but see the writability note below)
 - `docs/` (optional — only if you want the design spec on the server)
 - `router.php` (only needed for `php -S` local dev)
+
+Don't forget `manifest.webmanifest` and `assets/app-icon/` — without them the install icons 404.
+
+> **Make sure `data/` is writable by PHP** (`chmod 755 data`). See the note under [Local development](#local-development) for why this one matters more than it looks.
 
 ### 4. Create `.env` on the server
 
@@ -182,12 +194,16 @@ php -S 127.0.0.1:8152 router.php
 - Self-check the CLI logic: `php index.php --selfcheck`
 - Dry-run the cron sweep: `php index.php --cron`
 
+- Gate a deploy: `php index.php --preflight` (syntax, schema columns/indexes, assets, config, `data/` writability)
+
 To reset the DB during dev, delete the schema sentinel and drop the database:
 ```bash
-rm -f data/.schema-ok-v5
+rm -f data/.schema-ok-*        # glob, so it survives sentinel version bumps
 mysql -u root -e "DROP DATABASE homeledger; CREATE DATABASE homeledger CHARACTER SET utf8mb4;"
 # Next page load runs the fresh schema
 ```
+
+> **`data/` must be writable.** The schema bootstrap writes a sentinel file there once, then skips itself on every later request. If the directory isn't writable the sentinel never lands and **every request re-runs the full `CREATE TABLE` + `ALTER TABLE` set** — slow, and it floods the error log. `--preflight` fails loudly on this.
 
 ---
 
@@ -204,22 +220,30 @@ Small, single-language, single-file-ish. The whole app is five PHP files.
 | `router.php` | Local-dev front controller for `php -S`. Not used on real hosts. |
 | `.htaccess` | Rewrites everything through `index.php`, denies raw access to internals, sets security headers. |
 | `design-tokens/styles.css` | The Organic design system — colours, type, spacing, radii, shadow tokens + component classes (`.btn`, `.card`, `.tag`, `.dialog`, `.input`). Linked directly, never rebuilt. |
-| `assets/icons/`, `assets/logo/` | Standalone SVG icons (Lucide) + brand mark, wordmark, OG image, favicon. |
+| `manifest.webmanifest` | Web app manifest — name, standalone display, theme colours, install icons. |
+| `assets/app-icon/` | App icon: SVG source + PNGs at 16/32/180/192/512. Favicon, apple-touch-icon, and Android install icons. |
+| `assets/icons/`, `assets/logo/` | Reference SVG icons (Lucide) + wordmark and OG image. **Note:** the app renders icons from the inlined `SVG_SPRITE` constant in `views.php`, not from `assets/icons/` — edit the sprite to change what's on screen. |
 
 ### Data model
 
 ```
 households ─┬─ users        (Google-authenticated, one per person)
             ├─ members      (attributable spender per entry)
-            ├─ categories   (expense categorization; defaults + custom)
-            ├─ investment_types  (SIP, Stocks, ...; editable)
+            ├─ categories   (expense categorization; defaults + custom; `budget` = monthly cap, 0 = none)
+            ├─ investment_types  (SIP, Stocks, ...; editable; `archived` hides its entries)
             ├─ expenses     (fact table, indexed on (household_id, date))
-            ├─ investments  (fact table, indexed on household_id)
+            ├─ investments  (fact table, indexed on (household_id, date))
             └─ recurring    (kind: 'expense' | 'investment' — auto-posts to the right table)
 rate_limits (bucket, hits, window_end)  — GC'd by cron
 ```
 
 Expenses and investments carry a nullable `recurring_id` FK so cascade delete of a recurring item can optionally sweep every auto-posted entry it created.
+
+Schema changes are additive and idempotent: append to the `MIGRATIONS` array in `lib.php` and bump the sentinel filename. Each statement runs independently, and a duplicate-column error is logged and skipped, so re-running is safe.
+
+Two behaviours worth knowing:
+- **Archiving is per *type*, matched by name** (`investments.type` stores the name, and renames cascade). Archiving hides a type's entries from the active view and removes it from the *add* pickers, but keeps it in the *edit* pickers so existing entries stay editable.
+- **A recurring item keeps posting into an archived type.** Nothing is silently stopped — the archive confirmation says so and points you at the Recurring tab.
 
 ### Security
 
@@ -230,6 +254,7 @@ Expenses and investments carry a nullable `recurring_id` FK so cascade delete of
 - **Data caps**: Amounts, note lengths, per-household counts (200 expenses/day, 1000 investments, 100 recurring, 100 categories, 20 members) enforced at insert time.
 - **SQL**: PDO prepared statements with `EMULATE_PREPARES=false`.
 - **XSS**: `htmlspecialchars` on every output; JSON payloads inside `onclick=""` attributes go through both `json_encode` and `h()`.
+- **Redirects**: post-submit targets come from a `back` form field, so every redirect is validated same-site — root-relative paths only, no `//host`, no absolute URLs, no CR/LF header injection.
 
 Full audit and disclosures live in `docs/DESIGN.md` and the `/terms` route in-app.
 
@@ -249,7 +274,7 @@ Coding style:
 - No frameworks. Plain PHP with `<?php ?>` templates in `views.php`.
 - One file per concern (rendering, routing, helpers).
 - Add server-side validation for every user input at the trust boundary.
-- Add a small `?selfcheck` assertion if a helper has non-trivial branching.
+- Add an assertion to `php index.php --selfcheck` if a helper has non-trivial branching. Prefer extracting the branch into a pure function so it *can* be asserted — `investmentFilterSql()` and `safeRedirectTarget()` exist for exactly that reason.
 
 ---
 

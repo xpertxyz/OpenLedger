@@ -50,6 +50,14 @@ if (PHP_SAPI === 'cli') {
         assert(groupIndian(1234567.89, 0) === '12,34,568');   // rounds, no orphaned paise
         assert(groupIndian(10000000, 0)   === '1,00,00,000');
         assert(groupIndian(999.49, 0)     === '999');
+        // Redirect targets come from a POSTed `back` field — keep them same-site.
+        assert(safeRedirectTarget('/history?m=2')          === '/history?m=2');
+        assert(safeRedirectTarget('/invest?f=archived#x')  === '/invest?f=archived#x');
+        assert(safeRedirectTarget('https://evil.example/') === '/');
+        assert(safeRedirectTarget('//evil.example/')       === '/');
+        assert(safeRedirectTarget("/ok\r\nX-Injected: 1")  === '/');
+        assert(safeRedirectTarget('javascript:alert(1)')   === '/');
+        assert(safeRedirectTarget('')                      === '/');
         echo "ok\n"; exit;
     }
     if ($mode === '--preflight') {
@@ -127,16 +135,34 @@ if (PHP_SAPI === 'cli') {
         } else {
             $line('OK', 'GOOGLE_CLIENT_ID set (' . substr(GOOGLE_CLIENT_ID, 0, 20) . '...)');
         }
+        // If data/ isn't writable the schema sentinel can never be written, and every
+        // request re-runs all CREATE TABLE + ALTER TABLE statements. Silent, and slow.
+        $dataDir = __DIR__ . '/data';
+        if (!is_dir($dataDir)) {
+            $line('WARN', 'data/ does not exist yet — it is created on first run; ensure PHP can write there.');
+        } elseif (!is_writable($dataDir)) {
+            $line('FAIL', 'data/ is NOT writable — schema bootstrap will re-run on every request (slow). chmod 755 data/');
+        } else {
+            $sentinels = glob($dataDir . '/.schema-ok-*') ?: [];
+            $line('OK', 'data/ writable' . ($sentinels ? ' (schema sentinel: ' . basename(end($sentinels)) . ')' : ', no sentinel yet — migrations run on first request'));
+        }
         if (!empty($config['debug'])) $line('WARN', 'APP_DEBUG=1 — PHP errors show on-page. Disable for prod.');
         else                          $line('OK',   'APP_DEBUG off');
         $line(($config['db']['pass'] ?? '') === '' ? 'WARN' : 'OK', 'DB password ' . (($config['db']['pass'] ?? '') === '' ? 'is empty' : 'present'));
 
         echo "\nStatic assets:\n";
         foreach ([
+            // Everything the app actually serves. App icons are referenced by metaHead()
+            // and manifest.webmanifest; the wordmark by the sign-in screen.
             'design-tokens/styles.css',
-            'assets/logo/open-ledger-logo.svg',
+            'assets/app-icon/app-icon.svg',
+            'assets/app-icon/icon-16.png',
+            'assets/app-icon/icon-32.png',
+            'assets/app-icon/icon-180.png',
+            'assets/app-icon/icon-192.png',
+            'assets/app-icon/icon-512.png',
+            'manifest.webmanifest',
             'assets/logo/open-ledger-logo-wordmark.svg',
-            'assets/logo/apple-touch-icon.png',
             'assets/logo/og-image.png',
             '.htaccess',
         ] as $a) {
@@ -604,6 +630,7 @@ switch ($path) {
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
     case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
+    case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
     case '/manage':    redirect('/#profile');           // legacy path
     default:           http_response_code(404); exit('404');

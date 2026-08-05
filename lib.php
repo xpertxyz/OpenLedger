@@ -155,8 +155,14 @@ function makeDb(array $cfg): PDO {
                 foreach (DEFAULT_INVESTMENT_TYPES as $t) $ins->execute([(int)$hid, $t]);
             }
         }
-        if (!is_dir(dirname($sentinel))) mkdir(dirname($sentinel), 0755, true);
-        @touch($sentinel);
+        if (!is_dir(dirname($sentinel))) @mkdir(dirname($sentinel), 0755, true);
+        // Without this sentinel the whole schema + migration set re-runs on EVERY request,
+        // which is slow and floods the error log. A silent @touch failure would hide that,
+        // so say so plainly — `--preflight` checks the same thing before you deploy.
+        if (!@touch($sentinel)) {
+            error_log('[migrate] CANNOT WRITE ' . $sentinel
+                . ' — schema bootstrap will re-run on every request. Make data/ writable.');
+        }
     }
     return $db;
 }
@@ -182,7 +188,16 @@ function fmt(float $amount): string { return ($_SESSION['currency'] ?? '₹') . 
 // Rounded to the rupee — for summary tiles, where paise are noise and three figures
 // share one row. Detail rows keep full precision via fmt().
 function fmtShort(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupIndian($amount, 0); }
-function redirect(string $to): never { header("Location: $to"); exit; }
+// Most redirect targets come from a `back` form field, which is attacker-controllable.
+// Keep them same-site: must be a root-relative path ("/x"), never a protocol-relative
+// "//host" or absolute URL, and never contain CR/LF (header injection).
+function safeRedirectTarget(string $to): string {
+    if ($to === '' || $to[0] !== '/' || str_starts_with($to, '//') || preg_match('/[\r\n]/', $to)) {
+        return '/';
+    }
+    return $to;
+}
+function redirect(string $to): never { header('Location: ' . safeRedirectTarget($to)); exit; }
 function today(): string { return date('Y-m-d'); }
 
 function advanceDate(string $dateStr, string $freq): string {

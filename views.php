@@ -40,6 +40,7 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
   <symbol id="icon-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
   <symbol id="icon-archive-restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h2"/><path d="M20 8v11a2 2 0 0 1-2 2h-2"/><path d="m9 15 3-3 3 3"/><path d="M12 12v9"/></symbol>
+  <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
   <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
 </svg>
 SVG;
@@ -47,6 +48,51 @@ SVG;
 function icon(string $name, int $size = 20): string {
     $n = htmlspecialchars($name, ENT_QUOTES);
     return "<svg width=\"$size\" height=\"$size\" aria-hidden=\"true\"><use href=\"#icon-$n\"/></svg>";
+}
+
+// Horizontal swipe navigation for pages with exactly two neighbours (previous month/year,
+// next month/year). Either destination may be null when there is nowhere to go.
+// Content follows the finger: drag right for $older, left for $newer.
+function swipeNavScript(?string $older, ?string $newer): string {
+    $o = json_encode($older, JSON_UNESCAPED_SLASHES);
+    $n = json_encode($newer, JSON_UNESCAPED_SLASHES);
+    return <<<JS
+    <script>
+    (function () {
+      var OLDER = $o, NEWER = $n;
+      var x0 = 0, y0 = 0, t0 = 0;
+
+      addEventListener('touchstart', function (e) {
+        // Multi-touch is a pinch/zoom, not a swipe.
+        if (e.touches.length !== 1) { t0 = 0; return; }
+        var x = e.touches[0].clientX;
+        // iOS Safari / Chrome Android claim edge swipes for back/forward navigation, and
+        // these listeners are passive so preventDefault() isn't available. Don't compete —
+        // just ignore gestures that start in the OS hot zone.
+        if (x < 28 || x > innerWidth - 28) { t0 = 0; return; }
+        x0 = x; y0 = e.touches[0].clientY; t0 = Date.now();
+      }, { passive: true });
+
+      addEventListener('touchend', function (e) {
+        if (!t0) return;
+        var elapsed = Date.now() - t0; t0 = 0;
+        if (elapsed > 800) return;                       // a slow drag isn't a swipe
+        // Don't navigate out from under an open dialog or the profile drawer.
+        if (document.querySelector('dialog[open]')) return;
+        var drawer = document.getElementById('drawer-panel');
+        if (drawer && drawer.classList.contains('open')) return;
+
+        var dx = e.changedTouches[0].clientX - x0;
+        var dy = e.changedTouches[0].clientY - y0;
+        // Horizontal-dominant only, so vertical scrolling is never hijacked.
+        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+        if (dx > 0) { if (OLDER) location.href = OLDER; }
+        else if (NEWER) location.href = NEWER;
+      }, { passive: true });
+    })();
+    </script>
+    JS;
 }
 
 // Shared favicon / apple-touch / OG / Twitter / description / theme-color block.
@@ -57,8 +103,11 @@ function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
     return <<<META
 <meta name="description" content="$d">
 <meta name="theme-color" content="$themeColor">
-<link rel="icon" type="image/svg+xml" href="/assets/logo/open-ledger-logo.svg">
-<link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/assets/app-icon/app-icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/app-icon/icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/app-icon/icon-16.png">
+<link rel="apple-touch-icon" href="/assets/app-icon/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <meta property="og:title" content="Open Ledger">
 <meta property="og:description" content="$d">
 <meta property="og:image" content="$og">
@@ -175,6 +224,41 @@ $meta
   .split-card .v { font-family:var(--font-heading); font-size:clamp(11px, 3.6vw, 17px); margin-top:2px; white-space:nowrap; }
   .split-card .n { font-size:10.5px; opacity:.75; }
   .row.card.archived { opacity:.62; }
+
+  /* Year page — mode toggle + twelve-month column chart. */
+  .year-seg { display:flex; width:100%; }
+  .year-seg .seg-opt { flex:1; justify-content:center; font-size:13px; padding:8px 4px;
+                       text-decoration:none; color:var(--color-text); }
+  .year-seg .seg-opt.on { background:var(--color-accent); color:var(--color-bg); }
+  /* Year summary card = figures row + investment filter footer, stacked. */
+  .yearcard { flex-direction:column !important; padding:0; overflow:hidden; gap:0; }
+  .yearcard .split-card { background:none; box-shadow:none; border-radius:0; }
+  .invtoggle { display:flex; align-items:center; gap:4px; padding:8px 10px;
+               border-top:1px solid color-mix(in srgb, var(--color-bg) 25%, transparent); }
+  .invtoggle .lbl { font-size:11px; opacity:.8; margin-right:auto; }
+  .invtoggle .opt { font-size:11.5px; padding:4px 10px; border-radius:999px; text-decoration:none;
+                    color:var(--color-bg); opacity:.75;
+                    border:1px solid color-mix(in srgb, var(--color-bg) 35%, transparent); }
+  .invtoggle .opt.on { background:var(--color-bg); color:var(--color-accent-700); opacity:1; border-color:transparent; }
+  .ychart { padding: var(--space-3) var(--space-3) var(--space-2); }
+  .ylegend { display:flex; gap:14px; font-size:11.5px; color:var(--color-neutral-800); margin-bottom:10px; }
+  .ylegend span { display:inline-flex; align-items:center; gap:5px; }
+  .ylegend .sw { width:9px; height:9px; border-radius:3px; display:inline-block; }
+  .ylegend .sw.exp { background:var(--color-accent); }
+  .ylegend .sw.inv { background:var(--color-accent-2); }
+  .ygrid { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; height:132px; align-items:end; }
+  .ycol { display:flex; flex-direction:column; height:100%; justify-content:flex-end; gap:5px;
+          text-decoration:none; color:inherit; border-radius:var(--radius-sm); }
+  a.ycol:active { background:var(--color-neutral-200); }
+  .ystack { flex:1; display:flex; align-items:flex-end; justify-content:center; gap:2px; }
+  .ystack i { width:6px; display:block; border-radius:2px 2px 0 0; background:var(--color-accent); }
+  .ystack i.inv { background:var(--color-accent-2); }
+  .ylab { font-size:9.5px; text-align:center; color:var(--color-neutral-800); }
+  /* Drawer nav row — the entry point to the year page. */
+  .drawer-nav { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:var(--radius-md);
+                background:var(--color-surface); color:var(--color-text); text-decoration:none; font-size:14px; }
+  .drawer-nav .ico { color:var(--color-accent-700); display:inline-flex; }
+  .drawer-nav .chev { margin-left:auto; color:var(--color-neutral-700); }
   .tag-archived { font-size:10px; padding:1px 7px; border-radius:999px; background:var(--color-neutral-300); color:var(--color-neutral-800); margin-left:6px; vertical-align:1px; }
   .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-800); margin: var(--space-3) 2px var(--space-2); }
 
@@ -346,6 +430,13 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
     $canDeleteType = count($iTypes) > 1;
 
+    // Impact counts for the archive confirmation: how many entries move out of the active
+    // view, and whether a recurring item will keep posting into the type after archiving.
+    $s = $db->prepare("SELECT type, COUNT(*) n FROM investments WHERE household_id = ? GROUP BY type");
+    $s->execute([$hid]); $invPerType = array_column($s->fetchAll(), 'n', 'type');
+    $s = $db->prepare("SELECT type, COUNT(*) n FROM recurring WHERE household_id = ? AND kind = 'investment' GROUP BY type");
+    $s->execute([$hid]); $recPerType = array_column($s->fetchAll(), 'n', 'type');
+
     $currency = $_SESSION['currency'] ?? '₹';
     $initial  = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
     $back     = h(strtok($requestUri, '#') . '#profile');
@@ -363,6 +454,16 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
       </div>
 
       <div class="drawer-body">
+        <section>
+          <a class="drawer-nav" href="/year">
+            <span class="ico"><?= icon('calendar', 18) ?></span>
+            <span>Yearly summary</span>
+            <span class="chev"><?= icon('chevron-right', 16) ?></span>
+          </a>
+        </section>
+
+        <hr>
+
         <section>
           <h4>Currency</h4>
           <form method="post" action="/currency" class="row-form">
@@ -434,16 +535,40 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                   <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="40">
                   <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
                 </form>
-                <form method="post" action="/investment-types/archive" style="margin:0; display:inline-flex;">
-                  <?= csrfInput() ?>
-                  <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
-                  <input type="hidden" name="back" value="<?= $back ?>">
-                  <button class="icon-btn" type="submit"
-                          aria-label="<?= $isArch ? 'Restore' : 'Archive' ?> <?= h($t['name']) ?>"
-                          title="<?= $isArch ? 'Restore to active' : 'Archive' ?>">
-                    <?= icon($isArch ? 'archive-restore' : 'archive', 15) ?>
-                  </button>
-                </form>
+                <?php if ($isArch): ?>
+                  <!-- Restoring only widens what's visible, so it goes straight through. -->
+                  <form method="post" action="/investment-types/archive" style="margin:0; display:inline-flex;">
+                    <?= csrfInput() ?>
+                    <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+                    <input type="hidden" name="back" value="<?= $back ?>">
+                    <button class="icon-btn" type="submit" aria-label="Restore <?= h($t['name']) ?>"
+                            title="Restore to active"><?= icon('archive-restore', 15) ?></button>
+                  </form>
+                <?php else:
+                  $nInv = (int)($invPerType[$t['name']] ?? 0);
+                  $nRec = (int)($recPerType[$t['name']] ?? 0);
+                  $body = $nInv === 1 ? '1 investment moves out of the active view.'
+                                      : "$nInv investments move out of the active view.";
+                  $body .= ' Nothing is deleted — you can restore it any time.';
+                  // The genuine surprise: a recurring item keeps auto-posting after archiving.
+                  if ($nRec > 0) {
+                      $body .= ' Heads up: ' . ($nRec === 1 ? '1 recurring item' : "$nRec recurring items")
+                             . ' still post into this type, so new entries will keep arriving as archived.'
+                             . ' Delete them on the Recurring tab to stop that.';
+                  }
+                ?>
+                  <button type="button" class="icon-btn" aria-label="Archive <?= h($t['name']) ?>" title="Archive"
+                          onclick='askConfirm(<?= h(json_encode([
+                              "action" => "/investment-types/archive",
+                              "id"     => (int)$t['id'],
+                              "back"   => strtok($requestUri, '#') . '#profile',
+                              "csrf"   => csrfToken(),
+                              "title"  => "Archive " . $t['name'] . "?",
+                              "body"   => $body,
+                              "ok"     => "Archive",
+                              "danger" => false,
+                          ])) ?>)'><?= icon('archive', 15) ?></button>
+                <?php endif; ?>
                 <?php if ($canDeleteType): ?>
                   <button type="button" class="icon-btn" aria-label="Delete type"
                           onclick='askConfirm(<?= h(json_encode([
@@ -568,7 +693,18 @@ $meta
 $sprite
 <div style="width:100%;max-width:340px;padding:var(--space-4);">
   <div class="card elev-lg" style="padding:var(--space-6);align-items:center;text-align:center;gap:var(--space-4);">
-    <img src="/assets/logo/open-ledger-logo-wordmark.svg" alt="Open Ledger" style="max-width:220px;width:100%;height:auto;">
+    <!-- Lockup drawn inline rather than <img src="…wordmark.svg">: an SVG loaded via <img>
+         renders in isolation and cannot fetch the Google-hosted Caprasimo, so the name fell
+         back to a generic serif. Inline it also tracks the theme and the app-icon artwork. -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:14px;">
+      <svg viewBox="0 0 24 24" width="62" height="62" fill="none" stroke="var(--color-accent)"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
+      </svg>
+      <span style="font-family:var(--font-heading);font-size:29px;line-height:1;color:var(--color-text);">Open Ledger</span>
+    </div>
     <div style="font-size:14px;color:var(--color-neutral-800);">Track household expenses and investments together.</div>
 
     <div id="g_id_onload"
@@ -938,7 +1074,9 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       document.getElementById('ed-note').value     = d.note || '';
       document.getElementById('edit-expense-dlg').showModal();
     }
+
     </script>
+    <?= swipeNavScript("/history?m=" . ($offset + 1), $offset > 0 ? "/history?m=" . ($offset - 1) : null) ?>
     <?php
     $content = ob_get_clean();
     layout($db, $user, 'history', $content, "/history?m=$offset");
@@ -1180,6 +1318,239 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     <?php
     $content = ob_get_clean();
     layout($db, $user, 'invest', $content, '/invest');
+}
+
+// ─── Year summary ───────────────────────────────────────────────────
+// Calendar year (Jan–Dec) or Indian financial year (Apr–Mar). $y is the starting year:
+// in fy mode y=2026 means FY 2026–27, running 1 Apr 2026 to 31 Mar 2027.
+function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilter = 'all'): void {
+    $hid  = (int)$user['household_id'];
+    $mode = $mode === 'fy' ? 'fy' : 'cal';
+    if (!in_array($invFilter, ['all', 'active', 'archived'], true)) $invFilter = 'all';
+    $now  = new DateTimeImmutable('today');
+
+    // Default to the period we're currently in. The FY that contains today starts in
+    // April, so Jan–Mar still belongs to the FY that began the previous calendar year.
+    $thisYear = (int)$now->format('Y');
+    $curStart = $mode === 'fy'
+        ? ((int)$now->format('n') >= 4 ? $thisYear : $thisYear - 1)
+        : $thisYear;
+    if ($y <= 0) $y = $curStart;
+
+    // Clamp to [earliest year with data, current period] so you can't wander into empty
+    // decades. One indexed MIN() per table — cheap on (household_id, date).
+    $minDate = null;
+    foreach (['expenses', 'investments'] as $t) {
+        $s = $db->prepare("SELECT MIN(`date`) FROM $t WHERE household_id = ?");
+        $s->execute([$hid]);
+        $d = $s->fetchColumn();
+        if ($d && ($minDate === null || $d < $minDate)) $minDate = $d;
+    }
+    $firstYear = $curStart;
+    if ($minDate) {
+        $md = new DateTimeImmutable($minDate);
+        $firstYear = $mode === 'fy'
+            ? ((int)$md->format('n') >= 4 ? (int)$md->format('Y') : (int)$md->format('Y') - 1)
+            : (int)$md->format('Y');
+    }
+    $y = max($firstYear, min($y, $curStart));
+
+    $start = $mode === 'fy' ? "$y-04-01" : "$y-01-01";
+    $end   = (new DateTimeImmutable($start))->modify('+1 year')->format('Y-m-d');
+    $label = $mode === 'fy' ? 'FY ' . $y . '–' . substr((string)($y + 1), -2) : (string)$y;
+
+    // The invested side honours the active/archived toggle; spending never does.
+    // Same helper the Invest tab uses, so both pages agree on what "archived" means.
+    $archived = archivedTypeNames($db, $hid);
+    $archSet  = array_flip($archived);
+    [$invClause, $invParams] = investmentFilterSql($invFilter, $archived);
+
+    // Per-month totals for both ledgers. Indexed range scan + GROUP BY, no row fetching.
+    // Built by concatenation, not sprintf — MySQL's '%Y-%m' would be eaten as a format spec.
+    $monthly = [];
+    $selectYm = "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt, COUNT(*) AS n FROM ";
+    $whereYm  = " WHERE household_id = ? AND `date` >= ? AND `date` < ?";
+
+    $s = $db->prepare($selectYm . "expenses" . $whereYm . " GROUP BY ym");
+    $s->execute([$hid, $start, $end]);
+    foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['exp'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
+
+    $s = $db->prepare($selectYm . "investments" . $whereYm . $invClause . " GROUP BY ym");
+    $s->execute(array_merge([$hid, $start, $end], $invParams));
+    foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['inv'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
+
+    // Unfiltered count, so "is this period empty?" is answered by the data rather than by
+    // the current toggle. Otherwise picking Archived on a household with none would report
+    // an empty year and hide the toggle that switches back — a dead end.
+    $s = $db->prepare("SELECT COUNT(*) FROM investments" . $whereYm);
+    $s->execute([$hid, $start, $end]);
+    $invAllCount = (int)$s->fetchColumn();
+
+    // Twelve buckets in period order, so an empty month still gets a column.
+    $cursor = new DateTimeImmutable($start);
+    $months = []; $expTotal = 0.0; $invTotal = 0.0; $expCount = 0; $peak = 0.0;
+    for ($i = 0; $i < 12; $i++) {
+        $ym  = $cursor->format('Y-m');
+        $e   = $monthly[$ym]['exp'] ?? ['amt' => 0.0, 'n' => 0];
+        $iv  = $monthly[$ym]['inv'] ?? ['amt' => 0.0, 'n' => 0];
+        // Months back from today, so a column can deep-link into the History tab.
+        $back = ((int)$now->format('Y') * 12 + (int)$now->format('n'))
+              - ((int)$cursor->format('Y') * 12 + (int)$cursor->format('n'));
+        $months[] = [
+            'ym' => $ym, 'label' => $cursor->format('M'), 'full' => $cursor->format('F Y'),
+            'exp' => $e['amt'], 'inv' => $iv['amt'], 'n' => $e['n'] + $iv['n'], 'back' => $back,
+        ];
+        $expTotal += $e['amt']; $invTotal += $iv['amt'];
+        $expCount += $e['n'];
+        $peak = max($peak, $e['amt'], $iv['amt']);
+        $cursor = $cursor->modify('+1 month');
+    }
+
+    // Breakdowns for the whole period.
+    $catStmt = $db->prepare(
+        "SELECT COALESCE(c.name, 'Uncategorised') AS name, COALESCE(c.icon, 'tag') AS ic, SUM(e.amount) AS amt
+         FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         GROUP BY c.id, c.name, c.icon ORDER BY amt DESC"
+    );
+    $catStmt->execute([$hid, $start, $end]); $byCat = $catStmt->fetchAll();
+
+    $typeStmt = $db->prepare(
+        "SELECT type, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$invClause
+         GROUP BY type ORDER BY amt DESC"
+    );
+    $typeStmt->execute(array_merge([$hid, $start, $end], $invParams)); $byType = $typeStmt->fetchAll();
+
+    $qs      = fn(int $yy) => "/year?mode=$mode&amp;inv=$invFilter&amp;y=$yy";
+    $hasPrev = $y > $firstYear;
+    $hasNext = $y < $curStart;
+    // Elapsed months, so a period still in progress isn't averaged over a full 12.
+    $elapsed = 12;
+    if ($y === $curStart) {
+        $n = (int)$now->format('n');
+        $elapsed = $mode === 'fy' ? ($n >= 4 ? $n - 3 : $n + 9) : $n;
+    }
+
+    ob_start();
+    ?>
+    <!-- Plain links, not radios+onchange: a change handler can fire from scroll/state
+         restoration and navigate unintentionally. Links only move when tapped. -->
+    <div class="seg year-seg" role="group" aria-label="Year type">
+      <a class="seg-opt<?= $mode === 'cal' ? ' on' : '' ?>" href="/year?mode=cal&amp;inv=<?= h($invFilter) ?>"
+         <?= $mode === 'cal' ? 'aria-current="page"' : '' ?>>Calendar year</a>
+      <a class="seg-opt<?= $mode === 'fy' ? ' on' : '' ?>" href="/year?mode=fy&amp;inv=<?= h($invFilter) ?>"
+         <?= $mode === 'fy' ? 'aria-current="page"' : '' ?>>Financial year</a>
+    </div>
+
+    <div class="month-switch">
+      <?php if ($hasPrev): ?>
+        <a href="<?= $qs($y - 1) ?>" class="btn btn-icon" aria-label="Previous year"><?= icon('chevron-left', 20) ?></a>
+      <?php else: ?>
+        <span class="btn btn-icon" style="opacity:.35;pointer-events:none;"><?= icon('chevron-left', 20) ?></span>
+      <?php endif; ?>
+      <div class="label"><?= h($label) ?></div>
+      <?php if ($hasNext): ?>
+        <a href="<?= $qs($y + 1) ?>" class="btn btn-icon" aria-label="Next year"><?= icon('chevron-right', 20) ?></a>
+      <?php else: ?>
+        <span class="btn btn-icon" style="opacity:.35;pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
+      <?php endif; ?>
+    </div>
+    <?php if ($mode === 'fy'): ?>
+      <div class="muted" style="text-align:center; margin-top:-6px;">1 Apr <?= $y ?> – 31 Mar <?= $y + 1 ?></div>
+    <?php endif; ?>
+
+    <?php if ($expCount === 0 && $invAllCount === 0): ?>
+      <div class="empty">Nothing logged in <?= h($label) ?>.</div>
+    <?php else: ?>
+      <div class="card total-card accent yearcard">
+        <div class="split-card">
+          <div>
+            <div class="k">Spent</div>
+            <div class="v"><?= h(fmtShort($expTotal)) ?></div>
+            <div class="n"><?= h(fmtShort($expTotal / $elapsed)) ?>/mo avg</div>
+          </div>
+          <div>
+            <div class="k">Invested<?= $invFilter === 'all' ? '' : ' · ' . h($invFilter) ?></div>
+            <div class="v"><?= h(fmtShort($invTotal)) ?></div>
+            <div class="n"><?= h(fmtShort($invTotal / $elapsed)) ?>/mo avg</div>
+          </div>
+        </div>
+        <div class="invtoggle">
+          <span class="lbl">Investments</span>
+          <?php foreach (['all' => 'All', 'active' => 'Active', 'archived' => 'Archived'] as $k => $txt): ?>
+            <a class="opt<?= $invFilter === $k ? ' on' : '' ?>"
+               href="/year?mode=<?= $mode ?>&amp;y=<?= $y ?>&amp;inv=<?= $k ?>"
+               <?= $invFilter === $k ? 'aria-current="true"' : '' ?>><?= $txt ?></a>
+          <?php endforeach; ?>
+        </div>
+      </div>
+
+      <div class="card ychart">
+        <div class="ylegend">
+          <span><i class="sw exp"></i>Expenses</span>
+          <span><i class="sw inv"></i>Investments</span>
+        </div>
+        <div class="ygrid">
+          <?php foreach ($months as $m):
+            $eh = $peak > 0 ? ($m['exp'] / $peak) * 100 : 0;
+            $ih = $peak > 0 ? ($m['inv'] / $peak) * 100 : 0;
+            $tip = $m['full'] . ' — spent ' . fmt($m['exp']) . ', invested ' . fmt($m['inv']);
+            // Past months link into History; a future month in the current year does not.
+            $tag = $m['back'] >= 0 ? 'a' : 'div';
+            $href = $m['back'] >= 0 ? ' href="/history?m=' . $m['back'] . '"' : '';
+          ?>
+            <<?= $tag ?> class="ycol"<?= $href ?> title="<?= h($tip) ?>" aria-label="<?= h($tip) ?>">
+              <div class="ystack">
+                <i class="exp" style="height:<?= $m['exp'] > 0 ? number_format(max(3, $eh), 2) : 0 ?>%"></i>
+                <i class="inv" style="height:<?= $m['inv'] > 0 ? number_format(max(3, $ih), 2) : 0 ?>%"></i>
+              </div>
+              <span class="ylab"><?= h($m['label']) ?></span>
+            </<?= $tag ?>>
+          <?php endforeach; ?>
+        </div>
+        <div class="muted" style="margin-top:8px; font-size:11.5px;">Tap a month to open it in History.</div>
+      </div>
+
+      <?php if ($byCat): ?>
+        <div class="day-hdr">Where it went · <?= h(fmt($expTotal)) ?></div>
+        <div class="stack">
+          <?php foreach ($byCat as $c): $amt = (float)$c['amt']; $pct = $expTotal > 0 ? ($amt / $expTotal) * 100 : 0; ?>
+            <div class="card cat-bar">
+              <div class="top">
+                <div class="name"><?= icon($c['ic'], 18) ?> <?= h($c['name']) ?></div>
+                <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+              </div>
+              <div class="bar"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($byType): ?>
+        <div class="day-hdr">Invested by type · <?= h(fmt($invTotal)) ?></div>
+        <div class="stack">
+          <?php foreach ($byType as $t): $amt = (float)$t['amt']; $pct = $invTotal > 0 ? ($amt / $invTotal) * 100 : 0;
+                $isArch = isset($archSet[$t['type']]); ?>
+            <div class="card cat-bar">
+              <div class="top">
+                <div class="name">
+                  <?= icon($isArch ? 'archive' : 'trending-up', 18) ?> <?= h($t['type']) ?>
+                  <?php if ($isArch): ?><span class="tag-archived">archived</span><?php endif; ?>
+                </div>
+                <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+              </div>
+              <div class="bar sage"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+    <?= swipeNavScript($hasPrev ? "/year?mode=$mode&inv=$invFilter&y=" . ($y - 1) : null,
+                       $hasNext ? "/year?mode=$mode&inv=$invFilter&y=" . ($y + 1) : null) ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'year', $content, "/year?mode=$mode&inv=$invFilter&y=$y");
 }
 
 // ─── Recurring ──────────────────────────────────────────────────────

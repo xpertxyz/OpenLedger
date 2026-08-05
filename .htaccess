@@ -19,6 +19,12 @@ RewriteRule ^ index.php [L]
     Require all denied
 </FilesMatch>
 
+# Apache doesn't know .webmanifest by default; without this it is served as text/plain
+# and some browsers ignore the manifest entirely.
+<IfModule mod_mime.c>
+    AddType application/manifest+json .webmanifest
+</IfModule>
+
 # Basic hardening headers
 <IfModule mod_headers.c>
     Header set X-Content-Type-Options "nosniff"
