@@ -200,6 +200,18 @@ if (PHP_SAPI === 'cli') {
             in_array('ix_household_date', $eidx, true)
                 ? $line('OK',   'earnings.ix_household_date')
                 : $line('FAIL', 'earnings.ix_household_date missing — list queries will filesort');
+            // The per-category / per-type counts. Without these MySQL reads every row of the
+            // household and sorts it — and two of them run on every page load, via the drawer.
+            foreach ([
+                ['expenses',    'ix_household_cat',  '/organise counts, bulk move, uncategorised sweep'],
+                ['earnings',    'ix_household_cat',  'profile drawer, every page load'],
+                ['investments', 'ix_household_type', 'profile drawer, every page load'],
+            ] as [$tbl, $ix, $why]) {
+                $have = $db->query("SHOW INDEX FROM $tbl")->fetchAll(PDO::FETCH_COLUMN, 2);
+                in_array($ix, $have, true)
+                    ? $line('OK',   "$tbl.$ix")
+                    : $line('FAIL', "$tbl.$ix missing — full table scan on $why");
+            }
             // Every household needs at least one earning category or the Earn add form is unusable.
             $noCats = (int)$db->query(
                 "SELECT COUNT(*) FROM households h WHERE NOT EXISTS

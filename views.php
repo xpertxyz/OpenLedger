@@ -820,8 +820,14 @@ function renderAdd(PDO $db, array $user): void {
     $kids = [];
     foreach ($cats as $c) if (!empty($c['parent_id'])) $kids[(int)$c['parent_id']][] = $c;
     $byId = array_column($cats, null, 'id');
+    // The sticky default is read off the last expense, which may name a category that has since
+    // been deleted — easy to do now that /organise puts delete one tap away. Without this the
+    // grid shows nothing selected while the hidden field still holds the dead id, and the next
+    // expense lands uncategorised for no visible reason.
+    if ($selectedCat && !isset($byId[$selectedCat])) $selectedCat = 0;
     $selectedParent = (int)($byId[$selectedCat]['parent_id'] ?? 0) ?: $selectedCat;
     $cats = array_values(array_filter($cats, fn($c) => empty($c['parent_id'])));
+    if (!$selectedCat) $selectedCat = $selectedParent = (int)($cats[0]['id'] ?? 0);
 
     // Selected category sorts first, rest keep their original order.
     if ($selectedParent) {

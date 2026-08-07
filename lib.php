@@ -55,6 +55,7 @@ const SCHEMA_STATEMENTS = [
         date DATE NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX ix_household_date (household_id, date),
+        INDEX ix_household_cat (household_id, category_id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -67,6 +68,7 @@ const SCHEMA_STATEMENTS = [
         recurring_id INT NULL,
         date DATE NOT NULL,
         INDEX ix_household_date (household_id, date),
+        INDEX ix_household_type (household_id, type),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -117,6 +119,7 @@ const SCHEMA_STATEMENTS = [
         date DATE NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX ix_household_date (household_id, date),
+        INDEX ix_household_cat (household_id, category_id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
@@ -141,6 +144,15 @@ const MIGRATIONS = [
     // v9 — expense sub-categories. One level: a row with a parent_id can never be a parent
     // itself. No index — a household has at most 100 categories and they load as one set.
     "ALTER TABLE categories ADD COLUMN parent_id INT NULL",
+    // v10 — every "how many entries per category/type" count grouped on a column that
+    // ix_household_date doesn't hold, so MySQL read the household's whole table and then
+    // sorted it: measured on 20k expenses, EXPLAIN reported key=NULL, rows=19785. Two of
+    // those counts feed the profile drawer, which renders on EVERY page. Adding the grouped
+    // column makes them covering index scans.
+    // ADD INDEX is ONLINE on InnoDB (MySQL 5.6+/MariaDB 10.0+) — reads and writes continue.
+    "ALTER TABLE expenses ADD INDEX ix_household_cat (household_id, category_id)",
+    "ALTER TABLE earnings ADD INDEX ix_household_cat (household_id, category_id)",
+    "ALTER TABLE investments ADD INDEX ix_household_type (household_id, type)",
 ];
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
@@ -169,7 +181,7 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v9';
+    $sentinel = __DIR__ . '/data/.schema-ok-v10';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         foreach (MIGRATIONS as $sql) {
