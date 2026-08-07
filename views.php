@@ -198,6 +198,9 @@ $meta
   .pill-row.sub-row[hidden] { display:none; }
   .pill-btn { padding:6px 14px; border-radius:999px; border:1.5px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
   .pill-btn.on { background:var(--color-accent); color:var(--color-bg); border-color:transparent; }
+  /* The add action shares the filter row. Outlined rather than filled, so it doesn't read as
+     a selected filter sitting next to the real ones. */
+  .pill-btn.act { color:var(--color-accent-700); border-color:var(--color-accent-400); font-weight:600; gap:4px; }
   .note-row { display:flex; gap:8px; }
   .note-row .input { flex:1; }
 
@@ -1307,12 +1310,21 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         </div>
       </div>
 
-      <div class="pill-row">
+    <?php endif; ?>
+
+    <!-- Filters and the add action share one row; the button hangs off the end via margin-left.
+         Rendered outside the has-entries guard so an empty ledger still offers a way in. -->
+    <div class="pill-row">
+      <?php if ($grandCount > 0): ?>
         <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
         <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
         <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
-      </div>
+      <?php endif; ?>
+      <button type="button" class="pill-btn act" style="margin-left:auto;"
+              onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
+    </div>
 
+    <?php if ($grandCount > 0): ?>
       <div class="stack">
         <?php foreach ($byType as $t): $amt = (float)$t['amt']; $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
           <div class="card cat-bar">
@@ -1329,32 +1341,41 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       </div>
     <?php endif; ?>
 
-    <?php if ($showForm && !$activeTypes): ?>
-      <div class="card" style="padding:var(--space-4);">
-        <div class="muted">Every investment type is archived. Restore one from the profile drawer before adding a new investment.</div>
-      </div>
-    <?php elseif ($showForm): ?>
-      <form method="post" action="/investments" class="card stack" style="padding:var(--space-4); gap:10px;">
-        <?= csrfInput() ?>
-        <input class="input" name="name" placeholder="e.g. SIP - Mutual Fund" required maxlength="80" id="inv-name"
-               oninput="document.getElementById('inv-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('inv-amt').value) > 0)">
-        <div class="field-row">
-          <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
-                 oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
-          <select class="select" name="type">
-            <?php foreach ($activeTypes as $t): ?>
-              <option><?= h($t['name']) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <input class="input" name="date" type="date" value="<?= h(today()) ?>">
-        <div class="field-row">
-          <a class="btn btn-secondary btn-block" href="<?= $qs($filter) ?>">Cancel</a>
-          <button class="btn btn-primary btn-block" type="submit" id="inv-save" disabled>Save</button>
-        </div>
-      </form>
-    <?php else: ?>
-      <a class="btn btn-secondary btn-block" href="/invest?new=1&amp;f=<?= h($filter) ?>"><?= icon('plus', 16) ?> &nbsp;Add investment</a>
+    <!-- Add opens in the same kind of modal as edit, rather than re-rendering the page with an
+         inline form — one affordance for "fill in an investment", wherever you started from. -->
+    <dialog id="add-inv-dlg" class="confirm" style="max-width:360px;">
+      <?php if (!$activeTypes): ?>
+        <form method="dialog">
+          <div class="dlg-title">No active types</div>
+          <div class="dlg-body">Every investment type is archived. Restore one from the profile drawer before adding a new investment.</div>
+          <div class="dlg-actions"><button class="btn btn-secondary" value="cancel">Close</button></div>
+        </form>
+      <?php else: ?>
+        <form method="post" action="/investments">
+          <?= csrfInput() ?>
+          <div class="dlg-title">Add investment</div>
+          <input class="input" name="name" placeholder="e.g. SIP - Mutual Fund" required maxlength="80" id="inv-name"
+                 oninput="document.getElementById('inv-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('inv-amt').value) > 0)">
+          <div class="field-row">
+            <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
+                   oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
+            <select class="select" name="type">
+              <?php foreach ($activeTypes as $t): ?>
+                <option><?= h($t['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-inv-dlg').close()">Cancel</button>
+            <button class="btn btn-primary" type="submit" id="inv-save" disabled>Save</button>
+          </div>
+        </form>
+      <?php endif; ?>
+    </dialog>
+    <?php if ($showForm): ?>
+      <!-- /invest?new=1 still works — old links and the back button land with the form open. -->
+      <script>document.getElementById('add-inv-dlg').showModal();</script>
     <?php endif; ?>
 
     <?php if ($grandCount === 0): ?>
@@ -1604,32 +1625,45 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
       </div>
     <?php endif; ?>
 
-    <?php if ($showForm && !$catList): ?>
-      <div class="card" style="padding:var(--space-4);">
-        <div class="muted">Add an earning category in the profile drawer before logging an earning.</div>
-      </div>
-    <?php elseif ($showForm): ?>
-      <form method="post" action="/earnings" class="card stack" style="padding:var(--space-4); gap:10px;">
-        <?= csrfInput() ?>
-        <input class="input" name="name" placeholder="e.g. July salary" required maxlength="80" id="ern-name"
-               oninput="document.getElementById('ern-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('ern-amt').value) > 0)">
-        <div class="field-row">
-          <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="ern-amt"
-                 oninput="document.getElementById('ern-save').disabled = !(document.getElementById('ern-name').value.trim() && parseFloat(this.value) > 0)">
-          <select class="select" name="category_id">
-            <?php foreach ($catList as $c): ?>
-              <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <input class="input" name="date" type="date" value="<?= h(today()) ?>">
-        <div class="field-row">
-          <a class="btn btn-secondary btn-block" href="/earn">Cancel</a>
-          <button class="btn btn-primary btn-block" type="submit" id="ern-save" disabled>Save</button>
-        </div>
-      </form>
-    <?php else: ?>
-      <a class="btn btn-secondary btn-block" href="/earn?new=1"><?= icon('plus', 16) ?> &nbsp;Add earning</a>
+    <!-- No filters to share the row with here, but the add action keeps the same shape and
+         end-of-row position it has on Invest. -->
+    <div class="pill-row">
+      <button type="button" class="pill-btn act" style="margin-left:auto;"
+              onclick="document.getElementById('add-ern-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
+    </div>
+
+    <dialog id="add-ern-dlg" class="confirm" style="max-width:360px;">
+      <?php if (!$catList): ?>
+        <form method="dialog">
+          <div class="dlg-title">No earning categories</div>
+          <div class="dlg-body">Add an earning category in the profile drawer before logging an earning.</div>
+          <div class="dlg-actions"><button class="btn btn-secondary" value="cancel">Close</button></div>
+        </form>
+      <?php else: ?>
+        <form method="post" action="/earnings">
+          <?= csrfInput() ?>
+          <div class="dlg-title">Add earning</div>
+          <input class="input" name="name" placeholder="e.g. July salary" required maxlength="80" id="ern-name"
+                 oninput="document.getElementById('ern-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('ern-amt').value) > 0)">
+          <div class="field-row">
+            <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="ern-amt"
+                   oninput="document.getElementById('ern-save').disabled = !(document.getElementById('ern-name').value.trim() && parseFloat(this.value) > 0)">
+            <select class="select" name="category_id">
+              <?php foreach ($catList as $c): ?>
+                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-ern-dlg').close()">Cancel</button>
+            <button class="btn btn-primary" type="submit" id="ern-save" disabled>Save</button>
+          </div>
+        </form>
+      <?php endif; ?>
+    </dialog>
+    <?php if ($showForm): ?>
+      <script>document.getElementById('add-ern-dlg').showModal();</script>
     <?php endif; ?>
 
     <?php if ($entryCount === 0): ?>
@@ -2054,9 +2088,15 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     ?>
     <div class="muted">Salary, rent, EMIs and subscriptions that repeat.</div>
 
-    <?php if ($showForm): ?>
-      <form method="post" action="/recurring" class="card stack" style="padding:var(--space-4); gap:10px;">
+    <div class="pill-row">
+      <button type="button" class="pill-btn act" style="margin-left:auto;"
+              onclick="document.getElementById('add-rec-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
+    </div>
+
+    <dialog id="add-rec-dlg" class="confirm" style="max-width:360px;">
+      <form method="post" action="/recurring">
         <?= csrfInput() ?>
+        <div class="dlg-title">Add recurring item</div>
         <select class="select" name="kind" id="rec-kind" onchange="toggleRecKind()">
           <option value="expense">Expense — auto-post to History</option>
           <option value="earning">Earning — auto-post to Earn</option>
@@ -2093,23 +2133,26 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           </select>
           <input class="input" name="next_date" type="date" value="<?= h(today()) ?>">
         </div>
-        <div class="field-row">
-          <a class="btn btn-secondary btn-block" href="/recurring">Cancel</a>
-          <button class="btn btn-primary btn-block" type="submit" id="rec-save" disabled>Save</button>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-rec-dlg').close()">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="rec-save" disabled>Save</button>
         </div>
       </form>
-      <script>
-      function toggleRecKind() {
-        var kind = document.getElementById('rec-kind').value;
-        [['rec-cat', 'expense'], ['rec-type', 'investment'], ['rec-ecat', 'earning']].forEach(function (p) {
-          var el = document.getElementById(p[0]);
-          el.style.display = kind === p[1] ? '' : 'none';
-          el.disabled      = kind !== p[1];
-        });
-      }
-      </script>
-    <?php else: ?>
-      <a class="btn btn-secondary btn-block" href="/recurring?new=1"><?= icon('plus', 16) ?> &nbsp;Add recurring</a>
+    </dialog>
+    <script>
+    // Lives outside the dialog so it is defined whether or not the dialog has ever been opened.
+    function toggleRecKind() {
+      var kind = document.getElementById('rec-kind').value;
+      [['rec-cat', 'expense'], ['rec-type', 'investment'], ['rec-ecat', 'earning']].forEach(function (p) {
+        var el = document.getElementById(p[0]);
+        el.style.display = kind === p[1] ? '' : 'none';
+        el.disabled      = kind !== p[1];
+      });
+    }
+    toggleRecKind();
+    </script>
+    <?php if ($showForm): ?>
+      <script>document.getElementById('add-rec-dlg').showModal();</script>
     <?php endif; ?>
 
     <?php if (!$recs): ?>

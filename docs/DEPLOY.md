@@ -53,6 +53,6 @@ Automated checks can't tell you whether the app *feels* right to a real user. Hi
 
 If you added/altered a table or column:
 
-1. Bump the sentinel version in `lib.php` (e.g. `.schema-ok-v5` → `.schema-ok-v6`).
+1. Bump the `SCHEMA_SENTINEL` constant in `lib.php` (e.g. `.schema-ok-v9` → `.schema-ok-v10`). Older sentinels in `data/` are deleted automatically on the next bootstrap.
 2. On first request after deploy, migrations run. Verify by tailing the error log for any `[migrate]` messages.
 3. Run `php index.php --preflight` again on the server to confirm every expected column landed.

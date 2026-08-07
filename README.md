@@ -215,7 +215,7 @@ mysql -u root -e "DROP DATABASE homeledger; CREATE DATABASE homeledger CHARACTER
 # Next page load runs the fresh schema
 ```
 
-> **`data/` must be writable.** The schema bootstrap writes a sentinel file there once, then skips itself on every later request. If the directory isn't writable the sentinel never lands and **every request re-runs the full `CREATE TABLE` + `ALTER TABLE` set** — slow, and it floods the error log. `--preflight` fails loudly on this.
+> **`data/` must be writable.** The schema bootstrap writes the `SCHEMA_SENTINEL` file there once, then skips itself on every later request. If the directory isn't writable the sentinel never lands and **every request re-runs the full `CREATE TABLE` + `ALTER TABLE` set** — slow, and it floods the error log. `--preflight` fails loudly on this.
 
 ---
 
@@ -256,12 +256,13 @@ Expenses, earnings and investments each carry a nullable `recurring_id` FK so ca
 
 `recurring.category_id` is read against whichever category table the row's `kind` implies — `categories` for an expense, `earning_categories` for an earning — and is re-validated against that table on every save, so switching kind can never carry an id across.
 
-Schema changes are additive and idempotent: append to the `MIGRATIONS` array in `lib.php` and bump the sentinel filename. Each statement runs independently, and a duplicate-column error is logged and skipped, so re-running is safe.
+Schema changes are additive and idempotent: append to the `MIGRATIONS` array in `lib.php` and bump the `SCHEMA_SENTINEL` constant beside it. Each statement runs independently, and a duplicate-column error is logged and skipped, so re-running is safe. The bootstrap deletes superseded sentinels after writing the new one, so `data/` holds exactly one and it always names the live schema — `--preflight` reports that filename, and warns if older ones reappear.
 
 **Indexes.** Every list query is `(household_id, date)`; every "how many entries per category/type" count is `(household_id, category_id)` or `(household_id, type)`. The second family matters more than it looks: those counts group on a column `ix_household_date` doesn't hold, so without them MySQL reads the household's entire table and sorts it — and two of them run on *every* page, feeding the profile drawer's confirmation dialogs. Measured on 20k expenses before adding them, `EXPLAIN` reported `key=NULL, rows=19785`; after, all five are covering index scans. If you add a query that groups or filters on a new column, check `EXPLAIN` says `Using index` and add the index in the same commit — `--preflight` asserts every index the app depends on.
 
-Six behaviours worth knowing:
+Seven behaviours worth knowing:
 - **"Uncategorised" has one definition.** `category_id IS NULL` *or* pointing at a row that no longer exists — both render identically, so `uncategorisedWhere()` in `lib.php` is the single predicate the History bucket, the on-screen count, the file-away move and the bulk delete all share. Two definitions would mean the number on the button disagrees with what it touches.
+- **Adding and editing use the same modal.** Investments, earnings and recurring items all open a `<dialog>` from an outlined **+ Add** pill that sits at the end of the filter row, rather than re-rendering the page with an inline form. The `?new=1` URLs still work and land with the dialog open, so old links and the back button behave. Cases that block adding — every investment type archived, no earning categories — explain themselves inside the dialog instead of as a card on the page.
 - **Every structural change confirms first, and the dialog names the consequence.** Deletes, bulk moves, and both directions of nesting go through the shared `askConfirm()` dialog, whose body states the actual outcome — how many entries move, whether they survive, what budget a sub-category gives up. Only same-tap edits (rename, budget, currency, theme) submit straight through. That dialog posts `_csrf` + `id` + `back` and nothing else, which is why lifting a sub-category out needs no extra route: a missing `parent_id` already reads as "top level". Actions carrying more state — the two-select move and nest forms — bring their own `<dialog>`.
 - **Sub-categories are one level and budget-free.** `categories.parent_id` points at a top-level category in the same household; a row that has children can't be given a parent, and a row that has a parent can't be given children. Assigning a parent zeroes the child's budget — the household budget total sums top-level budgets only, so a child holding its own would double-count. Deleting a parent promotes its children to top level rather than stranding them.
 - **Earning categories are referenced by id, not by name** (`earnings.category_id`), so renaming one needs no cascade and deleting one leaves its earnings logged but *Uncategorised*. The last remaining category can't be deleted — the add form picks from that list.

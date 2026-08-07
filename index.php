@@ -219,7 +219,7 @@ if (PHP_SAPI === 'cli') {
             )->fetchColumn();
             $noCats === 0
                 ? $line('OK',   'every household has earning categories')
-                : $line('FAIL', "$noCats household(s) have no earning categories — delete data/.schema-ok-v8 to re-run the backfill");
+                : $line('FAIL', "$noCats household(s) have no earning categories — delete data/" . SCHEMA_SENTINEL . " to re-run the backfill");
         } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
 
         echo "\nConfig / env:\n";
@@ -238,8 +238,13 @@ if (PHP_SAPI === 'cli') {
         } elseif (!is_writable($dataDir)) {
             $line('FAIL', 'data/ is NOT writable — schema bootstrap will re-run on every request (slow). chmod 755 data/');
         } else {
-            $sentinels = glob($dataDir . '/.schema-ok-*') ?: [];
-            $line('OK', 'data/ writable' . ($sentinels ? ' (schema sentinel: ' . basename(end($sentinels)) . ')' : ', no sentinel yet — migrations run on first request'));
+            // Name the exact file the running code looks for. Globbing and taking the last
+            // match sorts .schema-ok-v10 before .schema-ok-v8 and reports a stale version.
+            $line('OK', 'data/ writable' . (file_exists($dataDir . '/' . SCHEMA_SENTINEL)
+                ? ' (schema ' . SCHEMA_SENTINEL . ' applied)'
+                : ' — ' . SCHEMA_SENTINEL . ' not yet written, migrations run on the first request'));
+            $stale = array_filter(glob($dataDir . '/.schema-ok-*') ?: [], fn($f) => basename($f) !== SCHEMA_SENTINEL);
+            if ($stale) $line('WARN', count($stale) . ' superseded sentinel(s) in data/ (' . implode(', ', array_map('basename', $stale)) . ') — harmless, cleared on the next bootstrap');
         }
         if (!empty($config['debug'])) $line('WARN', 'APP_DEBUG=1 — PHP errors show on-page. Disable for prod.');
         else                          $line('OK',   'APP_DEBUG off');

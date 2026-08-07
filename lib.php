@@ -155,6 +155,11 @@ const MIGRATIONS = [
     "ALTER TABLE investments ADD INDEX ix_household_type (household_id, type)",
 ];
 
+// Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
+// makes the bootstrap skip itself after the first request. Named here rather than inline so
+// --preflight can report the exact file the running code looks for.
+const SCHEMA_SENTINEL = '.schema-ok-v10';
+
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
 
 const DEFAULT_EARNING_CATEGORIES = ['Salary', 'Interest', 'Other'];
@@ -181,7 +186,7 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v10';
+    $sentinel = __DIR__ . '/data/' . SCHEMA_SENTINEL;
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         foreach (MIGRATIONS as $sql) {
@@ -217,6 +222,12 @@ function makeDb(array $cfg): PDO {
         if (!@touch($sentinel)) {
             error_log('[migrate] CANNOT WRITE ' . $sentinel
                 . ' — schema bootstrap will re-run on every request. Make data/ writable.');
+        }
+        // Sweep superseded sentinels so data/ holds exactly one and it always names the live
+        // schema. Left to pile up, a plain sort puts v10 before v8 and anything reading the
+        // directory reports the wrong version.
+        foreach (glob(dirname($sentinel) . '/.schema-ok-*') ?: [] as $old) {
+            if ($old !== $sentinel) @unlink($old);
         }
     }
     return $db;
