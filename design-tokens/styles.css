@@ -79,11 +79,6 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: var(--font-headi
    ══════════════════════════════════════════════════════════════════════ */
 
 *, *::before, *::after { box-sizing: border-box; }
-/* Mobile browsers paint the tap highlight as a hard rectangle over the element's own box,
-   which flashes a square behind every pill button and rounded row on touch. Every
-   interactive surface in this system is rounded, so the highlight is off everywhere and
-   the :active states below carry the press feedback instead. */
-*, *::before, *::after { -webkit-tap-highlight-color: transparent; }
 body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading); font-weight: var(--font-heading-weight);
@@ -128,11 +123,6 @@ figcaption {
 }
 .btn svg { display: block; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-/* Press feedback lives here rather than per-page, so a button behaves the same whether it
-   is inside the app shell or on a public page. It replaces the tap highlight switched off
-   above — without it a touch would look like nothing happened. */
-.btn { transition: filter .12s, transform .05s; }
-.btn:active:not(:disabled) { transform: scale(.98); filter: brightness(.95); }
 .btn-primary { background: var(--color-accent); color: var(--color-bg); }
 .btn-primary:hover { background: var(--color-accent-600); }
 .btn-primary:active { background: var(--color-accent-700); }
