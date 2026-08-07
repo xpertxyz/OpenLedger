@@ -717,6 +717,395 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     <?php
 }
 
+// ─── Landing ────────────────────────────────────────────────────────
+// Public marketing page at / for signed-out visitors. Deliberately has no
+// Google script on it — the gsi/client load happens on /login only, so a
+// visitor who never signs in makes zero third-party requests (which is the
+// claim the trust section makes, so it had better be true).
+//
+// Illustrations are inline SVG drawn from the tokens: line work in
+// currentColor, accents via var(--color-accent*). Nothing to download, and
+// they flip with the theme for free. Dark comes from prefers-color-scheme
+// re-using THEME_DARK_VARS — a signed-out visitor has no user row to read
+// is_dark from.
+function renderLanding(): void {
+    $origin = originUrl();
+    $repo   = 'https://github.com/xpertxyz/HomeLedger';
+    ?>
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Ledger — a free, open-source household ledger</title>
+<?= metaHead($origin) ?>
+<link rel="canonical" href="<?= h($origin) ?>/">
+<link rel="stylesheet" href="/design-tokens/styles.css">
+<script>
+  /* Runs before first paint so an explicit choice doesn't flash the other theme.
+     Only ever sets the attribute when the visitor has actually picked — absent
+     means "follow the OS", which the media query below handles with no JS. */
+  try { var t = localStorage.getItem('ol-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<style>
+  /* :not([data-theme]) is what makes "system" the default and still lets an
+     explicit light choice win on a dark OS — without it the media query would
+     outrank the stored preference. */
+  @media (prefers-color-scheme: dark) { :root:not([data-theme]) { <?= THEME_DARK_VARS ?> } }
+  :root[data-theme="dark"] { <?= THEME_DARK_VARS ?> }
+
+  /* The button shows the theme you'd switch *to*: moon while light, sun while dark. */
+  .tt .sun { display:none; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) .tt .sun { display:block; }
+    :root:not([data-theme]) .tt .moon { display:none; }
+  }
+  :root[data-theme="dark"] .tt .sun { display:block; }
+  :root[data-theme="dark"] .tt .moon { display:none; }
+  /* overflow-x guards the .band full-bleed trick: 100vw counts the scrollbar
+     and would otherwise open a sliver of horizontal scroll on desktop. */
+  body { margin:0; background:var(--color-bg); overflow-x:hidden; }
+  .wrap { max-width:1000px; margin:0 auto; padding:0 var(--space-4); }
+  .skip { position:absolute; left:-9999px; }
+  .skip:focus { position:static; }
+
+  /* Caprasimo at the stylesheet's fixed 42px overflows a 360px phone. */
+  h1 { font-size:clamp(32px, 7.6vw, 54px); line-height:1.05; text-wrap:balance; margin:0; }
+  h2 { font-size:clamp(24px, 4.4vw, 34px); line-height:1.12; text-wrap:balance; margin:0; }
+  h3 { font-size:19px; margin:0; }
+  p  { text-wrap:pretty; }
+
+  .lp-nav { display:flex; align-items:center; gap:var(--space-3);
+            padding:var(--space-4) 0; }
+  .lp-nav .sp { margin-left:auto; }
+  .lockup { display:flex; align-items:center; gap:9px; text-decoration:none; color:var(--color-text); }
+  .lockup span { font-family:var(--font-heading); font-size:20px; line-height:1; }
+  .quiet { color:var(--color-neutral-800); text-decoration:none; font-size:14px; }
+  .quiet:hover { color:var(--color-accent-700); }
+
+  .hero { display:grid; gap:var(--space-6); align-items:center;
+          padding:var(--space-6) 0 var(--space-8); }
+  .lede { font-size:17px; line-height:1.55; color:var(--color-neutral-800); max-width:46ch; }
+  .cta-row { display:flex; flex-wrap:wrap; gap:var(--space-2); }
+  .cta-row .btn { text-decoration:none; }
+  .fine { font-size:12.5px; color:var(--color-neutral-700); margin:0; }
+
+  .proof { display:flex; flex-wrap:wrap; gap:var(--space-2); padding-bottom:var(--space-8); }
+
+  .feat { display:grid; gap:var(--space-4); align-items:center;
+          padding:var(--space-6) 0; }
+  .feat p { font-size:15px; line-height:1.6; color:var(--color-neutral-800); margin:var(--space-2) 0 0; max-width:52ch; }
+  .art { width:100%; max-width:200px; margin:0 auto; color:var(--color-neutral-800); }
+  /* One column: the drawing always leads, whichever side it takes on desktop. */
+  .feat.flip .art { order:-1; }
+  .art svg { width:100%; height:auto; display:block; }
+  .hero .art { max-width:400px; color:var(--color-text); }
+
+  .grid { display:grid; gap:var(--space-3);
+          grid-template-columns:repeat(auto-fit, minmax(230px, 1fr));
+          padding:var(--space-4) 0 var(--space-8); }
+  .grid .card { gap:var(--space-2); }
+  .grid svg { color:var(--color-accent); }
+
+  /* Full-bleed tint band without a wrapper element. */
+  .band { background:var(--color-surface); padding:var(--space-8) 0;
+          margin-inline:calc(50% - 50vw); padding-inline:calc(50vw - 50%); }
+  .band > * { max-width:1000px; margin-inline:auto; }
+
+  .faq { border-bottom:1px solid var(--color-divider); }
+  .faq summary { cursor:pointer; list-style:none; padding:var(--space-3) 0;
+                 font-family:var(--font-heading); font-size:16.5px; }
+  .faq summary::-webkit-details-marker { display:none; }
+  .faq summary::after { content:'+'; float:right; color:var(--color-accent); font-family:var(--font-body); }
+  .faq[open] summary::after { content:'\2212'; }
+  .faq p { font-size:14.5px; line-height:1.6; color:var(--color-neutral-800); margin:0 0 var(--space-3); }
+
+  .close { text-align:center; padding:var(--space-8) 0; }
+  .close .cta-row { justify-content:center; }
+  .lp-foot { border-top:1px solid var(--color-divider); padding:var(--space-4) 0 var(--space-8);
+             font-size:12.5px; color:var(--color-neutral-700); display:flex;
+             flex-wrap:wrap; gap:var(--space-3); }
+
+  @media (min-width: 820px) {
+    .hero { grid-template-columns:1.05fr 0.95fr; gap:var(--space-8); padding:var(--space-8) 0; }
+    .feat { grid-template-columns:200px 1fr; gap:var(--space-8); }
+    .feat.flip { grid-template-columns:1fr 200px; }
+    .feat.flip .art { order:2; }
+    .art { max-width:none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<?= SVG_SPRITE ?>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="wrap">
+  <nav class="lp-nav">
+    <a class="lockup" href="/">
+      <svg viewBox="0 0 24 24" width="27" height="27" fill="none" stroke="var(--color-accent)"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
+      </svg>
+      <span>Open Ledger</span>
+    </a>
+    <button class="btn btn-secondary btn-icon tt sp" type="button" onclick="toggleTheme()"
+            aria-label="Switch between light and dark" title="Switch theme">
+      <span class="moon"><?= icon('moon', 18) ?></span>
+      <span class="sun"><?= icon('sun', 18) ?></span>
+    </button>
+    <a class="quiet" href="<?= h($repo) ?>">Source</a>
+    <a class="btn btn-secondary" href="/login" style="text-decoration:none;">Sign in</a>
+  </nav>
+  <script>
+    function toggleTheme() {
+      var r = document.documentElement;
+      var dark = r.dataset.theme
+        ? r.dataset.theme === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      r.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem('ol-theme', r.dataset.theme); } catch (e) {}
+    }
+  </script>
+</div>
+
+<main id="main" class="wrap">
+
+  <section class="hero">
+    <div style="display:flex;flex-direction:column;gap:var(--space-4);align-items:flex-start;">
+      <h1>Where the money in a house actually goes.</h1>
+      <p class="lede">A free, open-source ledger for one household. Log a spend in three
+        taps, let the rent post itself, and let the year explain itself. Built for a
+        phone, priced at nothing, yours to self-host.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="/login">Sign in with Google</a>
+        <a class="btn btn-secondary" href="<?= h($repo) ?>">Read the source</a>
+      </div>
+      <p class="fine">No ads, no trackers, no billing page. Nothing to configure before you start.</p>
+    </div>
+    <div class="art">
+      <svg viewBox="0 0 320 240" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" role="img"
+           aria-label="A house above an open ledger, with coins beside it">
+        <path d="M88 78 A72 54 0 0 1 232 78" stroke="var(--color-accent-2)"/>
+        <path d="M132 88 V58 L160 36 L188 58 V88 Z"/>
+        <path d="M152 88 V76 a8 8 0 0 1 16 0 V88"/>
+        <path d="M95 105 h39 a26 26 0 0 1 26 26 v91 a19.5 19.5 0 0 0-19.5-19.5 H95 Z"
+              stroke="var(--color-accent)"/>
+        <path d="M225 105 h-39 a26 26 0 0 0-26 26 v91 a19.5 19.5 0 0 1 19.5-19.5 H225 Z"
+              stroke="var(--color-accent)"/>
+        <path d="M106 148 h36 M106 168 h24 M178 148 h36 M178 168 h24"/>
+        <circle cx="160" cy="163.5" r="5.5" fill="var(--color-accent-2)" stroke="none"/>
+        <circle cx="252" cy="62" r="14" stroke="var(--color-accent)"/>
+        <circle cx="252" cy="62" r="5" fill="var(--color-accent-2)" stroke="none"/>
+        <circle cx="64" cy="80" r="9" stroke="var(--color-accent-2)"/>
+      </svg>
+    </div>
+  </section>
+
+  <div class="proof">
+    <span class="tag tag-accent">Open source</span>
+    <span class="tag tag-neutral">No tracking</span>
+    <span class="tag tag-accent-2">₹10,00,000, not ₹1,000,000</span>
+    <span class="tag tag-neutral">PHP + MySQL, no build step</span>
+    <span class="tag tag-neutral">Light &amp; dark</span>
+  </div>
+
+  <section class="feat">
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <g transform="translate(-5.7,-5.1) scale(1.08)">
+          <path d="M14 40 h12 M6 54 h20 M16 68 h10" stroke="var(--color-accent-2)"/>
+          <rect x="34" y="26" width="92" height="54" rx="16"/>
+          <path d="M50 46 h34 M50 60 h20"/>
+          <circle cx="120" cy="84" r="17" fill="var(--color-accent)" stroke="none"/>
+          <path d="M120 76 v16 M112 84 h16" stroke="var(--color-bg)" stroke-width="2"/>
+        </g>
+      </svg>
+    </div>
+    <div>
+      <h2>Three taps, then back to your evening.</h2>
+      <p>Amount, category, done. The keypad opens on the amount and the category you
+        used last is already picked, so the common case is a number and one tap.
+        Attribute it to whoever spent it, add a note if it matters, or don't.</p>
+    </div>
+  </section>
+
+  <section class="feat flip">
+    <div>
+      <h2>Categories that grow the way a house does.</h2>
+      <p>Nest Rent and Maintenance under Household and their spending rolls up into
+        the parent's bar. One level deep, on purpose — a tree you can hold in your
+        head. Budgets sit on the parent and report what's left; they never block a spend.</p>
+    </div>
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <g transform="translate(-7.9,-6) scale(1.1)">
+          <circle cx="28" cy="60" r="11" stroke="var(--color-accent)"/>
+          <path d="M40 60 h22 a10 10 0 0 0 10-10 v-12 a10 10 0 0 1 10-10 h18"/>
+          <path d="M40 60 h60"/>
+          <path d="M40 60 h22 a10 10 0 0 1 10 10 v12 a10 10 0 0 0 10 10 h18"/>
+          <rect x="100" y="19" width="42" height="18" rx="9"/>
+          <rect x="100" y="51" width="42" height="18" rx="9"/>
+          <rect x="100" y="83" width="42" height="18" rx="9"/>
+          <circle cx="110" cy="28" r="3" fill="var(--color-accent)" stroke="none"/>
+          <circle cx="110" cy="60" r="3" fill="var(--color-accent-2)" stroke="none"/>
+          <circle cx="110" cy="92" r="3" fill="var(--color-accent)" stroke="none"/>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <section class="feat">
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <g transform="translate(-13.6,-10.4) scale(1.17)">
+          <path d="M114 58 A34 34 0 1 1 80 24" stroke="var(--color-accent)"/>
+          <path d="M73 17 L81 24 L73 31" stroke="var(--color-accent)"/>
+          <rect x="62" y="42" width="36" height="32" rx="8"/>
+          <path d="M70 52 h20 M70 62 h12"/>
+          <circle cx="90" cy="64" r="3" fill="var(--color-accent)" stroke="none"/>
+          <circle cx="46" cy="104" r="3.5" fill="var(--color-accent-2)" stroke="none"/>
+          <circle cx="80" cy="104" r="3.5" fill="var(--color-accent-2)" stroke="none"/>
+          <circle cx="114" cy="104" r="3.5" fill="var(--color-accent-2)" stroke="none"/>
+        </g>
+      </svg>
+    </div>
+    <div>
+      <h2>Rent doesn't need reminding.</h2>
+      <p>Mark the rent, the EMI, the SIP, the salary as recurring and they post
+        themselves on the day they fall due — expenses, earnings and investments
+        alike. Come back after a month away and every missed period catches up in
+        one sweep, dated correctly, in the right month.</p>
+    </div>
+  </section>
+
+  <section class="feat flip">
+    <div>
+      <h2>Earned, spent, invested — on one page.</h2>
+      <p>A yearly summary in calendar year or the Indian financial year, with twelve
+        months of earned against spent against invested and the saved line between
+        them. Tap a month to open it in History. Amounts read ₹10,00,000, the way
+        you'd say it.</p>
+    </div>
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <g transform="translate(-17.6,-12.8) scale(1.22)">
+          <path d="M84.7 24.3 A34 34 0 0 1 98 86.8" stroke="var(--color-accent-2)" stroke-width="2"/>
+          <path d="M92.7 89.5 A34 34 0 0 1 46 59.2" stroke="var(--color-accent)" stroke-width="2"/>
+          <path d="M46.3 53.3 A34 34 0 0 1 78.8 24" stroke-width="2"/>
+          <path d="M80 18 v-5 M120 58 h5 M80 98 v5 M40 58 h-5"/>
+          <circle cx="80" cy="58" r="4" fill="var(--color-accent-2)" stroke="none"/>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <h2 style="padding-top:var(--space-6);">Also in the book</h2>
+  <div class="grid">
+    <div class="card">
+      <?= icon('list', 22) ?>
+      <div class="card-title">History that adds up</div>
+      <p class="card-body">Grouped by day with per-day totals, then a category
+        breakdown for the month. Swipe left or right to change month.</p>
+    </div>
+    <div class="card">
+      <?= icon('trending-up', 22) ?>
+      <div class="card-title">Earnings and investments</div>
+      <p class="card-body">Salary and interest on one tab; SIPs, stocks, FDs, gold and
+        PPF on another. Retire a type to Archived and its entries stay logged.</p>
+    </div>
+    <div class="card">
+      <?= icon('home', 22) ?>
+      <div class="card-title">One ledger, everyone in it</div>
+      <p class="card-body">Add each member once, then attribute any expense to whoever
+        spent it. No invites to approve, no per-seat anything.</p>
+    </div>
+    <div class="card">
+      <?= icon('moon', 22) ?>
+      <div class="card-title">Warm in both lights</div>
+      <p class="card-body">Light and dark, per person, remembered. Add to Home Screen
+        for a real icon and full-screen chrome on iOS and Android.</p>
+    </div>
+  </div>
+
+  <div class="band">
+    <div>
+      <h2>Nothing is watching you use it.</h2>
+      <p class="lede" style="max-width:60ch;">There is no analytics script, no ad SDK
+        and no third-party pixel on this page or inside the app. The only outbound
+        request Open Ledger ever makes is to Google, once, to check your sign-in
+        token. That is the whole list.</p>
+      <div class="card" style="margin:var(--space-4) 0;max-width:60ch;">
+        <div class="card-kicker">Worth knowing</div>
+        <p class="card-body">The instance at ledger.xpertxyz.com is <strong>not encrypted
+          at rest</strong>. Anyone with database access could read your entries. If
+          that isn't OK for your household, self-host it — PHP 8.1, MySQL, one daily
+          cron line, no build step.</p>
+      </div>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="/login">Sign in with Google</a>
+        <a class="btn btn-secondary" href="<?= h($repo) ?>#quick-start">Self-hosting guide</a>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="padding-top:var(--space-8);">Before you sign in</h2>
+  <div style="padding-top:var(--space-3);">
+    <details class="faq" open>
+      <summary>Is it really free?</summary>
+      <p>Yes, and there's no paid tier to graduate to. It's open-source software
+        running on a server that already existed.</p>
+    </details>
+    <details class="faq">
+      <summary>Why only Google sign-in?</summary>
+      <p>So there's no password to store, reset or leak. There's no signup form —
+        you sign in and you're in your ledger.</p>
+    </details>
+    <details class="faq">
+      <summary>Can I get my data out?</summary>
+      <p>It's a plain MySQL database. Self-host and it never leaves your host in the
+        first place.</p>
+    </details>
+    <details class="faq">
+      <summary>Does it do currencies other than rupees?</summary>
+      <p>The currency symbol is free text, per person. The lakh-crore grouping is
+        what it was built for.</p>
+    </details>
+    <details class="faq">
+      <summary>What isn't in it?</summary>
+      <p>Bank sync, receipt scanning, splitting bills with people outside the house,
+        and encryption at rest. It's a ledger you type into.</p>
+    </details>
+  </div>
+
+  <section class="close">
+    <h2>Start the book tonight.</h2>
+    <p class="lede" style="margin:var(--space-3) auto 0;">About thirty seconds to sign
+      in. The categories are already there.</p>
+    <div class="cta-row" style="margin-top:var(--space-4);">
+      <a class="btn btn-primary" href="/login">Sign in with Google</a>
+    </div>
+  </section>
+
+  <footer class="lp-foot">
+    <a class="quiet" href="/terms">Terms &amp; conditions</a>
+    <a class="quiet" href="<?= h($repo) ?>">Source on GitHub</a>
+    <span style="margin-left:auto;">Built by <a class="quiet" href="https://xpertxyz.in"
+      style="color:var(--color-accent-700);">XpertXYZ</a></span>
+  </footer>
+
+</main>
+</body></html>
+    <?php
+}
+
 // ─── Sign-in ────────────────────────────────────────────────────────
 // Google Identity Services: One Tap auto-prompts, and the "Sign in with Google"
 // button is Google's official standard rendering. Both submit the ID token to
@@ -745,17 +1134,29 @@ DEV
     : '';
     $origin = originUrl();
     $meta = metaHead($origin);
+    $dark = THEME_DARK_VARS;
 
     echo <<<HTML
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Open Ledger — Sign in</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
+<script>
+  try { var t = localStorage.getItem('ol-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
+  /* Signed-out visitor has no is_dark row to read, so follow the OS — unless
+     they overrode it with the toggle on the landing page, which the inline
+     script above replays from localStorage. Same constant the authed layout
+     injects inline. */
+  @media (prefers-color-scheme: dark) { :root:not([data-theme]) { $dark } }
+  :root[data-theme="dark"] { $dark }
   body { margin:0; background:var(--color-bg); min-height:100vh; display:flex; align-items:center; justify-content:center; }
   .toast { padding:8px 14px; border-radius:999px; background:var(--color-accent-700); color:var(--color-bg); font-size:13px; }
 </style>
@@ -796,6 +1197,8 @@ $sprite
     $flashHtml
   </div>
   <div style="text-align:center; margin-top:14px; font-size:12px; color:var(--color-neutral-800);">
+    <a href="/" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">What is Open Ledger?</a>
+    &nbsp;·&nbsp;
     <a href="/terms" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
     &nbsp;·&nbsp;
     Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700); text-decoration:none;">XpertXYZ</a>

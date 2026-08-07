@@ -41,7 +41,9 @@
 - **Recurring items** that auto-post on their due date — expenses (rent, EMIs, subscriptions), earnings (salary, interest payouts) and investments (SIPs, RDs, auto-debits). Missed periods catch up in one sweep. Cascade delete of past auto-entries is optional per item.
 - **Household sharing** — multiple members share one ledger. Attribute each expense to a member.
 - **Editable everything** — every list row opens an inline edit modal. Rename categories and investment types anywhere and it reflects app-wide.
-- **Google One Tap sign-in** — no passwords, no signup form, no account management surface.
+- **Public landing page at `/`** for signed-out visitors — what the app is, drawn with inline SVG illustrations built from the design tokens. It loads no third-party script at all: Google Identity Services is pulled only on `/login`, so someone who never signs in never touches Google.
+- **`/robots.txt` and `/sitemap.xml`** generated from the request host, so they're correct on any deployment with nothing to configure. The sitemap lists the landing page only — every app route redirects a crawler to `/login`, which is `noindex`.
+- **Google One Tap sign-in** at `/login` — no passwords, no signup form, no account management surface.
 - **Indian number formatting** — ₹10,00,000 (lakh/crore grouping), not ₹1,000,000.
 - **Installable** — web app manifest + full app-icon set, so "Add to Home Screen" gets a real icon and standalone chrome on iOS and Android.
 - **Warm light + dark themes**, per-user, persisted.
@@ -97,7 +99,7 @@ cp .env.example .env
 php -S 127.0.0.1:8152 router.php
 ```
 
-Open <http://127.0.0.1:8152/> and click **Continue as dev user**.
+Open <http://127.0.0.1:8152/> for the landing page, then **Sign in** (or go straight to <http://127.0.0.1:8152/login>) and click **Continue as dev user**.
 
 > The dev-stub sign-in only activates when *both* `APP_DEBUG=1` **and** the Google client id is still the placeholder. Setting a real client id disables the stub — the way it should be in production.
 
@@ -260,7 +262,9 @@ Schema changes are additive and idempotent: append to the `MIGRATIONS` array in 
 
 **Indexes.** Every list query is `(household_id, date)`; every "how many entries per category/type" count is `(household_id, category_id)` or `(household_id, type)`. The second family matters more than it looks: those counts group on a column `ix_household_date` doesn't hold, so without them MySQL reads the household's entire table and sorts it — and two of them run on *every* page, feeding the profile drawer's confirmation dialogs. Measured on 20k expenses before adding them, `EXPLAIN` reported `key=NULL, rows=19785`; after, all five are covering index scans. If you add a query that groups or filters on a new column, check `EXPLAIN` says `Using index` and add the index in the same commit — `--preflight` asserts every index the app depends on.
 
-Seven behaviours worth knowing:
+Nine behaviours worth knowing:
+- **The crawler files are answered before the session starts.** `/robots.txt` and `/sitemap.xml` are handled at the top of `index.php`, ahead of `session_start()` and the DB connect, so a Googlebot fetch mints no session file and sets no cookie. Both are built from `originUrl()`, which honours `X-Forwarded-Proto`, so behind the TLS proxy they emit `https://` — Search Console treats `http` and `https` as different properties, and a sitemap that names the wrong scheme lists a URL the property doesn't own. `robots.txt` carries no `Disallow`: blocking the app paths would also block the stylesheet, and Google renders the landing page before judging it.
+- **Signed out, there are exactly four public routes.** `/` renders the landing page, `/login` the Google gate, `/terms` the terms, and `POST /signin` takes Google's callback. Every other path redirects to `/login` rather than quietly rendering the gate in place, so a signed-out deep link doesn't sit at a URL that will mean something else once you sign in. Signed in, `/login` redirects to `/`; signing out lands on `/login`. Both public pages default to the OS dark preference via `prefers-color-scheme` re-using `THEME_DARK_VARS` — a visitor has no `users.is_dark` row to read. The landing page's theme button overrides that, stored in `localStorage` as `ol-theme` and replayed by an inline `<head>` script on both pages so an explicit choice never flashes the other theme. The media query is scoped to `:root:not([data-theme])`, which is what lets an explicit *light* choice win on a dark OS; without it the query would outrank the stored preference. No stored value means system, and that path needs no JavaScript.
 - **"Uncategorised" has one definition.** `category_id IS NULL` *or* pointing at a row that no longer exists — both render identically, so `uncategorisedWhere()` in `lib.php` is the single predicate the History bucket, the on-screen count, the file-away move and the bulk delete all share. Two definitions would mean the number on the button disagrees with what it touches.
 - **Adding and editing use the same modal.** Investments, earnings and recurring items all open a `<dialog>` from an outlined **+ Add** pill that sits at the end of the filter row, rather than re-rendering the page with an inline form. The `?new=1` URLs still work and land with the dialog open, so old links and the back button behave. Cases that block adding — every investment type archived, no earning categories — explain themselves inside the dialog instead of as a card on the page.
 - **Every structural change confirms first, and the dialog names the consequence.** Deletes, bulk moves, and both directions of nesting go through the shared `askConfirm()` dialog, whose body states the actual outcome — how many entries move, whether they survive, what budget a sub-category gives up. Only same-tap edits (rename, budget, currency, theme) submit straight through. That dialog posts `_csrf` + `id` + `back` and nothing else, which is why lifting a sub-category out needs no extra route: a missing `parent_id` already reads as "top level". Actions carrying more state — the two-select move and nest forms — bring their own `<dialog>`.

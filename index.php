@@ -279,6 +279,45 @@ if (PHP_SAPI === 'cli') {
             : $line('WARN', '.htaccess may not deny dotfiles — check .env is web-inaccessible');
         str_contains($ht, 'config\\.php') ? $line('OK', '.htaccess denies raw config.php fetch') : $line('WARN', 'config.php may be web-accessible');
 
+        echo "\nPublic pages:\n";
+        try {
+            ob_start(); renderLanding(); $lp = (string)ob_get_clean();
+            ob_start(); renderSignIn(); $sp = (string)ob_get_clean();
+            substr_count($lp, '<h1') === 1
+                ? $line('OK',   'landing has exactly one h1')
+                : $line('FAIL', 'landing has ' . substr_count($lp, '<h1') . ' h1 elements');
+            substr_count($lp, 'href="/login"') >= 3
+                ? $line('OK',   'landing CTAs point at /login (' . substr_count($lp, 'href="/login"') . ')')
+                : $line('FAIL', 'landing is missing its /login CTAs');
+            // The trust section claims no third-party request happens until you sign in.
+            // Google's script must therefore live on /login and nowhere else.
+            !str_contains($lp, 'accounts.google.com')
+                ? $line('OK',   'landing loads nothing third-party')
+                : $line('FAIL', 'landing references accounts.google.com — the "no third-party" claim is false');
+            str_contains($sp, 'accounts.google.com/gsi/client')
+                ? $line('OK',   '/login loads Google Identity Services')
+                : $line('FAIL', '/login is missing the gsi/client script — sign-in is broken');
+            str_contains($sp, 'data-login_uri="/signin"')
+                ? $line('OK',   '/login posts its credential to /signin')
+                : $line('FAIL', '/login lost its data-login_uri — Google has nowhere to post');
+            // The pair the sitemap depends on: the one page it lists must be
+            // indexable, and the gate it links to must not be.
+            !str_contains($lp, 'noindex')
+                ? $line('OK',   'landing is indexable')
+                : $line('FAIL', 'landing carries a noindex — the sitemap lists a page Google will drop');
+            str_contains($sp, 'name="robots" content="noindex"')
+                ? $line('OK',   '/login is noindex')
+                : $line('WARN', '/login lost its noindex — the sign-in gate may get indexed');
+            str_contains($lp, '<link rel="canonical"')
+                ? $line('OK',   'landing declares a canonical')
+                : $line('FAIL', 'landing lost its canonical — it must match the sitemap <loc>');
+            foreach (['landing' => $lp, 'sign-in' => $sp] as $name => $html) {
+                str_contains($html, 'prefers-color-scheme: dark')
+                    ? $line('OK',   "$name follows the OS dark preference")
+                    : $line('WARN', "$name has no dark-mode block");
+            }
+        } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'public pages: ' . $e->getMessage()); }
+
         echo "\nRecurring sweep (dry run):\n";
         try {
             if (isset($db)) { sweepRecurring($db, 0); $line('OK', 'sweepRecurring runs cleanly against household_id=0 (no-op)'); }
@@ -310,6 +349,40 @@ if (!empty($config['debug'])) {
     ini_set('display_startup_errors', '1');
 }
 
+$path   = parse_url((string)$_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
+$method = $_SERVER['REQUEST_METHOD'];
+
+// ────────────────────────────────────────────────────────────────────
+// Crawler files, answered before the session starts and before the DB is
+// touched — a Googlebot fetch shouldn't mint a session file and a cookie.
+// Built from the request host rather than a hardcoded domain, so they stay
+// correct on any deployment.
+//
+// Only the landing page is listed: every app route 302s to /login for a
+// crawler, and /login carries a noindex, so nothing else is indexable.
+// ────────────────────────────────────────────────────────────────────
+if ($method === 'GET' && ($path === '/sitemap.xml' || $path === '/robots.txt')) {
+    $origin = originUrl();
+    header('Cache-Control: public, max-age=3600');
+    if ($path === '/robots.txt') {
+        header('Content-Type: text/plain; charset=utf-8');
+        // Deliberately no Disallow: blocking the app paths would also block the
+        // stylesheet, and Google renders the landing page before judging it.
+        echo "User-agent: *\nAllow: /\n\nSitemap: $origin/sitemap.xml\n";
+        exit;
+    }
+    // lastmod tracks the file the page is rendered from, so it moves on deploy
+    // and not before.
+    $lastmod = gmdate('Y-m-d', (int)(@filemtime(__DIR__ . '/views.php') ?: time()));
+    header('Content-Type: application/xml; charset=utf-8');
+    echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n"
+       . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n"
+       . "  <url>\n    <loc>" . h($origin) . "/</loc>\n    <lastmod>$lastmod</lastmod>\n"
+       . "    <changefreq>monthly</changefreq>\n  </url>\n"
+       . "</urlset>\n";
+    exit;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Session hardening — before session_start(), so cookie flags land.
 // ────────────────────────────────────────────────────────────────────
@@ -338,9 +411,7 @@ try {
 
 require __DIR__ . '/views.php';
 
-$path   = parse_url((string)$_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
-$method = $_SERVER['REQUEST_METHOD'];
-$user   = currentUser($db);
+$user = currentUser($db);
 
 // Every request gets a light global limiter to blunt scanners; the per-endpoint
 // limits below are the real controls.
@@ -349,11 +420,20 @@ if ($method === 'POST') {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Unauthed: only the sign-in gate, Google callback, and /terms are reachable.
+// Unauthed: the landing page at /, the sign-in gate at /login, the Google
+// callback, and /terms. Everything else bounces to /login.
 // ────────────────────────────────────────────────────────────────────
 if (!$user) {
     if ($method === 'GET' && $path === '/terms') {
         renderTermsPublic();
+        exit;
+    }
+    if ($method === 'GET' && $path === '/') {
+        renderLanding();
+        exit;
+    }
+    if ($method === 'GET' && $path === '/login') {
+        renderSignIn();
         exit;
     }
     if ($method === 'POST' && $path === '/signin') {
@@ -400,8 +480,7 @@ if (!$user) {
         $_SESSION['user_id'] = (int)$uid;
         redirect('/');
     }
-    renderSignIn();
-    exit;
+    redirect('/login');
 }
 
 $hid = (int)$user['household_id'];
@@ -422,7 +501,7 @@ if ($method === 'POST') {
         switch ($path) {
             case '/signout':
                 $_SESSION = []; session_destroy();
-                redirect('/');
+                redirect('/login');
 
             case '/theme':
                 $db->prepare("UPDATE users SET is_dark = 1 - is_dark WHERE id = ?")->execute([$user['id']]);
@@ -905,6 +984,7 @@ switch ($path) {
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
+    case '/login':     redirect('/');                   // already signed in
     case '/manage':    redirect('/#profile');           // legacy path
     default:           http_response_code(404); exit('404');
 }

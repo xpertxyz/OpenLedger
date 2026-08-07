@@ -27,7 +27,9 @@ Checks:
 
 Automated checks can't tell you whether the app *feels* right to a real user. Hit these in a fresh incognito window:
 
-- [ ] **Sign-in card renders** — Google button visible (real client id in prod), Terms link works even when signed out
+- [ ] **Landing page renders at `/`** — illustrations draw, theme button flips light/dark and survives a reload, all CTAs land on `/login`
+- [ ] **`/robots.txt` and `/sitemap.xml`** — both 200, and the URLs inside start `https://` with the real domain (not `http://`, not localhost)
+- [ ] **Sign-in card renders at `/login`** — Google button visible (real client id in prod), Terms link works even when signed out
 - [ ] **Sign in with Google** — first-time users get a bootstrapped household + 13 categories + 6 investment types + "Me" member
 - [ ] **Add expense** — amount + circular submit works, toast appears, entry shows on History
 - [ ] **History** — day headers show per-day totals, category breakdown percentages sum to 100%, pagination "Older →" appears if >200 entries
@@ -40,7 +42,7 @@ Automated checks can't tell you whether the app *feels* right to a real user. Hi
 - [ ] **Currency** — change symbol, verify it displays app-wide
 - [ ] **Dark mode toggle** — sun/moon icon flips theme, persists across reload
 - [ ] **Sign out confirm** — modal appears, Cancel keeps session, Confirm ends it
-- [ ] **404 for unknown routes** — hit `/nope`, expect 404
+- [ ] **Unknown routes** — hit `/nope`: signed out it redirects to `/login`, signed in it 404s
 
 ## 3. Ops confirmation
 
