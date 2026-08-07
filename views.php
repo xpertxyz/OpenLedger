@@ -97,7 +97,7 @@ function swipeNavScript(?string $older, ?string $newer): string {
 
 // Shared favicon / apple-touch / OG / Twitter / description / theme-color block.
 function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
-    $desc = 'Track household expenses, investments and recurring bills together.';
+    $desc = 'Track household earnings, expenses, investments and recurring bills together.';
     // $origin is built from HTTP_HOST, which the client controls — escape before it lands
     // in content="" attributes.
     $origin = h($origin);
@@ -171,6 +171,7 @@ $meta
   .row.card { flex-direction:row !important; align-items:center; gap:10px; padding:8px 12px; }
   .row-icon { width:30px; height:30px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); display:grid; place-items:center; flex-shrink:0; }
   .row-icon.sage { background:var(--color-accent-2-100); color:var(--color-accent-2-700); }
+  .row-icon.ink { background:var(--color-neutral-300); color:var(--color-neutral-800); }
   .row-main { flex:1; min-width:0; }
   .row-main .title { font-size:13px; font-weight:600; line-height:1.2; }
   .row-main .sub { font-size:11.5px; color:var(--color-neutral-800); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
@@ -200,6 +201,10 @@ $meta
   .total-card { padding: var(--space-4); text-align:center; }
   .total-card.accent { background:var(--color-accent-700); color:var(--color-bg); }
   .total-card.sage { background:var(--color-accent-2-700); color:var(--color-bg); }
+  /* Earnings own the third series. The two accents are already spoken for (terracotta =
+     spending, sage = investing), so income takes the neutral ramp — still a token, and the
+     only ramp left that stays legible against both themes' backgrounds. */
+  .total-card.ink { background:var(--color-neutral-700); color:var(--color-bg); }
   .total-card .big { font-family:var(--font-heading); font-size:32px; }
   .total-card .sub { font-size:13px; opacity:.85; }
   .cat-bar { padding: 10px 14px; }
@@ -210,6 +215,7 @@ $meta
   .bar { height:8px; background:var(--color-divider); border-radius:999px; margin-top:8px; overflow:hidden; }
   .bar > i { display:block; height:100%; background:var(--color-accent); border-radius:999px; }
   .bar.sage > i { background:var(--color-accent-2); }
+  .bar.ink  > i { background:var(--color-neutral-700); }
   /* Budget states: at/under budget stays sage, over budget goes red. */
   .bar.under > i { background:var(--color-accent-2); }
   .bar.over  > i { background:#c0392b; }
@@ -243,19 +249,27 @@ $meta
                     color:var(--color-bg); opacity:.75;
                     border:1px solid color-mix(in srgb, var(--color-bg) 35%, transparent); }
   .invtoggle .opt.on { background:var(--color-bg); color:var(--color-accent-700); opacity:1; border-color:transparent; }
+  /* Net line between the figures row and the investment filter. */
+  .netrow { display:flex; align-items:baseline; gap:8px; padding:7px 10px;
+            border-top:1px solid color-mix(in srgb, var(--color-bg) 25%, transparent); }
+  .netrow .lbl { font-size:11px; opacity:.8; margin-right:auto; }
+  .netrow .v { font-family:var(--font-heading); font-size:15px; }
   .ychart { padding: var(--space-3) var(--space-3) var(--space-2); }
   .ylegend { display:flex; gap:14px; font-size:11.5px; color:var(--color-neutral-800); margin-bottom:10px; }
   .ylegend span { display:inline-flex; align-items:center; gap:5px; }
   .ylegend .sw { width:9px; height:9px; border-radius:3px; display:inline-block; }
   .ylegend .sw.exp { background:var(--color-accent); }
   .ylegend .sw.inv { background:var(--color-accent-2); }
+  .ylegend .sw.ern { background:var(--color-neutral-700); }
   .ygrid { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; height:132px; align-items:end; }
   .ycol { display:flex; flex-direction:column; height:100%; justify-content:flex-end; gap:5px;
           text-decoration:none; color:inherit; border-radius:var(--radius-sm); }
   a.ycol:active { background:var(--color-neutral-200); }
   .ystack { flex:1; display:flex; align-items:flex-end; justify-content:center; gap:2px; }
-  .ystack i { width:6px; display:block; border-radius:2px 2px 0 0; background:var(--color-accent); }
+  /* 5px, not 6 — three series per column have to clear twelve columns on a 320px screen. */
+  .ystack i { width:5px; display:block; border-radius:2px 2px 0 0; background:var(--color-accent); }
   .ystack i.inv { background:var(--color-accent-2); }
+  .ystack i.ern { background:var(--color-neutral-700); }
   .ylab { font-size:9.5px; text-align:center; color:var(--color-neutral-800); }
   /* Drawer nav row — the entry point to the year page. */
   .drawer-nav { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:var(--radius-md);
@@ -278,7 +292,8 @@ $meta
   }
 
   .tabnav { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); width:calc(100% - 32px); max-width:448px; background:var(--color-surface); border-radius:999px; padding:6px; display:flex; gap:2px; box-shadow:var(--shadow-md); box-sizing:border-box; }
-  .tabnav a { flex:1; padding:8px 4px; border-radius:999px; text-decoration:none; color:var(--color-text); font-size:11px; display:flex; flex-direction:column; align-items:center; gap:2px; opacity:.7; }
+  /* Five tabs now — 10.5px and 2px side padding keep "Recurring" on one line at 320px. */
+  .tabnav a { flex:1; min-width:0; padding:8px 2px; border-radius:999px; text-decoration:none; color:var(--color-text); font-size:10.5px; display:flex; flex-direction:column; align-items:center; gap:2px; opacity:.7; white-space:nowrap; overflow:hidden; }
   .tabnav a.on { background:var(--color-accent); color:var(--color-bg); opacity:1; }
 
   input[type="date"]::-webkit-calendar-picker-indicator { opacity:.6; }
@@ -348,6 +363,7 @@ HTML;
     $tabs = [
         ['add',       '/',          'plus',         'Add'],
         ['history',   '/history',   'list',         'History'],
+        ['earn',      '/earn',      'wallet',       'Earn'],
         ['invest',    '/invest',    'trending-up',  'Invest'],
         ['recurring', '/recurring', 'repeat',       'Recurring'],
     ];
@@ -432,6 +448,12 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY archived, id");
     $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
     $canDeleteType = count($iTypes) > 1;
+    $eCats = $db->prepare("SELECT * FROM earning_categories WHERE household_id = ? ORDER BY id");
+    $eCats->execute([$hid]); $eCats = $eCats->fetchAll();
+    $canDeleteECat = count($eCats) > 1;
+    // How many earnings each category would orphan — shown in the delete confirmation.
+    $s = $db->prepare("SELECT category_id, COUNT(*) n FROM earnings WHERE household_id = ? GROUP BY category_id");
+    $s->execute([$hid]); $earnPerCat = array_column($s->fetchAll(), 'n', 'category_id');
 
     // Impact counts for the archive confirmation: how many entries move out of the active
     // view, and whether a recurring item will keep posting into the type after archiving.
@@ -590,6 +612,51 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
               <?= csrfInput() ?>
               <input type="hidden" name="back" value="<?= $back ?>">
               <input class="input" name="name" placeholder="e.g. Gold scheme" maxlength="40">
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
+        </details>
+
+        <hr>
+
+        <details>
+          <summary><h4>Earning categories</h4></summary>
+          <div class="details-body">
+            <div class="muted" style="font-size:11.5px;">Where money comes in from — salary, interest, anything else. Rename or delete freely; past earnings keep their amounts.</div>
+            <?php foreach ($eCats as $c): ?>
+              <div class="cat-row">
+                <form method="post" action="/earning-categories/update">
+                  <?= csrfInput() ?>
+                  <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+                  <input type="hidden" name="back" value="<?= $back ?>">
+                  <div class="cat-icon-mini"><?= icon('wallet', 14) ?></div>
+                  <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
+                  <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
+                </form>
+                <?php if ($canDeleteECat):
+                  $nEarn = (int)($earnPerCat[$c['id']] ?? 0);
+                  $body  = $nEarn === 0
+                      ? 'Nothing is logged under ' . $c['name'] . ' yet.'
+                      : ($nEarn === 1 ? '1 earning stays' : "$nEarn earnings stay")
+                        . ' logged under ' . $c['name'] . ' but becomes uncategorised.';
+                ?>
+                  <button type="button" class="icon-btn" aria-label="Delete earning category"
+                          onclick='askConfirm(<?= h(json_encode([
+                              "action" => "/earning-categories/delete",
+                              "id"     => (int)$c['id'],
+                              "back"   => strtok($requestUri, '#') . '#profile',
+                              "csrf"   => csrfToken(),
+                              "title"  => "Delete earning category?",
+                              "body"   => $body,
+                              "ok"     => "Delete",
+                          ])) ?>)'><?= icon('trash-2', 14) ?></button>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+            <form method="post" action="/earning-categories" class="row-form" style="margin-top:6px;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input class="input" name="name" placeholder="e.g. Rent received" maxlength="50">
               <button class="btn btn-primary" type="submit">Add</button>
             </form>
           </div>
@@ -1323,6 +1390,280 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     layout($db, $user, 'invest', $content, '/invest');
 }
 
+// ─── Earnings ───────────────────────────────────────────────────────
+// Mirror of the Invest tab: summary, breakdown, add form, paginated list. The extra piece is
+// the twelve-month earned/spent/invested chart — the one place the three ledgers meet.
+function renderEarn(PDO $db, array $user, bool $showForm): void {
+    $hid = (int)$user['household_id'];
+
+    // Headline figures in one pass. Bounded on both sides so a future-dated entry doesn't
+    // inflate "this month" — the same range semantics the History tab uses.
+    $monthStart = (new DateTimeImmutable('first day of this month'))->format('Y-m-d');
+    $monthEnd   = (new DateTimeImmutable('first day of next month'))->format('Y-m-d');
+    $yearStart  = date('Y-01-01');
+    $yearEnd    = (string)((int)date('Y') + 1) . '-01-01';
+    $s = $db->prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total,
+                COALESCE(SUM(CASE WHEN `date` >= ? AND `date` < ? THEN amount END), 0) AS mtd,
+                COALESCE(SUM(CASE WHEN `date` >= ? AND `date` < ? THEN amount END), 0) AS ytd
+         FROM earnings WHERE household_id = ?"
+    );
+    $s->execute([$monthStart, $monthEnd, $yearStart, $yearEnd, $hid]);
+    $agg = $s->fetch();
+    $entryCount = (int)$agg['n'];
+
+    // Twelve-month comparison. One indexed GROUP BY per ledger; the tables differ only in name.
+    [$winStart, $winEnd, $winKeys] = rollingMonths(today(), 12);
+    $series = ['ern' => [], 'exp' => [], 'inv' => []];
+    foreach (['ern' => 'earnings', 'exp' => 'expenses', 'inv' => 'investments'] as $k => $table) {
+        $q = $db->prepare(
+            "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt FROM $table
+             WHERE household_id = ? AND `date` >= ? AND `date` < ? GROUP BY ym"
+        );
+        $q->execute([$hid, $winStart, $winEnd]);
+        foreach ($q->fetchAll() as $r) $series[$k][$r['ym']] = (float)$r['amt'];
+    }
+    $peak = 0.0; $winEarn = 0.0; $winSpent = 0.0; $winInv = 0.0;
+    foreach ($winKeys as $ym) {
+        $peak = max($peak, $series['ern'][$ym] ?? 0, $series['exp'][$ym] ?? 0, $series['inv'][$ym] ?? 0);
+        $winEarn  += $series['ern'][$ym] ?? 0;
+        $winSpent += $series['exp'][$ym] ?? 0;
+        $winInv   += $series['inv'][$ym] ?? 0;
+    }
+
+    // All-time breakdown. The household guard on the JOIN means a stale category_id can never
+    // pull a name out of another household.
+    $catStmt = $db->prepare(
+        "SELECT COALESCE(c.name, 'Uncategorised') AS name, SUM(e.amount) AS amt
+         FROM earnings e
+         LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         WHERE e.household_id = ?
+         GROUP BY c.id, c.name ORDER BY amt DESC"
+    );
+    $catStmt->execute([$hid]); $byCat = $catStmt->fetchAll();
+
+    $pageSize  = 200;
+    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+    $rows = $db->prepare(
+        "SELECT e.*, c.name AS cat_name
+         FROM earnings e
+         LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         WHERE e.household_id = ?
+         ORDER BY e.`date` DESC, e.id DESC LIMIT $pageSize OFFSET $rowOffset"
+    );
+    $rows->execute([$hid]); $earns = $rows->fetchAll();
+
+    $catList = $db->prepare("SELECT id, name FROM earning_categories WHERE household_id = ? ORDER BY id");
+    $catList->execute([$hid]); $catList = $catList->fetchAll();
+
+    $total = (float)$agg['total'];
+
+    ob_start();
+    ?>
+    <?php if ($entryCount > 0): ?>
+      <div class="card total-card ink split-card">
+        <div>
+          <div class="k">This month</div>
+          <div class="v"><?= h(fmtShort((float)$agg['mtd'])) ?></div>
+          <div class="n"><?= h((new DateTimeImmutable($monthStart))->format('M Y')) ?></div>
+        </div>
+        <div>
+          <div class="k"><?= h(date('Y')) ?></div>
+          <div class="v"><?= h(fmtShort((float)$agg['ytd'])) ?></div>
+          <div class="n">year to date</div>
+        </div>
+        <div>
+          <div class="k">All time</div>
+          <div class="v"><?= h(fmtShort($total)) ?></div>
+          <div class="n"><?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?></div>
+        </div>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($peak > 0): ?>
+      <div class="card ychart">
+        <div class="ylegend">
+          <span><i class="sw ern"></i>Earned</span>
+          <span><i class="sw exp"></i>Spent</span>
+          <span><i class="sw inv"></i>Invested</span>
+        </div>
+        <div class="ygrid">
+          <?php foreach ($winKeys as $ym):
+            $e  = $series['ern'][$ym] ?? 0.0;
+            $x  = $series['exp'][$ym] ?? 0.0;
+            $iv = $series['inv'][$ym] ?? 0.0;
+            $c  = new DateTimeImmutable($ym . '-01');
+            $tip = $c->format('F Y') . ' — earned ' . fmt($e) . ', spent ' . fmt($x) . ', invested ' . fmt($iv);
+          ?>
+            <div class="ycol" title="<?= h($tip) ?>" aria-label="<?= h($tip) ?>">
+              <div class="ystack">
+                <i class="ern" style="height:<?= $e  > 0 ? number_format(max(3, ($e  / $peak) * 100), 2) : 0 ?>%"></i>
+                <i class="exp" style="height:<?= $x  > 0 ? number_format(max(3, ($x  / $peak) * 100), 2) : 0 ?>%"></i>
+                <i class="inv" style="height:<?= $iv > 0 ? number_format(max(3, ($iv / $peak) * 100), 2) : 0 ?>%"></i>
+              </div>
+              <span class="ylab"><?= h($c->format('M')) ?></span>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="muted" style="margin-top:8px; font-size:11.5px;">
+          Last 12 months · earned <?= h(fmtShort($winEarn)) ?> ·
+          spent <?= h(fmtShort($winSpent)) ?> ·
+          invested <?= h(fmtShort($winInv)) ?>
+        </div>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($byCat): ?>
+      <div class="stack">
+        <?php foreach ($byCat as $c): $amt = (float)$c['amt']; $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
+          <div class="card cat-bar">
+            <div class="top">
+              <div class="name"><?= icon('wallet', 18) ?> <?= h($c['name']) ?></div>
+              <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+            </div>
+            <div class="bar ink"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+          </div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($showForm && !$catList): ?>
+      <div class="card" style="padding:var(--space-4);">
+        <div class="muted">Add an earning category in the profile drawer before logging an earning.</div>
+      </div>
+    <?php elseif ($showForm): ?>
+      <form method="post" action="/earnings" class="card stack" style="padding:var(--space-4); gap:10px;">
+        <?= csrfInput() ?>
+        <input class="input" name="name" placeholder="e.g. July salary" required maxlength="80" id="ern-name"
+               oninput="document.getElementById('ern-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('ern-amt').value) > 0)">
+        <div class="field-row">
+          <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="ern-amt"
+                 oninput="document.getElementById('ern-save').disabled = !(document.getElementById('ern-name').value.trim() && parseFloat(this.value) > 0)">
+          <select class="select" name="category_id">
+            <?php foreach ($catList as $c): ?>
+              <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+        <div class="field-row">
+          <a class="btn btn-secondary btn-block" href="/earn">Cancel</a>
+          <button class="btn btn-primary btn-block" type="submit" id="ern-save" disabled>Save</button>
+        </div>
+      </form>
+    <?php else: ?>
+      <a class="btn btn-secondary btn-block" href="/earn?new=1"><?= icon('plus', 16) ?> &nbsp;Add earning</a>
+    <?php endif; ?>
+
+    <?php if ($entryCount === 0): ?>
+      <div class="empty">Nothing earned yet.</div>
+    <?php else: ?>
+      <?php
+      $byMonth = [];
+      foreach ($earns as $e) { $byMonth[substr($e['date'], 0, 7)][] = $e; }
+      foreach ($byMonth as $ym => $entries):
+        $monthLabel = (new DateTimeImmutable($ym . '-01'))->format('F Y');
+        $monthTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
+      ?>
+      <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span><?= h($monthLabel) ?></span>
+        <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($monthTotal)) ?></span>
+      </div>
+      <div class="stack">
+        <?php foreach ($entries as $e): ?>
+          <?php $ernJson = json_encode([
+              'id'          => (int)$e['id'],
+              'name'        => $e['name'],
+              'amount'      => (string)$e['amount'],
+              'category_id' => (int)($e['category_id'] ?? 0),
+              'date'        => $e['date'],
+          ]); ?>
+          <div class="card elev-sm row">
+            <div class="row-icon ink"><?= icon('wallet', 16) ?></div>
+            <div class="row-main">
+              <div class="title"><?= h($e['name']) ?></div>
+              <div class="sub"><?= h(($e['cat_name'] ?? 'Uncategorised') . ' · ' . (new DateTimeImmutable($e['date']))->format('M j')) ?></div>
+            </div>
+            <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
+            <button class="icon-btn" type="button" aria-label="Edit"
+                    onclick='openEditEarning(<?= h($ernJson) ?>)'>
+              <?= icon('edit', 15) ?>
+            </button>
+            <button class="icon-btn" type="button" aria-label="Delete"
+                    onclick='askConfirm(<?= h(json_encode([
+                        "action" => "/earnings/delete",
+                        "id"     => (int)$e['id'],
+                        "back"   => "/earn",
+                        "csrf"   => csrfToken(),
+                        "title"  => "Delete earning?",
+                        "body"   => $e['name'] . ' — ' . fmt((float)$e['amount']),
+                        "ok"     => "Delete",
+                    ])) ?>)'>
+              <?= icon('trash-2', 15) ?>
+            </button>
+          </div>
+        <?php endforeach; ?>
+      </div>
+      <?php endforeach; ?>
+
+      <?php
+      $shown = $rowOffset + count($earns);
+      $hasMore = $shown < $entryCount;
+      $hasPrev = $rowOffset > 0;
+      ?>
+      <?php if ($hasMore || $hasPrev): ?>
+        <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
+          <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
+            <a class="btn btn-secondary" href="/earn?o=<?= $prev ?>">← Newer</a>
+          <?php else: ?><span></span><?php endif; ?>
+          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
+          <?php if ($hasMore): ?>
+            <a class="btn btn-secondary" href="/earn?o=<?= $rowOffset + $pageSize ?>">Older →</a>
+          <?php else: ?><span></span><?php endif; ?>
+        </div>
+      <?php endif; ?>
+
+      <dialog id="edit-earning-dlg" class="confirm" style="max-width:360px;">
+        <form method="post" action="/earnings/update">
+          <?= csrfInput() ?>
+          <input type="hidden" name="id" id="ee-id">
+          <input type="hidden" name="back" value="/earn">
+          <div class="dlg-title">Edit earning</div>
+          <input class="input" name="name" id="ee-name" required maxlength="80" placeholder="Name">
+          <div class="field-row">
+            <input class="input" name="amount" id="ee-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+            <select class="select" name="category_id" id="ee-category">
+              <!-- Blank option so an earning whose category was deleted stays editable
+                   without silently adopting whichever category happens to be first. -->
+              <option value="">— Uncategorised —</option>
+              <?php foreach ($catList as $c): ?>
+                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <input class="input" name="date" id="ee-date" type="date" required>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-earning-dlg').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </dialog>
+      <script>
+      function openEditEarning(d) {
+        document.getElementById('ee-id').value       = d.id;
+        document.getElementById('ee-name').value     = d.name;
+        document.getElementById('ee-amount').value   = d.amount;
+        document.getElementById('ee-category').value = d.category_id || '';
+        document.getElementById('ee-date').value     = d.date;
+        document.getElementById('edit-earning-dlg').showModal();
+      }
+      </script>
+    <?php endif; ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'earn', $content, '/earn');
+}
+
 // ─── Year summary ───────────────────────────────────────────────────
 // Calendar year (Jan–Dec) or Indian financial year (Apr–Mar). $y is the starting year:
 // in fy mode y=2026 means FY 2026–27, running 1 Apr 2026 to 31 Mar 2027.
@@ -1343,7 +1684,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     // Clamp to [earliest year with data, current period] so you can't wander into empty
     // decades. One indexed MIN() per table — cheap on (household_id, date).
     $minDate = null;
-    foreach (['expenses', 'investments'] as $t) {
+    foreach (['expenses', 'investments', 'earnings'] as $t) {
         $s = $db->prepare("SELECT MIN(`date`) FROM $t WHERE household_id = ?");
         $s->execute([$hid]);
         $d = $s->fetchColumn();
@@ -1382,6 +1723,10 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     $s->execute(array_merge([$hid, $start, $end], $invParams));
     foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['inv'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
 
+    $s = $db->prepare($selectYm . "earnings" . $whereYm . " GROUP BY ym");
+    $s->execute([$hid, $start, $end]);
+    foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['ern'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
+
     // Unfiltered count, so "is this period empty?" is answered by the data rather than by
     // the current toggle. Otherwise picking Archived on a household with none would report
     // an empty year and hide the toggle that switches back — a dead end.
@@ -1391,21 +1736,24 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 
     // Twelve buckets in period order, so an empty month still gets a column.
     $cursor = new DateTimeImmutable($start);
-    $months = []; $expTotal = 0.0; $invTotal = 0.0; $expCount = 0; $peak = 0.0;
+    $months = []; $expTotal = 0.0; $invTotal = 0.0; $earnTotal = 0.0;
+    $expCount = 0; $earnCount = 0; $peak = 0.0;
     for ($i = 0; $i < 12; $i++) {
         $ym  = $cursor->format('Y-m');
         $e   = $monthly[$ym]['exp'] ?? ['amt' => 0.0, 'n' => 0];
         $iv  = $monthly[$ym]['inv'] ?? ['amt' => 0.0, 'n' => 0];
+        $er  = $monthly[$ym]['ern'] ?? ['amt' => 0.0, 'n' => 0];
         // Months back from today, so a column can deep-link into the History tab.
         $back = ((int)$now->format('Y') * 12 + (int)$now->format('n'))
               - ((int)$cursor->format('Y') * 12 + (int)$cursor->format('n'));
         $months[] = [
             'ym' => $ym, 'label' => $cursor->format('M'), 'full' => $cursor->format('F Y'),
-            'exp' => $e['amt'], 'inv' => $iv['amt'], 'n' => $e['n'] + $iv['n'], 'back' => $back,
+            'exp' => $e['amt'], 'inv' => $iv['amt'], 'ern' => $er['amt'],
+            'n' => $e['n'] + $iv['n'] + $er['n'], 'back' => $back,
         ];
-        $expTotal += $e['amt']; $invTotal += $iv['amt'];
-        $expCount += $e['n'];
-        $peak = max($peak, $e['amt'], $iv['amt']);
+        $expTotal += $e['amt']; $invTotal += $iv['amt']; $earnTotal += $er['amt'];
+        $expCount += $e['n']; $earnCount += $er['n'];
+        $peak = max($peak, $e['amt'], $iv['amt'], $er['amt']);
         $cursor = $cursor->modify('+1 month');
     }
 
@@ -1417,6 +1765,15 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
          GROUP BY c.id, c.name, c.icon ORDER BY amt DESC"
     );
     $catStmt->execute([$hid, $start, $end]); $byCat = $catStmt->fetchAll();
+
+    $ernStmt = $db->prepare(
+        "SELECT COALESCE(c.name, 'Uncategorised') AS name, SUM(e.amount) AS amt
+         FROM earnings e
+         LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         GROUP BY c.id, c.name ORDER BY amt DESC"
+    );
+    $ernStmt->execute([$hid, $start, $end]); $byErn = $ernStmt->fetchAll();
 
     $typeStmt = $db->prepare(
         "SELECT type, SUM(amount) AS amt FROM investments
@@ -1463,11 +1820,16 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
       <div class="muted" style="text-align:center; margin-top:-6px;">1 Apr <?= $y ?> – 31 Mar <?= $y + 1 ?></div>
     <?php endif; ?>
 
-    <?php if ($expCount === 0 && $invAllCount === 0): ?>
+    <?php if ($expCount === 0 && $invAllCount === 0 && $earnCount === 0): ?>
       <div class="empty">Nothing logged in <?= h($label) ?>.</div>
     <?php else: ?>
       <div class="card total-card accent yearcard">
         <div class="split-card">
+          <div>
+            <div class="k">Earned</div>
+            <div class="v"><?= h(fmtShort($earnTotal)) ?></div>
+            <div class="n"><?= h(fmtShort($earnTotal / $elapsed)) ?>/mo avg</div>
+          </div>
           <div>
             <div class="k">Spent</div>
             <div class="v"><?= h(fmtShort($expTotal)) ?></div>
@@ -1479,6 +1841,15 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
             <div class="n"><?= h(fmtShort($invTotal / $elapsed)) ?>/mo avg</div>
           </div>
         </div>
+        <?php if ($earnTotal > 0): $saved = $earnTotal - $expTotal; ?>
+          <!-- Investing is a use of savings, not a cost, so it stays out of this subtraction —
+               otherwise a disciplined saver reads as breaking even. -->
+          <div class="netrow">
+            <span class="lbl">Saved · earned − spent</span>
+            <!-- abs(): fmt() puts the symbol first, so a raw negative renders as "₹-1,200". -->
+            <span class="v"><?= h(fmtShort(abs($saved))) ?><?= $saved < 0 ? ' short' : '' ?></span>
+          </div>
+        <?php endif; ?>
         <div class="invtoggle">
           <span class="lbl">Investments</span>
           <?php foreach (['all' => 'All', 'active' => 'Active', 'archived' => 'Archived'] as $k => $txt): ?>
@@ -1491,6 +1862,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 
       <div class="card ychart">
         <div class="ylegend">
+          <span><i class="sw ern"></i>Earnings</span>
           <span><i class="sw exp"></i>Expenses</span>
           <span><i class="sw inv"></i>Investments</span>
         </div>
@@ -1498,13 +1870,15 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
           <?php foreach ($months as $m):
             $eh = $peak > 0 ? ($m['exp'] / $peak) * 100 : 0;
             $ih = $peak > 0 ? ($m['inv'] / $peak) * 100 : 0;
-            $tip = $m['full'] . ' — spent ' . fmt($m['exp']) . ', invested ' . fmt($m['inv']);
+            $rh = $peak > 0 ? ($m['ern'] / $peak) * 100 : 0;
+            $tip = $m['full'] . ' — earned ' . fmt($m['ern']) . ', spent ' . fmt($m['exp']) . ', invested ' . fmt($m['inv']);
             // Past months link into History; a future month in the current year does not.
             $tag = $m['back'] >= 0 ? 'a' : 'div';
             $href = $m['back'] >= 0 ? ' href="/history?m=' . $m['back'] . '"' : '';
           ?>
             <<?= $tag ?> class="ycol"<?= $href ?> title="<?= h($tip) ?>" aria-label="<?= h($tip) ?>">
               <div class="ystack">
+                <i class="ern" style="height:<?= $m['ern'] > 0 ? number_format(max(3, $rh), 2) : 0 ?>%"></i>
                 <i class="exp" style="height:<?= $m['exp'] > 0 ? number_format(max(3, $eh), 2) : 0 ?>%"></i>
                 <i class="inv" style="height:<?= $m['inv'] > 0 ? number_format(max(3, $ih), 2) : 0 ?>%"></i>
               </div>
@@ -1514,6 +1888,21 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
         </div>
         <div class="muted" style="margin-top:8px; font-size:11.5px;">Tap a month to open it in History.</div>
       </div>
+
+      <?php if ($byErn): ?>
+        <div class="day-hdr">Where it came from · <?= h(fmt($earnTotal)) ?></div>
+        <div class="stack">
+          <?php foreach ($byErn as $c): $amt = (float)$c['amt']; $pct = $earnTotal > 0 ? ($amt / $earnTotal) * 100 : 0; ?>
+            <div class="card cat-bar">
+              <div class="top">
+                <div class="name"><?= icon('wallet', 18) ?> <?= h($c['name']) ?></div>
+                <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+              </div>
+              <div class="bar ink"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
 
       <?php if ($byCat): ?>
         <div class="day-hdr">Where it went · <?= h(fmt($expTotal)) ?></div>
@@ -1566,25 +1955,30 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
     $typeStmt->execute([$hid]); $typeList = $typeStmt->fetchAll();
     $activeTypes = array_values(array_filter($typeList, fn($t) => !(int)$t['archived']));
+    $eCats = $db->prepare("SELECT id, name FROM earning_categories WHERE household_id = ? ORDER BY id");
+    $eCats->execute([$hid]); $eCats = $eCats->fetchAll();
+    // Both joins hang off the same `category_id`; only the one matching the row's kind is read.
     $rows = $db->prepare(
-        "SELECT r.*, c.name AS cat_name FROM recurring r
-         LEFT JOIN categories c ON c.id = r.category_id
+        "SELECT r.*, c.name AS cat_name, ec.name AS ecat_name FROM recurring r
+         LEFT JOIN categories c ON c.id = r.category_id AND c.household_id = r.household_id
+         LEFT JOIN earning_categories ec ON ec.id = r.category_id AND ec.household_id = r.household_id
          WHERE r.household_id = ? ORDER BY r.next_date, r.id"
     );
     $rows->execute([$hid]); $recs = $rows->fetchAll();
 
     ob_start();
     ?>
-    <div class="muted">Rent, EMIs and subscriptions that repeat.</div>
+    <div class="muted">Salary, rent, EMIs and subscriptions that repeat.</div>
 
     <?php if ($showForm): ?>
       <form method="post" action="/recurring" class="card stack" style="padding:var(--space-4); gap:10px;">
         <?= csrfInput() ?>
         <select class="select" name="kind" id="rec-kind" onchange="toggleRecKind()">
           <option value="expense">Expense — auto-post to History</option>
+          <option value="earning">Earning — auto-post to Earn</option>
           <option value="investment">Investment — auto-post to Invest</option>
         </select>
-        <input class="input" name="name" placeholder="e.g. Rent, Nifty SIP" required maxlength="80" id="rec-name"
+        <input class="input" name="name" placeholder="e.g. Rent, Salary, Nifty SIP" required maxlength="80" id="rec-name"
                oninput="document.getElementById('rec-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('rec-amt').value) > 0)">
         <div class="field-row">
           <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="rec-amt"
@@ -1597,6 +1991,13 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <select class="select" name="type" id="rec-type" style="display:none;">
             <?php foreach ($activeTypes as $t): ?>
               <option value="<?= h($t['name']) ?>"><?= h($t['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <!-- Shares the name "category_id" with the expense picker: only the one matching the
+               selected kind is ever enabled, so exactly one value is submitted. -->
+          <select class="select" name="category_id" id="rec-ecat" style="display:none;" disabled>
+            <?php foreach ($eCats as $c): ?>
+              <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -1616,10 +2017,11 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
       <script>
       function toggleRecKind() {
         var kind = document.getElementById('rec-kind').value;
-        document.getElementById('rec-cat').style.display  = kind === 'expense' ? '' : 'none';
-        document.getElementById('rec-cat').disabled       = kind !== 'expense';
-        document.getElementById('rec-type').style.display = kind === 'investment' ? '' : 'none';
-        document.getElementById('rec-type').disabled      = kind !== 'investment';
+        [['rec-cat', 'expense'], ['rec-type', 'investment'], ['rec-ecat', 'earning']].forEach(function (p) {
+          var el = document.getElementById(p[0]);
+          el.style.display = kind === p[1] ? '' : 'none';
+          el.disabled      = kind !== p[1];
+        });
       }
       </script>
     <?php else: ?>
@@ -1627,7 +2029,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <?php endif; ?>
 
     <?php if (!$recs): ?>
-      <div class="empty">No recurring expenses.</div>
+      <div class="empty">No recurring items.</div>
     <?php else: ?>
       <div class="stack">
         <?php foreach ($recs as $r): ?>
@@ -1641,12 +2043,19 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               'frequency'   => $r['frequency'],
               'next_date'   => $r['next_date'],
           ]); ?>
-          <?php $isInv = ($r['kind'] ?? 'expense') === 'investment'; ?>
+          <?php
+          $kind = $r['kind'] ?? 'expense';
+          [$rowCls, $rowIcon, $rowWhat] = match ($kind) {
+              'investment' => [' sage', 'trending-up', $r['type'] ?? 'Other'],
+              'earning'    => [' ink',  'wallet',      $r['ecat_name'] ?? 'Uncategorised'],
+              default      => ['',      'repeat',      $r['cat_name'] ?? 'Uncategorised'],
+          };
+          ?>
           <div class="card elev-sm row">
-            <div class="row-icon<?= $isInv ? ' sage' : '' ?>"><?= icon($isInv ? 'trending-up' : 'repeat', 16) ?></div>
+            <div class="row-icon<?= $rowCls ?>"><?= icon($rowIcon, 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($r['name']) ?></div>
-              <div class="sub"><?= h(($isInv ? ($r['type'] ?? 'Other') : ($r['cat_name'] ?? 'Uncategorised')) . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
+              <div class="sub"><?= h($rowWhat . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
@@ -1661,7 +2070,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
                         "title"  => "Delete recurring item?",
                         "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
                         "ok"     => "Delete",
-                        "extra"  => "Also delete all past auto-posted expenses for this item",
+                        "extra"  => "Also delete all past auto-posted entries for this item",
                     ])) ?>)'>
               <?= icon('trash-2', 15) ?>
             </button>
@@ -1676,6 +2085,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <div class="dlg-title">Edit recurring item</div>
           <select class="select" name="kind" id="er-kind" onchange="toggleErKind()">
             <option value="expense">Expense</option>
+            <option value="earning">Earning</option>
             <option value="investment">Investment</option>
           </select>
           <input class="input" name="name" id="er-name" required maxlength="80" placeholder="Name">
@@ -1689,6 +2099,12 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             <select class="select" name="type" id="er-type" style="display:none;">
               <?php foreach ($typeList as $t): ?>
                 <option value="<?= h($t['name']) ?>"><?= h($t['name']) ?><?= (int)$t['archived'] ? ' (archived)' : '' ?></option>
+              <?php endforeach; ?>
+            </select>
+            <select class="select" name="category_id" id="er-ecat" style="display:none;" disabled>
+              <option value="">— Uncategorised —</option>
+              <?php foreach ($eCats as $c): ?>
+                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -1709,17 +2125,20 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
       <script>
       function toggleErKind() {
         var kind = document.getElementById('er-kind').value;
-        document.getElementById('er-category').style.display = kind === 'expense' ? '' : 'none';
-        document.getElementById('er-category').disabled      = kind !== 'expense';
-        document.getElementById('er-type').style.display     = kind === 'investment' ? '' : 'none';
-        document.getElementById('er-type').disabled          = kind !== 'investment';
+        [['er-category', 'expense'], ['er-type', 'investment'], ['er-ecat', 'earning']].forEach(function (p) {
+          var el = document.getElementById(p[0]);
+          el.style.display = kind === p[1] ? '' : 'none';
+          el.disabled      = kind !== p[1];
+        });
       }
       function openEditRecurring(d) {
         document.getElementById('er-id').value        = d.id;
         document.getElementById('er-kind').value      = d.kind || 'expense';
         document.getElementById('er-name').value      = d.name;
         document.getElementById('er-amount').value    = d.amount;
-        document.getElementById('er-category').value  = d.category_id || '';
+        // category_id means a different table per kind, so it only loads into the matching picker.
+        document.getElementById('er-category').value  = d.kind === 'expense' ? (d.category_id || '') : '';
+        document.getElementById('er-ecat').value      = d.kind === 'earning' ? (d.category_id || '') : '';
         if (d.type) document.getElementById('er-type').value = d.type;
         document.getElementById('er-frequency').value = d.frequency;
         document.getElementById('er-next').value      = d.next_date;

@@ -46,6 +46,7 @@ return [
         'note_len_max'           => 200,
         'expenses_per_day_max'   => 200,           // per household per day
         'investments_total_max'  => 1000,
+        'earnings_total_max'     => 2000,
         'recurring_total_max'    => 100,
         'categories_total_max'   => 100,
         'members_total_max'      => 20,

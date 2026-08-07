@@ -5,7 +5,7 @@
 <h1 align="center">Open Ledger</h1>
 
 <p align="center">
-  A warm, mobile-first household ledger — expenses, investments, recurring bills — for one shared household.<br>
+  A warm, mobile-first household ledger — earnings, expenses, investments, recurring bills — for one shared household.<br>
   PHP + MySQL + Google One Tap sign-in. No build step. Deploys to any shared host.
 </p>
 
@@ -31,10 +31,11 @@
 - **Add expense in three taps** — amount, category, done.
 - **History** grouped by day with per-day totals + monthly category breakdown. Swipe left/right to change month.
 - **Per-category monthly budgets** — set a limit per category and History shows spent / % used / left, turning red when you go over. Budgets **never block a spend**; they report, they don't police.
+- **Earnings** grouped by month with a per-category breakdown (Salary, Interest, Other by default — add, rename and delete your own). The Earn tab summarises **this month / year to date / all time** and carries a rolling twelve-month **earned vs spent vs invested** chart.
 - **Investments** grouped by month with per-type breakdown (SIP, Stocks, FD-RD, Gold, PPF-EPF, and any custom types you add).
 - **Archive an investment type** when a scheme ends — its entries stay logged but drop out of the active view. The Invest tab summarises **Active / Archived / Total**, and the list filters between them.
-- **Yearly summary** — calendar year *or* Indian financial year (Apr–Mar), with a twelve-month expenses-vs-investments chart, category and type breakdowns, and per-month averages that divide by *elapsed* months so a year in progress isn't understated. Tap any month to open it in History.
-- **Recurring items** that auto-post on their due date — for both expenses (rent, EMIs, subscriptions) and investments (SIPs, RDs, auto-debits). Cascade delete of past auto-entries is optional per item.
+- **Yearly summary** — calendar year *or* Indian financial year (Apr–Mar), with a twelve-month earnings-vs-expenses-vs-investments chart, **Earned / Spent / Invested** totals, a *saved* line (earned − spent), income-source and category and type breakdowns, and per-month averages that divide by *elapsed* months so a year in progress isn't understated. Tap any month to open it in History.
+- **Recurring items** that auto-post on their due date — expenses (rent, EMIs, subscriptions), earnings (salary, interest payouts) and investments (SIPs, RDs, auto-debits). Missed periods catch up in one sweep. Cascade delete of past auto-entries is optional per item.
 - **Household sharing** — multiple members share one ledger. Attribute each expense to a member.
 - **Editable everything** — every list row opens an inline edit modal. Rename categories and investment types anywhere and it reflects app-wide.
 - **Google One Tap sign-in** — no passwords, no signup form, no account management surface.
@@ -43,7 +44,7 @@
 - **Warm light + dark themes**, per-user, persisted.
 - **Any currency symbol** — free text, per user.
 - **CSRF-guarded**, rate-limited (10 sign-ins / 15 min, 60 POSTs / min per IP), data-caps enforced server-side.
-- **Pagination** on history + investments, with SQL-side aggregates so month/all-time totals stay cheap.
+- **Pagination** on history, earnings + investments, with SQL-side aggregates so month/all-time totals stay cheap.
 - **No build step, no npm, no composer** — just PHP + MySQL + a stylesheet.
 
 ## Screens
@@ -238,18 +239,23 @@ Small, single-language, single-file-ish. The whole app is five PHP files.
 households ─┬─ users        (Google-authenticated, one per person)
             ├─ members      (attributable spender per entry)
             ├─ categories   (expense categorization; defaults + custom; `budget` = monthly cap, 0 = none)
-            ├─ investment_types  (SIP, Stocks, ...; editable; `archived` hides its entries)
+            ├─ investment_types    (SIP, Stocks, ...; editable; `archived` hides its entries)
+            ├─ earning_categories  (Salary, Interest, Other; fully editable, min one)
             ├─ expenses     (fact table, indexed on (household_id, date))
             ├─ investments  (fact table, indexed on (household_id, date))
-            └─ recurring    (kind: 'expense' | 'investment' — auto-posts to the right table)
+            ├─ earnings     (fact table, indexed on (household_id, date))
+            └─ recurring    (kind: 'expense' | 'earning' | 'investment' — auto-posts to the right table)
 rate_limits (bucket, hits, window_end)  — GC'd by cron
 ```
 
-Expenses and investments carry a nullable `recurring_id` FK so cascade delete of a recurring item can optionally sweep every auto-posted entry it created.
+Expenses, earnings and investments each carry a nullable `recurring_id` FK so cascade delete of a recurring item can optionally sweep every auto-posted entry it created.
+
+`recurring.category_id` is read against whichever category table the row's `kind` implies — `categories` for an expense, `earning_categories` for an earning — and is re-validated against that table on every save, so switching kind can never carry an id across.
 
 Schema changes are additive and idempotent: append to the `MIGRATIONS` array in `lib.php` and bump the sentinel filename. Each statement runs independently, and a duplicate-column error is logged and skipped, so re-running is safe.
 
-Two behaviours worth knowing:
+Three behaviours worth knowing:
+- **Earning categories are referenced by id, not by name** (`earnings.category_id`), so renaming one needs no cascade and deleting one leaves its earnings logged but *Uncategorised*. The last remaining category can't be deleted — the add form picks from that list.
 - **Archiving is per *type*, matched by name** (`investments.type` stores the name, and renames cascade). Archiving hides a type's entries from the active view and removes it from the *add* pickers, but keeps it in the *edit* pickers so existing entries stay editable.
 - **A recurring item keeps posting into an archived type.** Nothing is silently stopped — the archive confirmation says so and points you at the Recurring tab.
 
@@ -259,7 +265,8 @@ Two behaviours worth knowing:
 - **Sessions**: `HttpOnly` + `SameSite=Lax` + `Secure` (on HTTPS) cookies, `session_regenerate_id(true)` on login, `use_only_cookies` + `use_strict_mode`.
 - **CSRF**: Session-scoped token on every POST form (`hash_equals` compared). Google's own `g_csrf_token` double-submit for the sign-in callback.
 - **Rate limiting**: Atomic per-IP upsert (`INSERT ... ON DUPLICATE KEY UPDATE`) — 10 sign-ins / 15 min, 60 POSTs / min. Returns `429` with `Retry-After`.
-- **Data caps**: Amounts, note lengths, per-household counts (200 expenses/day, 1000 investments, 100 recurring, 100 categories, 20 members) enforced at insert time.
+- **Data caps**: Amounts, note lengths, per-household counts (200 expenses/day, 1000 investments, 2000 earnings, 100 recurring, 100 categories of each kind, 20 members) enforced at insert time.
+- **Household scoping on writes**: category and member ids arrive from `<select>` fields, so every one is re-checked against the signed-in household before it is stored (`ownedId()`); a forged id degrades to *uncategorised* instead of attaching to another household's row.
 - **SQL**: PDO prepared statements with `EMULATE_PREPARES=false`.
 - **XSS**: `htmlspecialchars` on every output; JSON payloads inside `onclick=""` attributes go through both `json_encode` and `h()`.
 - **Redirects**: post-submit targets come from a `back` form field, so every redirect is validated same-site — root-relative paths only, no `//host`, no absolute URLs, no CR/LF header injection.

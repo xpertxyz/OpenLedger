@@ -96,6 +96,28 @@ const SCHEMA_STATEMENTS = [
         archived TINYINT(1) NOT NULL DEFAULT 0,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // Earnings are the mirror of expenses, but categorised by their own list — an FK id,
+    // not a name (unlike investment_types), so a rename needs no cascade.
+    "CREATE TABLE IF NOT EXISTS earning_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        name VARCHAR(50) NOT NULL,
+        INDEX ix_household (household_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    "CREATE TABLE IF NOT EXISTS earnings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        name VARCHAR(80) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        category_id INT NULL,
+        recurring_id INT NULL,
+        date DATE NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX ix_household_date (household_id, date),
+        INDEX ix_recurring (recurring_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
 
 // Applied in order after SCHEMA_STATEMENTS, each independently. Re-running is a no-op —
@@ -112,9 +134,14 @@ const MIGRATIONS = [
     "ALTER TABLE investments DROP INDEX ix_household",
     "ALTER TABLE categories ADD COLUMN budget DECIMAL(12,2) NOT NULL DEFAULT 0",
     "ALTER TABLE investment_types ADD COLUMN archived TINYINT(1) NOT NULL DEFAULT 0",
+    // v8 — recurring earnings. Only bites on databases where `earnings` was created by the
+    // first cut of this table, before it carried the recurring FK.
+    "ALTER TABLE earnings ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)",
 ];
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
+
+const DEFAULT_EARNING_CATEGORIES = ['Salary', 'Interest', 'Other'];
 
 const DEFAULT_CATEGORIES = [
     ['Groceries', 'shopping-cart'], ['Rent', 'home'], ['Utilities', 'zap'],
@@ -138,21 +165,33 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v6';
+    $sentinel = __DIR__ . '/data/.schema-ok-v8';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         foreach (MIGRATIONS as $sql) {
             try { $db->exec($sql); }
             catch (PDOException $e) { error_log('[migrate] ' . $sql . ' — ' . $e->getMessage()); }
         }
-        // Backfill default investment types for households that predate the investment_types table.
-        $orphaned = $db->query(
-            "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM investment_types it WHERE it.household_id = h.id)"
-        )->fetchAll(PDO::FETCH_COLUMN);
-        if ($orphaned) {
-            $ins = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
+        // Backfill defaults for households that predate a lookup table. Keyed on "has no rows
+        // at all", so a household that deliberately deleted one down to a smaller set is left alone.
+        foreach ([
+            ['investment_types',   DEFAULT_INVESTMENT_TYPES],
+            ['earning_categories', DEFAULT_EARNING_CATEGORIES],
+        ] as [$table, $defaults]) {
+            $orphaned = $db->query(
+                "SELECT h.id FROM households h WHERE NOT EXISTS (SELECT 1 FROM $table t WHERE t.household_id = h.id)"
+            )->fetchAll(PDO::FETCH_COLUMN);
+            if (!$orphaned) continue;
+            // Guarded insert, not a plain one: two requests can both find the sentinel missing
+            // right after a deploy and run this block concurrently, which would hand the
+            // household two of every default.
+            $ins = $db->prepare(
+                "INSERT INTO $table (household_id, name)
+                 SELECT ?, ? FROM DUAL
+                 WHERE NOT EXISTS (SELECT 1 FROM (SELECT 1 FROM $table WHERE household_id = ? AND name = ?) x)"
+            );
             foreach ($orphaned as $hid) {
-                foreach (DEFAULT_INVESTMENT_TYPES as $t) $ins->execute([(int)$hid, $t]);
+                foreach ($defaults as $t) $ins->execute([(int)$hid, $t, (int)$hid, $t]);
             }
         }
         if (!is_dir(dirname($sentinel))) @mkdir(dirname($sentinel), 0755, true);
@@ -321,6 +360,31 @@ function assertUnderLimit(PDO $db, string $sqlCount, array $params, int $max, st
     if ((int)$s->fetchColumn() >= $max) throw new UserErr("$label limit reached ($max).");
 }
 
+// Row ids arrive from <select> fields, which are attacker-controllable: without this a
+// crafted POST could attach an entry to another household's category or member, and the
+// LEFT JOINs that render lists would then show that household's name back. Returns the id
+// only if it belongs here; anything else (0, missing, foreign) degrades to NULL — the same
+// "uncategorised" state a deleted category leaves behind.
+// $table is a caller-supplied literal, never user input — it cannot be bound as a parameter.
+function ownedId(PDO $db, string $table, int $hid, int $id): ?int {
+    if ($id <= 0) return null;
+    $s = $db->prepare("SELECT id FROM $table WHERE id = ? AND household_id = ?");
+    $s->execute([$id, $hid]);
+    return $s->fetchColumn() ? $id : null;
+}
+
+// Rolling window of $n whole months ending with the month that contains $todayYmd.
+// Returns [startDate, endDateExclusive, ['Y-m', …]] — the exclusive end keeps callers on
+// `date >= ? AND date < ?`, which uses the (household_id, date) index. Anchoring on the 1st
+// keeps the month arithmetic honest (a naive "-1 month" from the 31st lands in the month after next).
+function rollingMonths(string $todayYmd, int $n): array {
+    $first = (new DateTimeImmutable($todayYmd))->modify('first day of this month');
+    $start = $first->modify('-' . ($n - 1) . ' months');
+    $keys  = [];
+    for ($i = 0, $c = $start; $i < $n; $i++, $c = $c->modify('+1 month')) $keys[] = $c->format('Y-m');
+    return [$start->format('Y-m-d'), $first->modify('+1 month')->format('Y-m-d'), $keys];
+}
+
 // Confirms the submitted investment type belongs to this household. Rejects free-text.
 function validInvestmentType(PDO $db, int $hid, string $type): string {
     $s = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? AND name = ?");
@@ -381,6 +445,10 @@ function sweepRecurring(PDO $db, int $hid): void {
         "INSERT INTO investments (household_id, name, amount, type, date, recurring_id)
          VALUES (?, ?, ?, ?, ?, ?)"
     );
+    $insErn = $db->prepare(
+        "INSERT INTO earnings (household_id, name, amount, category_id, date, recurring_id)
+         VALUES (?, ?, ?, ?, ?, ?)"
+    );
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
         $nd = $r['next_date'];
@@ -390,6 +458,11 @@ function sweepRecurring(PDO $db, int $hid): void {
         for ($i = 0; $i < 120 && $nd <= $today; $i++) {
             if ($kind === 'investment') {
                 $insInv->execute([$hid, $r['name'], $r['amount'], (string)($r['type'] ?? 'Other'), $nd, (int)$r['id']]);
+            } elseif ($kind === 'earning') {
+                // `recurring.category_id` is read against whichever category table the kind
+                // implies — expense categories here, earning categories there. The POST
+                // handlers re-validate it per kind on every save, so it can't cross over.
+                $insErn->execute([$hid, $r['name'], $r['amount'], $r['category_id'], $nd, (int)$r['id']]);
             } else {
                 $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd, (int)$r['id']]);
             }
@@ -416,6 +489,8 @@ function bootstrapHousehold(PDO $db, string $name, string $email, string $google
         foreach (DEFAULT_CATEGORIES as [$n, $i]) $ins->execute([$hid, $n, $i]);
         $insIt = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");
         foreach (DEFAULT_INVESTMENT_TYPES as $t) $insIt->execute([$hid, $t]);
+        $insEc = $db->prepare("INSERT INTO earning_categories (household_id, name) VALUES (?, ?)");
+        foreach (DEFAULT_EARNING_CATEGORIES as $c) $insEc->execute([$hid, $c]);
         $db->commit();
         return $uid;
     } catch (Throwable $e) {

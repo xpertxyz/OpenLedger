@@ -35,6 +35,15 @@ if (PHP_SAPI === 'cli') {
         assert(investmentFilterSql('active', [])         === ['', []]);
         assert(investmentFilterSql('archived', ['Gold']) === [' AND type IN (?)', ['Gold']]);
         assert(investmentFilterSql('active', ['Gold','FD']) === [' AND type NOT IN (?,?)', ['Gold','FD']]);
+        // Rolling 12-month window for the Earnings chart. Anchored on the 1st, so it must not
+        // skip a month when "today" is the 29th–31st, and it must cross the year boundary.
+        assert(rollingMonths('2026-08-07', 12)[0] === '2025-09-01');
+        assert(rollingMonths('2026-08-07', 12)[1] === '2026-09-01');   // end is exclusive
+        assert(count(rollingMonths('2026-08-07', 12)[2]) === 12);
+        assert(rollingMonths('2026-08-07', 12)[2][0]  === '2025-09');
+        assert(rollingMonths('2026-08-07', 12)[2][11] === '2026-08');
+        assert(rollingMonths('2026-03-31', 12)[2][11] === '2026-03');  // no month-end overflow
+        assert(rollingMonths('2026-01-15', 3)  === ['2025-11-01', '2026-02-01', ['2025-11','2025-12','2026-01']]);
         // Indian grouping: identical to Western up to 5 digits, then diverges.
         assert(groupIndian(0)          === '0.00');
         assert(groupIndian(999.99)     === '999.99');
@@ -108,14 +117,16 @@ if (PHP_SAPI === 'cli') {
             assert(investmentFilterSql('archived', []) === [' AND 1 = 0', []]);
             assert(investmentFilterSql('active', ['Gold']) === [' AND type NOT IN (?)', ['Gold']]);
             assert(groupIndian(1000000) === '10,00,000.00' && groupIndian(10000000) === '1,00,00,000.00');
-            $line('OK', 'date math + parseAmount/parseBudget + investment filter + lakh/crore formatting');
+            assert(rollingMonths('2026-01-15', 3) === ['2025-11-01', '2026-02-01', ['2025-11','2025-12','2026-01']]);
+            assert(rollingMonths('2026-03-31', 12)[2][11] === '2026-03');
+            $line('OK', 'date math + parseAmount/parseBudget + investment filter + rolling window + lakh/crore formatting');
         } catch (Throwable $e) { $line('FAIL', 'selfcheck: ' . $e->getMessage()); }
 
         echo "\nDatabase:\n";
         try {
             $db = makeDb($config);
             $line('OK', "connected to {$config['db']['host']}/{$config['db']['name']} as {$config['db']['user']}");
-            $expected = ['households','users','members','categories','expenses','investments','recurring','rate_limits','investment_types'];
+            $expected = ['households','users','members','categories','expenses','investments','recurring','rate_limits','investment_types','earning_categories','earnings'];
             $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
             $missing = array_diff($expected, $tables);
             if ($missing) $line('FAIL', 'missing tables: ' . implode(', ', $missing));
@@ -128,6 +139,8 @@ if (PHP_SAPI === 'cli') {
             in_array('recurring_id', $ecols, true) ? $line('OK', 'expenses.recurring_id') : $line('FAIL', 'expenses.recurring_id missing');
             $icols = $db->query("SHOW COLUMNS FROM investments")->fetchAll(PDO::FETCH_COLUMN);
             in_array('recurring_id', $icols, true) ? $line('OK', 'investments.recurring_id') : $line('FAIL', 'investments.recurring_id missing');
+            $rcols = $db->query("SHOW COLUMNS FROM earnings")->fetchAll(PDO::FETCH_COLUMN);
+            in_array('recurring_id', $rcols, true) ? $line('OK', 'earnings.recurring_id') : $line('FAIL', 'earnings.recurring_id missing — recurring earnings cannot cascade-delete');
             $ucols = $db->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
             in_array('currency', $ucols, true) ? $line('OK', 'users.currency') : $line('FAIL', 'users.currency missing');
             $ccols = $db->query("SHOW COLUMNS FROM categories")->fetchAll(PDO::FETCH_COLUMN);
@@ -139,6 +152,19 @@ if (PHP_SAPI === 'cli') {
             in_array('ix_household_date', $idx, true)
                 ? $line('OK',   'investments.ix_household_date')
                 : $line('FAIL', 'investments.ix_household_date missing — list queries will filesort');
+            // Same shape on the Earn tab: paginated ORDER BY date DESC plus three windowed SUMs.
+            $eidx = $db->query("SHOW INDEX FROM earnings")->fetchAll(PDO::FETCH_COLUMN, 2);
+            in_array('ix_household_date', $eidx, true)
+                ? $line('OK',   'earnings.ix_household_date')
+                : $line('FAIL', 'earnings.ix_household_date missing — list queries will filesort');
+            // Every household needs at least one earning category or the Earn add form is unusable.
+            $noCats = (int)$db->query(
+                "SELECT COUNT(*) FROM households h WHERE NOT EXISTS
+                 (SELECT 1 FROM earning_categories ec WHERE ec.household_id = h.id)"
+            )->fetchColumn();
+            $noCats === 0
+                ? $line('OK',   'every household has earning categories')
+                : $line('FAIL', "$noCats household(s) have no earning categories — delete data/.schema-ok-v8 to re-run the backfill");
         } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
 
         echo "\nConfig / env:\n";
@@ -353,8 +379,8 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
-                $catId = (int)($_POST['category_id'] ?? 0);
-                $memId = (int)($_POST['member_id'] ?? 0);
+                $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
+                $memId = ownedId($db, 'members', $hid, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
@@ -365,7 +391,7 @@ if ($method === 'POST') {
                 $db->prepare(
                     "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date)
                      VALUES (?, ?, ?, ?, ?, ?)"
-                )->execute([$hid, $amt, $catId ?: null, $memId ?: null, $note, $date]);
+                )->execute([$hid, $amt, $catId, $memId, $note, $date]);
                 flash('success', 'Expense added');
                 redirect('/');
 
@@ -380,12 +406,12 @@ if ($method === 'POST') {
                 $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $date  = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note  = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
-                $catId = (int)($_POST['category_id'] ?? 0);
-                $memId = (int)($_POST['member_id'] ?? 0);
+                $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
+                $memId = ownedId($db, 'members', $hid, (int)($_POST['member_id'] ?? 0));
                 $db->prepare(
                     "UPDATE expenses SET amount = ?, category_id = ?, member_id = ?, note = ?, date = ?
                      WHERE id = ? AND household_id = ?"
-                )->execute([$amt, $catId ?: null, $memId ?: null, $note, $date, $id, $hid]);
+                )->execute([$amt, $catId, $memId, $note, $date, $id, $hid]);
                 flash('success', 'Expense updated');
                 redirect($_POST['back'] ?? '/history');
 
@@ -427,19 +453,98 @@ if ($method === 'POST') {
                 flash('success', 'Investment updated');
                 redirect($_POST['back'] ?? '/invest');
 
+            case '/earnings':
+                $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
+                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM earnings WHERE household_id = ?",
+                    [$hid],
+                    $L['earnings_total_max'],
+                    'Earnings'
+                );
+                $db->prepare(
+                    "INSERT INTO earnings (household_id, name, amount, category_id, date)
+                     VALUES (?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $cat, $date]);
+                flash('success', 'Earning saved');
+                redirect('/earn');
+
+            case '/earnings/delete':
+                $db->prepare("DELETE FROM earnings WHERE id = ? AND household_id = ?")
+                   ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Earning deleted');
+                redirect($_POST['back'] ?? '/earn');
+
+            case '/earnings/update':
+                $id   = (int)($_POST['id'] ?? 0);
+                $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
+                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $db->prepare(
+                    "UPDATE earnings SET name = ?, amount = ?, category_id = ?, date = ?
+                     WHERE id = ? AND household_id = ?"
+                )->execute([$name, $amt, $cat, $date, $id, $hid]);
+                flash('success', 'Earning updated');
+                redirect($_POST['back'] ?? '/earn');
+
+            case '/earning-categories':
+                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Earning category');
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM earning_categories WHERE household_id = ?",
+                    [$hid],
+                    $L['categories_total_max'],
+                    'Earning categories'
+                );
+                $db->prepare("INSERT INTO earning_categories (household_id, name) VALUES (?, ?)")
+                   ->execute([$hid, $name]);
+                flash('success', 'Earning category added');
+                redirect($_POST['back'] ?? '/earn');
+
+            case '/earning-categories/update':
+                $id   = (int)($_POST['id'] ?? 0);
+                $name = requireStr((string)($_POST['name'] ?? ''), 50, 'Earning category');
+                $db->prepare("UPDATE earning_categories SET name = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$name, $id, $hid]);
+                flash('success', 'Earning category saved');
+                redirect($_POST['back'] ?? '/earn');
+
+            case '/earning-categories/delete':
+                // The add form picks from this list, so emptying it would lock earnings out.
+                $countStmt = $db->prepare("SELECT COUNT(*) FROM earning_categories WHERE household_id = ?");
+                $countStmt->execute([$hid]);
+                if ((int)$countStmt->fetchColumn() <= 1) {
+                    flash('error', 'Keep at least one earning category.');
+                    redirect($_POST['back'] ?? '/earn');
+                }
+                // Past earnings keep their amount and date and fall back to "Uncategorised" —
+                // same as deleting an expense category.
+                $db->prepare("DELETE FROM earning_categories WHERE id = ? AND household_id = ?")
+                   ->execute([(int)$_POST['id'], $hid]);
+                flash('success', 'Earning category removed');
+                redirect($_POST['back'] ?? '/earn');
+
             case '/recurring':
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
-                $kind = in_array($_POST['kind'] ?? '', ['expense','investment'], true) ? $_POST['kind'] : 'expense';
+                $kind = in_array($_POST['kind'] ?? '', ['expense','investment','earning'], true) ? $_POST['kind'] : 'expense';
                 $freq = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
                         ? $_POST['frequency'] : 'monthly';
                 $date = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
+                // One `category_id` column, read against the table the kind implies — so it is
+                // re-validated here on every save, and switching kind can never carry an
+                // expense category id over into an earning (or the reverse).
+                $type = null;
                 if ($kind === 'investment') {
                     $catId = null;
                     $type  = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 } else {
-                    $catId = (int)($_POST['category_id'] ?? 0) ?: null;
-                    $type  = null;
+                    $catTable = $kind === 'earning' ? 'earning_categories' : 'categories';
+                    $catId = ownedId($db, $catTable, $hid, (int)($_POST['category_id'] ?? 0));
                 }
                 assertUnderLimit(
                     $db,
@@ -462,11 +567,13 @@ if ($method === 'POST') {
                 try {
                     $pastDeleted = 0;
                     if ($cascade) {
-                        $delE = $db->prepare("DELETE FROM expenses WHERE household_id = ? AND recurring_id = ?");
-                        $delE->execute([$hid, $rid]);
-                        $delI = $db->prepare("DELETE FROM investments WHERE household_id = ? AND recurring_id = ?");
-                        $delI->execute([$hid, $rid]);
-                        $pastDeleted = $delE->rowCount() + $delI->rowCount();
+                        // Sweep all three ledgers, not just the one matching the current kind —
+                        // an item edited from expense to earning has posted rows in both.
+                        foreach (['expenses', 'investments', 'earnings'] as $t) {
+                            $del = $db->prepare("DELETE FROM $t WHERE household_id = ? AND recurring_id = ?");
+                            $del->execute([$hid, $rid]);
+                            $pastDeleted += $del->rowCount();
+                        }
                     }
                     $db->prepare("DELETE FROM recurring WHERE id = ? AND household_id = ?")
                        ->execute([$rid, $hid]);
@@ -485,12 +592,16 @@ if ($method === 'POST') {
                 $freq  = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
                          ? $_POST['frequency'] : 'monthly';
                 $date  = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');
+                // One `category_id` column, read against the table the kind implies — so it is
+                // re-validated here on every save, and switching kind can never carry an
+                // expense category id over into an earning (or the reverse).
+                $type = null;
                 if ($kind === 'investment') {
                     $catId = null;
                     $type  = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 } else {
-                    $catId = (int)($_POST['category_id'] ?? 0) ?: null;
-                    $type  = null;
+                    $catTable = $kind === 'earning' ? 'earning_categories' : 'categories';
+                    $catId = ownedId($db, $catTable, $hid, (int)($_POST['category_id'] ?? 0));
                 }
                 $db->prepare(
                     "UPDATE recurring SET name = ?, amount = ?, kind = ?, category_id = ?, type = ?, frequency = ?, next_date = ?
@@ -643,6 +754,7 @@ switch ($path) {
     case '/add':       renderAdd($db, $user); break;
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
     case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
+    case '/earn':      renderEarn($db, $user, isset($_GET['new'])); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
