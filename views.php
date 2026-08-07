@@ -124,6 +124,38 @@ function metaHead(string $origin, string $themeColor = '#f5ead8'): string {
 META;
 }
 
+// Theme bootstrap for the two public pages. Must be emitted AFTER metaHead(),
+// which is where the theme-color meta it repaints comes from, and before any
+// visible markup so an explicit choice never flashes the other theme.
+//
+// Signed-out visitors have no users.is_dark row, so the choice lives in
+// localStorage. Absent means "follow the OS" — that path needs no JS at all,
+// the prefers-color-scheme block handles it. paintStatusBar() exists because
+// the meta is a fixed attribute: CSS can't reach it, so the mobile status bar
+// stays on the old colour unless JS rewrites it.
+function themeBootScript(): string {
+    // Same two colours layout() picks from for a signed-in user.
+    return <<<'JS'
+<script>
+  try { var t = localStorage.getItem('ol-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+  function paintStatusBar() {
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (!m) return;
+    var r = document.documentElement;
+    var dark = r.dataset.theme
+      ? r.dataset.theme === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    m.setAttribute('content', dark ? '#201e1d' : '#f5ead8');
+  }
+  paintStatusBar();
+  // While no explicit choice is stored the page tracks the OS, so the status
+  // bar has to follow it live too.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paintStatusBar);
+</script>
+JS;
+}
+
 // Shared page frame: header, content, bottom tabnav, toasts, right-side profile drawer.
 function layout(PDO $db, array $user, string $tab, string $content, string $requestUri = '/'): void {
     $darkAttr  = $user['is_dark'] ? ' style="' . h(THEME_DARK_VARS) . '"' : '';
@@ -740,13 +772,7 @@ function renderLanding(): void {
 <?= metaHead($origin) ?>
 <link rel="canonical" href="<?= h($origin) ?>/">
 <link rel="stylesheet" href="/design-tokens/styles.css">
-<script>
-  /* Runs before first paint so an explicit choice doesn't flash the other theme.
-     Only ever sets the attribute when the visitor has actually picked — absent
-     means "follow the OS", which the media query below handles with no JS. */
-  try { var t = localStorage.getItem('ol-theme');
-        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
-</script>
+<?= themeBootScript() ?>
 <style>
   /* :not([data-theme]) is what makes "system" the default and still lets an
      explicit light choice win on a dark OS — without it the media query would
@@ -867,6 +893,7 @@ function renderLanding(): void {
         : window.matchMedia('(prefers-color-scheme: dark)').matches;
       r.dataset.theme = dark ? 'light' : 'dark';
       try { localStorage.setItem('ol-theme', r.dataset.theme); } catch (e) {}
+      paintStatusBar();
     }
   </script>
 </div>
@@ -1135,6 +1162,7 @@ DEV
     $origin = originUrl();
     $meta = metaHead($origin);
     $dark = THEME_DARK_VARS;
+    $boot = themeBootScript();
 
     echo <<<HTML
 <!doctype html>
@@ -1145,10 +1173,7 @@ DEV
 <title>Open Ledger — Sign in</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
-<script>
-  try { var t = localStorage.getItem('ol-theme');
-        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
-</script>
+$boot
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   /* Signed-out visitor has no is_dark row to read, so follow the OS — unless

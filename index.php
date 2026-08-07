@@ -315,6 +315,14 @@ if (PHP_SAPI === 'cli') {
                 str_contains($html, 'prefers-color-scheme: dark')
                     ? $line('OK',   "$name follows the OS dark preference")
                     : $line('WARN', "$name has no dark-mode block");
+                // paintStatusBar() rewrites the theme-color meta, so the meta has
+                // to already exist when the script runs. Emit them the other way
+                // round and the mobile status bar silently stops following.
+                $meta = strpos($html, 'name="theme-color"');
+                $boot = strpos($html, 'function paintStatusBar');
+                $meta !== false && $boot !== false && $meta < $boot
+                    ? $line('OK',   "$name repaints the mobile status bar")
+                    : $line('FAIL', "$name: theme-color meta missing or emitted after the script that repaints it");
             }
         } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'public pages: ' . $e->getMessage()); }
 
