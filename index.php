@@ -165,52 +165,76 @@ if (PHP_SAPI === 'cli') {
         }
 
         echo "\nStdlib self-check:\n";
-        try {
-            assert(advanceDate('2026-01-15', 'monthly')   === '2026-02-15');
-            assert(advanceDate('2026-01-15', 'quarterly') === '2026-04-15');
-            assert(advanceDate('2026-01-15', 'yearly')    === '2027-01-15');
-            assert(advanceDate('2026-01-31', 'monthly')   === '2026-02-28');
-            assert(advanceDate('2028-01-31', 'monthly')   === '2028-02-29');
-            assert(splitPlan(24000.0, 12, '2026-01-01')   === [2000.0, '2026-12-01']);
-            try { splitPlan(0.05, 24, '2026-01-01'); assert(false); } catch (UserErr) {}
-            try { parseAmount('-1', $config);   assert(false); } catch (UserErr) {}
-            try { parseAmount('abc', $config);  assert(false); } catch (UserErr) {}
-            try { parseAmount('1e9', $config);  assert(false); } catch (UserErr) {}
-            assert(parseAmount('12.34', $config) === 12.34);
-            assert(parseBudget('', $config) === 0.0 && parseBudget('5000', $config) === 5000.0);
-            try { parseBudget('abc', $config); assert(false); } catch (UserErr) {}
-            assert(investmentFilterSql('archived', []) === [' AND 1 = 0', []]);
-            assert(investmentFilterSql('active', ['Gold']) === [' AND type NOT IN (?)', ['Gold']]);
-            assert(groupIndian(1000000) === '10,00,000.00' && groupIndian(10000000) === '1,00,00,000.00');
-            assert(rollingMonths('2026-01-15', 3) === ['2025-11-01', '2026-02-01', ['2025-11','2025-12','2026-01']]);
-            assert(rollingMonths('2026-03-31', 12)[2][11] === '2026-03');
-            $line('OK', 'date math + split plans + parseAmount/parseBudget + investment filter + rolling window + lakh/crore formatting');
-        } catch (Throwable $e) { $line('FAIL', 'selfcheck: ' . $e->getMessage()); }
+        // Run the real --selfcheck instead of a copy of it. This block used to inline a subset,
+        // and the subset drifted: assertions written to stop a shipped bug from returning (the
+        // HTTPS-behind-a-proxy matrix, redirect safety, the sweep stop condition) never ran at
+        // the deploy gate, which is the only place DEPLOY.md tells you to look.
+        // -d zend.assertions=1 because a production php.ini usually compiles assert() away —
+        // without it the child prints a cheerful "ok" having checked nothing.
+        $sc = trim((string)shell_exec(
+            escapeshellarg(PHP_BINARY) . ' -d zend.assertions=1 ' . escapeshellarg(__FILE__) . ' --selfcheck 2>&1'
+        ));
+        $sc === 'ok'
+            ? $line('OK',   'every --selfcheck assertion passes (date math, split plans, amount/budget parsing, investment filter, rolling window, lakh/crore, redirect safety, HTTPS behind a proxy, category tree + rollup, sweep stop condition)')
+            : $line('FAIL', '--selfcheck: ' . ($sc === '' ? 'no output — assertions did not run' : $sc));
 
         echo "\nDatabase:\n";
         try {
             $db = makeDb($config);
             $line('OK', "connected to {$config['db']['host']}/{$config['db']['name']} as {$config['db']['user']}");
-            $expected = ['households','users','members','categories','expenses','investments','recurring','rate_limits','investment_types','earning_categories','earnings'];
-            $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
-            $missing = array_diff($expected, $tables);
-            if ($missing) $line('FAIL', 'missing tables: ' . implode(', ', $missing));
-            else          $line('OK',   'all ' . count($expected) . ' tables present');
-            $cols = $db->query("SHOW COLUMNS FROM recurring")->fetchAll(PDO::FETCH_COLUMN);
-            foreach (['kind','type','category_id','frequency','next_date','end_date'] as $c) {
-                in_array($c, $cols, true) ? $line('OK', "recurring.$c") : $line('FAIL', "recurring.$c missing");
+            // What the schema *should* look like is read out of lib.php rather than copied here:
+            // CREATE TABLE gives the base shape, MIGRATIONS the columns and indexes added since.
+            // A hand-kept list only covers the migrations someone remembered to also add to this
+            // file; this covers the next one automatically.
+            $want = [];
+            foreach (SCHEMA_STATEMENTS as $sql) {
+                if (!preg_match('/CREATE TABLE IF NOT EXISTS (\w+) \((.*)\) ENGINE/s', $sql, $m)) continue;
+                $want[$m[1]] = ['cols' => [], 'idx' => []];
+                foreach (preg_split('/,\n/', $m[2]) as $part) {
+                    $part = trim($part);
+                    if (preg_match('/^(?:UNIQUE KEY|INDEX|KEY)\s+(\w+)/i', $part, $k))               $want[$m[1]]['idx'][]  = $k[1];
+                    elseif (preg_match('/^(\w+)\s/', $part, $c) && strtoupper($c[1]) !== 'PRIMARY')  $want[$m[1]]['cols'][] = $c[1];
+                }
             }
-            $ecols = $db->query("SHOW COLUMNS FROM expenses")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('recurring_id', $ecols, true) ? $line('OK', 'expenses.recurring_id') : $line('FAIL', 'expenses.recurring_id missing');
-            $icols = $db->query("SHOW COLUMNS FROM investments")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('recurring_id', $icols, true) ? $line('OK', 'investments.recurring_id') : $line('FAIL', 'investments.recurring_id missing');
-            $rcols = $db->query("SHOW COLUMNS FROM earnings")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('recurring_id', $rcols, true) ? $line('OK', 'earnings.recurring_id') : $line('FAIL', 'earnings.recurring_id missing — recurring earnings cannot cascade-delete');
-            $ucols = $db->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('currency', $ucols, true) ? $line('OK', 'users.currency') : $line('FAIL', 'users.currency missing');
-            $ccols = $db->query("SHOW COLUMNS FROM categories")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('budget', $ccols, true) ? $line('OK', 'categories.budget') : $line('FAIL', 'categories.budget missing');
-            in_array('parent_id', $ccols, true) ? $line('OK', 'categories.parent_id') : $line('FAIL', 'categories.parent_id missing — sub-categories unavailable');
+            foreach (MIGRATIONS as $sql) {
+                if (!preg_match('/^ALTER TABLE (\w+) (.*)$/s', $sql, $m) || !isset($want[$m[1]])) continue;
+                foreach (explode(',', $m[2]) as $clause) {
+                    if (preg_match('/ADD COLUMN (\w+)/i', $clause, $c)) $want[$m[1]]['cols'][] = $c[1];
+                    if (preg_match('/ADD INDEX (\w+)/i',  $clause, $i)) $want[$m[1]]['idx'][]  = $i[1];
+                    // A dropped index must stop being expected, or preflight fails on a correct DB.
+                    if (preg_match('/DROP INDEX (\w+)/i', $clause, $i)) $want[$m[1]]['idx'] = array_diff($want[$m[1]]['idx'], [$i[1]]);
+                }
+            }
+            $tables  = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            $missing = array_diff(array_keys($want), $tables);
+            $missing ? $line('FAIL', 'missing tables: ' . implode(', ', $missing))
+                     : $line('OK',   'all ' . count($want) . ' tables in lib.php exist');
+            foreach ($want as $t => $w) {
+                if (in_array($t, $missing, true)) continue;
+                $mc = array_diff(array_unique($w['cols']), $db->query("SHOW COLUMNS FROM `$t`")->fetchAll(PDO::FETCH_COLUMN));
+                $mi = array_diff(array_unique($w['idx']),  $db->query("SHOW INDEX FROM `$t`")->fetchAll(PDO::FETCH_COLUMN, 2));
+                $mc || $mi
+                    ? $line('FAIL', "$t is missing " . implode(', ', array_merge($mc, $mi))
+                                  . ' — a migration did not apply; delete data/' . SCHEMA_SENTINEL . ' to re-run it')
+                    : $line('OK',   "$t: " . count(array_unique($w['cols'])) . ' columns, '
+                                  . count(array_unique($w['idx'])) . ' indexes match lib.php');
+            }
+            // The mirror of the above, with no DB involved: a column added only by MIGRATIONS
+            // and never folded into CREATE TABLE means an upgraded database and a freshly
+            // installed one end up with different shapes.
+            $drift = [];
+            foreach (MIGRATIONS as $sql) {
+                if (!preg_match('/^ALTER TABLE (\w+) (.*)$/s', $sql, $m)) continue;
+                $create = implode("\n", array_filter(SCHEMA_STATEMENTS, fn($s) => str_contains($s, "EXISTS {$m[1]} (")));
+                foreach (explode(',', $m[2]) as $clause) {
+                    if (preg_match('/ADD (?:COLUMN|INDEX) (\w+)/i', $clause, $c) && !str_contains($create, $c[1])) {
+                        $drift[] = "{$m[1]}.{$c[1]}";
+                    }
+                }
+            }
+            $drift ? $line('FAIL', 'in MIGRATIONS but not in CREATE TABLE: ' . implode(', ', $drift)
+                                 . ' — a fresh install will not have it')
+                   : $line('OK',   'every migrated column/index is also in its CREATE TABLE (fresh installs match upgrades)');
             // One level only, and a child must never hold a budget the parent already covers.
             $bad = (int)$db->query(
                 "SELECT COUNT(*) FROM categories c JOIN categories p ON p.id = c.parent_id WHERE p.parent_id IS NOT NULL"
@@ -220,30 +244,12 @@ if (PHP_SAPI === 'cli') {
             $budKids = (int)$db->query("SELECT COUNT(*) FROM categories WHERE parent_id IS NOT NULL AND budget > 0")->fetchColumn();
             $budKids === 0 ? $line('OK', 'no sub-category carries its own budget')
                            : $line('WARN', "$budKids sub-categor(y/ies) still carry a budget — the household total will double-count");
-            $tcols = $db->query("SHOW COLUMNS FROM investment_types")->fetchAll(PDO::FETCH_COLUMN);
-            in_array('archived', $tcols, true) ? $line('OK', 'investment_types.archived') : $line('FAIL', 'investment_types.archived missing');
-            // The Invest tab paginates with ORDER BY date DESC — without this composite index it filesorts.
-            $idx = $db->query("SHOW INDEX FROM investments")->fetchAll(PDO::FETCH_COLUMN, 2);
-            in_array('ix_household_date', $idx, true)
-                ? $line('OK',   'investments.ix_household_date')
-                : $line('FAIL', 'investments.ix_household_date missing — list queries will filesort');
-            // Same shape on the Earn tab: paginated ORDER BY date DESC plus three windowed SUMs.
-            $eidx = $db->query("SHOW INDEX FROM earnings")->fetchAll(PDO::FETCH_COLUMN, 2);
-            in_array('ix_household_date', $eidx, true)
-                ? $line('OK',   'earnings.ix_household_date')
-                : $line('FAIL', 'earnings.ix_household_date missing — list queries will filesort');
-            // The per-category / per-type counts. Without these MySQL reads every row of the
-            // household and sorts it — and two of them run on every page load, via the drawer.
-            foreach ([
-                ['expenses',    'ix_household_cat',  '/organise counts, bulk move, uncategorised sweep'],
-                ['earnings',    'ix_household_cat',  'profile drawer, every page load'],
-                ['investments', 'ix_household_type', 'profile drawer, every page load'],
-            ] as [$tbl, $ix, $why]) {
-                $have = $db->query("SHOW INDEX FROM $tbl")->fetchAll(PDO::FETCH_COLUMN, 2);
-                in_array($ix, $have, true)
-                    ? $line('OK',   "$tbl.$ix")
-                    : $line('FAIL', "$tbl.$ix missing — full table scan on $why");
-            }
+            // The list-query indexes (ix_household_date, ix_household_cat, ix_household_type) used
+            // to be asserted by name here. They are declared in lib.php's CREATE TABLEs, so the
+            // derived check above already covers them — and covers the next one for free.
+
+            // Data integrity — nothing here is derivable from the schema; these are rules the
+            // application enforces and a bad write could still break.
             // Every household needs at least one earning category or the Earn add form is unusable.
             $noCats = (int)$db->query(
                 "SELECT COUNT(*) FROM households h WHERE NOT EXISTS
@@ -252,6 +258,47 @@ if (PHP_SAPI === 'cli') {
             $noCats === 0
                 ? $line('OK',   'every household has earning categories')
                 : $line('FAIL', "$noCats household(s) have no earning categories — delete data/" . SCHEMA_SENTINEL . " to re-run the backfill");
+            // Cross-household references. Every id that arrives in a POST goes through ownedId(),
+            // so these are all zero — which is the point: if a new handler ever forgets, a forged
+            // id silently files an entry against another household and joins their name back out.
+            // NOT EXISTS rather than a join: this catches both halves at once — an id belonging
+            // to another household, and an id whose row is simply gone.
+            foreach ([
+                'expenses.category_id'   => ['expenses',   'category_id', 'categories'],
+                'expenses.member_id'     => ['expenses',   'member_id',   'members'],
+                'earnings.category_id'   => ['earnings',   'category_id', 'earning_categories'],
+                'investments.recurring_id' => ['investments', 'recurring_id', 'recurring'],
+                'expenses.recurring_id'  => ['expenses',   'recurring_id', 'recurring'],
+                'earnings.recurring_id'  => ['earnings',   'recurring_id', 'recurring'],
+                'categories.parent_id'   => ['categories', 'parent_id',   'categories'],
+            ] as $what => [$tbl, $col, $ref]) {
+                $n = (int)$db->query(
+                    "SELECT COUNT(*) FROM `$tbl` t WHERE t.`$col` IS NOT NULL AND NOT EXISTS
+                     (SELECT 1 FROM `$ref` r WHERE r.id = t.`$col` AND r.household_id = t.household_id)"
+                )->fetchColumn();
+                $n === 0 ? $line('OK',   "$what always resolves inside its own household")
+                         : $line('FAIL', "$n row(s): $what points at a missing or another household's $ref row");
+            }
+            // recurring has one category_id column read against whichever table `kind` implies.
+            // A kind that changes without its category being re-validated leaves a live item
+            // pointing at a row in the wrong table — it then posts uncategorised, silently.
+            $crossKind = (int)$db->query(
+                "SELECT COUNT(*) FROM recurring r WHERE r.category_id IS NOT NULL AND (
+                     (r.kind = 'earning' AND NOT EXISTS (SELECT 1 FROM earning_categories c WHERE c.id = r.category_id AND c.household_id = r.household_id))
+                  OR (r.kind = 'expense' AND NOT EXISTS (SELECT 1 FROM categories c         WHERE c.id = r.category_id AND c.household_id = r.household_id)))"
+            )->fetchColumn();
+            $crossKind === 0
+                ? $line('OK',   'every recurring category_id resolves in the table its kind implies')
+                : $line('FAIL', "$crossKind recurring item(s) carry a category_id from the wrong table — they will post uncategorised");
+            // investments.type is stored as a name, not a foreign key: the one place a rename
+            // can orphan rows. The app repoints them on rename; this proves it kept up.
+            $orphanType = (int)$db->query(
+                "SELECT COUNT(*) FROM investments i WHERE NOT EXISTS
+                 (SELECT 1 FROM investment_types t WHERE t.household_id = i.household_id AND t.name = i.type)"
+            )->fetchColumn();
+            $orphanType === 0
+                ? $line('OK',   'every investment type name still exists in investment_types')
+                : $line('FAIL', "$orphanType investment(s) name a type that no longer exists — a rename did not repoint them");
         } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
 
         echo "\nConfig / env:\n";
@@ -311,6 +358,130 @@ if (PHP_SAPI === 'cli') {
             : $line('WARN', '.htaccess may not deny dotfiles — check .env is web-inaccessible');
         str_contains($ht, 'config\\.php') ? $line('OK', '.htaccess denies raw config.php fetch') : $line('WARN', 'config.php may be web-accessible');
 
+        echo "\nSource invariants (static):\n";
+        // Only the request-handling half of this file. The checks below quote the same marker
+        // strings they search for ('csrfCheck();', the GET-routes comment), so scanning the
+        // whole file would find this block instead of the router.
+        $full = (string)file_get_contents(__FILE__);
+        // Anchored to the start of a line: every copy of these markers inside this block is
+        // indented, so ^// only ever matches the real one further down the file.
+        preg_match('~^// Debug output~m', $full, $mk, PREG_OFFSET_CAPTURE);
+        $src  = substr($full, $mk[0][1]);
+        $vsrc = (string)file_get_contents(__DIR__ . '/views.php');
+        $lsrc = (string)file_get_contents(__DIR__ . '/lib.php');
+
+        // Every path a view links or posts to must have a handler. A miss falls through to the
+        // bare 404 with nothing logged, so it reads as a dead button rather than an error.
+        preg_match_all('~(?:^\s*case |\$path === )\'(/[^\']*)\'~m', $src, $m);
+        $routes = array_unique($m[1]);
+        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)~', $vsrc, $u);
+        // is_file, not file_exists: href="/" would otherwise match the project directory.
+        $linked = array_filter(array_unique(array_merge($u[1], $u[2])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
+        $orphan = array_diff($linked, $routes);
+        $orphan ? $line('FAIL', 'a view links or posts to a path with no route: ' . implode(', ', $orphan))
+                : $line('OK',   count($linked) . ' linked paths all resolve to a route');
+        // Reached by the crawler or by an old bookmark, never by a link in the app.
+        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage']);
+        $dead ? $line('WARN', 'route nothing links to: ' . implode(', ', $dead))
+              : $line('OK',   'no unreachable routes');
+
+        // Split the POST switch into case => body so the next two checks can read each handler.
+        $postAt  = strpos($src, "if (\$method === 'POST') {");
+        $postBlk = substr($src, $postAt, strpos($src, '// Authed GET routes.') - $postAt);
+        $parts   = preg_split('~^(\s*case \'[^\']*\':|\s*default:)~m', $postBlk, -1, PREG_SPLIT_DELIM_CAPTURE);
+        array_shift($parts);
+        $fall = $unscoped = [];
+        for ($i = 0; $i + 1 < count($parts); $i += 2) {
+            [$case, $body] = [trim($parts[$i]), $parts[$i + 1]];
+            if (trim($body) === '') continue;   // deliberate stacking: case '/a': case '/b':
+            // PHP falls into the *next* case without a terminator. A handler that forgets its
+            // redirect() silently runs the following one — which is usually a DELETE.
+            if (!preg_match('~\bredirect\(|\bbreak;|\bexit\b~', $body)) $fall[] = $case;
+            // Every write must name household_id, or a forged id reaches another household's row.
+            // users is exempt: it is only ever addressed by $user['id'], which comes from the session.
+            preg_match_all('~"((?:DELETE FROM|UPDATE)\s+(\w+)[^"]*)"(\s*\.\s*\w+\(\))?~s', $body, $q, PREG_SET_ORDER);
+            foreach ($q as $x) {
+                if (!str_contains($x[1], 'household_id') && $x[2] !== 'users' && trim($x[3] ?? '') === '') {
+                    $unscoped[] = $case . ' → ' . preg_replace('~\s+~', ' ', substr($x[1], 0, 60));
+                }
+            }
+        }
+        $fall ? $line('FAIL', 'POST handler with no redirect/break/exit (falls into the next case): ' . implode(', ', $fall))
+              : $line('OK',   ((int)(count($parts) / 2)) . ' POST handlers all terminate');
+        $unscoped ? $line('FAIL', 'write not scoped by household_id: ' . implode(' ; ', $unscoped))
+                  : $line('OK',   'every DELETE/UPDATE in a POST handler is household-scoped');
+
+        // Two handlers validating the same field must accept the same values. /recurring and
+        // /recurring/update disagreed once, and editing a recurring earning silently turned it
+        // into an expense — the form offered a kind the server quietly discarded.
+        preg_match_all('~in_array\(\$_POST\[\'(\w+)\'\]\s*\?\?\s*\'\',\s*(\[[^\]]*\])~', $src, $m2, PREG_SET_ORDER);
+        $lists = [];
+        foreach ($m2 as $x) $lists[$x[1]][] = preg_replace('~\s+~', '', $x[2]);
+        $split = array_keys(array_filter($lists, fn($l) => count(array_unique($l)) > 1));
+        $split ? $line('FAIL', 'POST field validated against different allow-lists: '
+                             . implode(', ', array_map(fn($f) => "$f (" . implode(' vs ', array_unique($lists[$f])) . ')', $split)))
+               : $line('OK',   count($lists) . ' POST allow-list(s) agree across every handler');
+        // …and the form must not offer a value the server throws away.
+        foreach ($lists as $field => $l) {
+            $allowed = json_decode(str_replace("'", '"', $l[0]), true) ?: [];
+            if (!preg_match('~name="' . $field . '"[^>]*>(.*?)</select>~s', $vsrc, $sel)) continue;
+            preg_match_all('~<option value="([a-z0-9_-]+)"~', $sel[1], $o);
+            $extra = array_diff($o[1], $allowed);
+            $extra ? $line('FAIL', "a form offers $field=" . implode('/', $extra) . ' but the server rejects it')
+                   : $line('OK',   "every $field option a form offers is accepted");
+        }
+
+        // Auth gate, then one CSRF check, then the switch. The ordering is the whole guarantee:
+        // there is no per-route audit to do as long as nothing sneaks in above csrfCheck().
+        // There are two POST blocks — the public one (/signin) and the authed one. Find the
+        // authed switch by starting from the end of the unauthed gate, not from the top.
+        $gate     = strpos($src, "redirect('/login');\n}");
+        $authPost = $gate === false ? false : strpos($src, "if (\$method === 'POST') {", $gate);
+        $csrf     = strpos($src, 'csrfCheck();');
+        $sw       = $authPost === false ? false : strpos($src, 'switch ($path) {', $authPost);
+        $gate !== false && $authPost !== false && $sw !== false
+            && $gate < $authPost && $authPost < $csrf && $csrf < $sw && substr_count($src, 'csrfCheck();') === 1
+            ? $line('OK',   'every POST route sits behind the auth gate and a single csrfCheck()')
+            : $line('FAIL', 'the POST switch is no longer uniformly auth/CSRF gated — check the order in index.php');
+        // `back` is attacker-controlled and only redirect() runs it through safeRedirectTarget().
+        $loc = 0;
+        foreach (['index.php', 'lib.php', 'views.php'] as $f) $loc += preg_match_all('~header\(\s*[\'"]Location~', (string)file_get_contents(__DIR__ . "/$f"));
+        $loc === 1 ? $line('OK',   'redirect() is the only place that sends a Location header')
+                   : $line("FAIL", "$loc Location headers — one of them bypasses safeRedirectTarget()");
+
+        // Limits are config, and a typo'd key reads as null: the cap silently stops applying.
+        preg_match_all('~\$L\[\'(\w+)\'\]|\[\'limits\'\]\[\'(\w+)\'\]~', $src . $vsrc . $lsrc, $lk);
+        $usedL = array_filter(array_unique(array_merge($lk[1], $lk[2])));
+        $ghost = array_diff($usedL, array_keys($config['limits']));
+        $ghost ? $line('FAIL', 'limit key read but never defined: ' . implode(', ', $ghost) . ' — that cap is not being enforced')
+               : $line('OK',   count($usedL) . ' limit keys all defined in config');
+        $unusedL = array_diff(array_keys($config['limits']), $usedL);
+        $unusedL ? $line('WARN', 'limit defined but never read: ' . implode(', ', $unusedL))
+                 : $line('OK',   'every configured limit is read somewhere');
+
+        // Column names in INSERT/UPDATE, checked against the schema parsed out of lib.php.
+        // SELECT is deliberately not checked — the list queries alias and join, so resolving a
+        // bare column to a table needs a parser, and a regex would only produce noise.
+        $schemaCols = [];
+        foreach (($want ?? []) as $t => $w) $schemaCols[$t] = array_unique($w['cols']);
+        $badCol = [];
+        $all = $src . $vsrc . (string)file_get_contents(__DIR__ . '/lib.php');
+        preg_match_all('~INSERT INTO\s+(\w+)\s*\(([^)]*)\)~i', $all, $ins, PREG_SET_ORDER);
+        foreach ($ins as $x) {
+            if (!isset($schemaCols[$x[1]])) continue;   // skips interpolated table names
+            foreach (preg_split('~\s*,\s*~', trim($x[2])) as $c) {
+                if ($c !== '' && !in_array($c, $schemaCols[$x[1]], true)) $badCol[] = "INSERT {$x[1]}.$c";
+            }
+        }
+        preg_match_all('~UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE~is', $all, $upd, PREG_SET_ORDER);
+        foreach ($upd as $x) {
+            if (!isset($schemaCols[$x[1]])) continue;
+            preg_match_all('~(\w+)\s*=~', $x[2], $cc);
+            foreach ($cc[1] as $c) if (!in_array($c, $schemaCols[$x[1]], true)) $badCol[] = "UPDATE {$x[1]}.$c";
+        }
+        $badCol ? $line('FAIL', 'SQL writes a column the schema does not have: ' . implode(', ', array_unique($badCol)))
+                : $line('OK',   count($ins) . ' INSERTs and ' . count($upd) . ' UPDATEs name only real columns');
+
         echo "\nPublic pages:\n";
         try {
             ob_start(); renderLanding(); $lp = (string)ob_get_clean();
@@ -357,6 +528,149 @@ if (PHP_SAPI === 'cli') {
                     : $line('FAIL', "$name: theme-color meta missing or emitted after the script that repaints it");
             }
         } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'public pages: ' . $e->getMessage()); }
+
+        echo "\nApp pages (rendered in-process, no HTTP):\n";
+        $pages = [];
+        try {
+            // Render against the household with the most conditional markup, not merely the most
+            // rows: several blocks only appear above a threshold — the member chips need two
+            // members, the nest dialog needs a category, #ed-member needs a member list. Ordering
+            // by members first is what makes those paths visible here at all. (Picking by category
+            // count alone once chose a one-member household and hid a broken member chip.)
+            $hid0 = (int)($db->query(
+                "SELECT h.id FROM households h
+                 ORDER BY (SELECT COUNT(*) FROM members     m WHERE m.household_id = h.id) DESC,
+                          (SELECT COUNT(*) FROM categories  c WHERE c.household_id = h.id) DESC,
+                          (SELECT COUNT(*) FROM expenses    e WHERE e.household_id = h.id) DESC
+                 LIMIT 1"
+            )->fetchColumn() ?: 0);
+            $stub = ['id' => 0, 'household_id' => $hid0, 'name' => 'Preflight', 'email' => 'preflight@local', 'is_dark' => 0];
+            foreach ([
+                'add'       => ['renderAdd',       [$db, $stub]],
+                'history'   => ['renderHistory',   [$db, $stub, 0]],
+                'earn'      => ['renderEarn',      [$db, $stub, true]],
+                'invest'    => ['renderInvest',    [$db, $stub, true, 'active']],
+                'recurring' => ['renderRecurring', [$db, $stub, true]],
+                'year'      => ['renderYear',      [$db, $stub, (int)date('Y'), 'cal', 'all']],
+                'organise'  => ['renderOrganise',  [$db, $stub]],
+                'terms'     => ['renderTerms',     [$db, $stub]],
+            ] as $name => [$fn, $args]) {
+                ob_start(); $fn(...$args); $pages[$name] = (string)ob_get_clean();
+            }
+            $line('OK', count($pages) . ' tabs render without fataling against household ' . $hid0
+                      . ' (' . number_format(array_sum(array_map('strlen', $pages))) . ' bytes)');
+            if ($hid0 === 0) $line('WARN', 'no household has categories — pages rendered empty, so their conditional dialogs went unchecked');
+        } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'render: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
+
+        if ($pages) {
+            // A button whose handler calls getElementById on an id the page never emits does
+            // nothing at all, silently — the usual result of renaming a dialog in one place.
+            $deadIds = $dupIds = $badHead = $undefCls = [];
+            foreach ($pages as $name => $html) {
+                preg_match_all("~getElementById\('([^']+)'\)~", $html, $r);
+                preg_match_all('~\baria-labelledby="([^"]+)"~', $html, $a);
+                preg_match_all('~\bid="([^"]+)"~', $html, $d);
+                if ($hid0 > 0 && $dead = array_diff(array_unique(array_merge($r[1], $a[1])), $d[1])) {
+                    $deadIds[] = "$name: " . implode(', ', $dead);
+                }
+                // Duplicated ids are worse than dead ones: getElementById silently takes the
+                // first, so every write lands in whichever copy is not on screen.
+                if ($dup = array_keys(array_filter(array_count_values($d[1]), fn($n) => $n > 1))) {
+                    $dupIds[] = "$name: " . implode(', ', $dup);
+                }
+                // viewport-fit=cover is load-bearing, not cosmetic: without it env(safe-area-inset-*)
+                // resolves to 0 and every toast renders under the notch.
+                if (!(str_starts_with(ltrim($html), '<!doctype')
+                      && substr_count($html, '/design-tokens/styles.css') === 1
+                      && substr_count($html, '<title>') === 1
+                      && str_contains($html, 'viewport-fit=cover')
+                      && str_contains($html, 'name="theme-color"'))) $badHead[] = $name;
+            }
+            $deadIds ? $line('FAIL', 'JS references an id the page never emits — ' . implode(' ; ', $deadIds))
+                     : $line('OK',   'every element id the inline JS reaches for is emitted');
+            // An HTML comment written between attributes ends the tag at its own `>`: the rest of
+            // the attributes become body text and the handler is simply gone. Silent, and php -l
+            // cannot see it. This shipped once on the member chips.
+            $inTag = [];
+            foreach ($pages + ['landing' => $lp ?? '', 'sign-in' => $sp ?? ''] as $name => $html) {
+                if ($html !== '' && preg_match('~<[a-zA-Z][^<>]*<!--~', $html)) $inTag[] = $name;
+            }
+            $inTag ? $line('FAIL', 'HTML comment inside a tag on: ' . implode(', ', $inTag)
+                                 . ' — the tag ends at the comment and the remaining attributes render as text')
+                   : $line('OK',   'no page opens a comment inside a tag');
+            $dupIds  ? $line('FAIL', 'duplicate ids on one page — ' . implode(' ; ', $dupIds))
+                     : $line('OK',   'no page emits a duplicate id');
+            $badHead ? $line('FAIL', 'malformed <head> on: ' . implode(', ', $badHead) . ' — doctype, one stylesheet, one title, viewport-fit, theme-color')
+                     : $line('OK',   'every tab has a well-formed head (one stylesheet, viewport-fit, theme-color)');
+
+            // Class names are resolved by the time they reach the HTML, so this compares what
+            // the markup actually asks for against every selector the app defines.
+            $css = (string)file_get_contents(__DIR__ . '/design-tokens/styles.css');
+            preg_match_all('~<style>(.*?)</style>~s', $vsrc, $inline);
+            preg_match_all('~\.([a-zA-Z][a-zA-Z0-9_-]*)~', $css . "\n" . implode("\n", $inline[1]), $defined);
+            $defined = array_unique($defined[1]);
+            foreach ($pages as $name => $html) {
+                preg_match_all('~\bclass="([^"]*)"~', $html, $cu);
+                $used  = array_filter(array_unique(preg_split('~\s+~', trim(implode(' ', $cu[1]))) ?: []));
+                if ($un = array_diff($used, $defined)) $undefCls[] = "$name: " . implode(', ', $un);
+            }
+            $undefCls ? $line('WARN', 'class used but never styled — ' . implode(' ; ', $undefCls))
+                      : $line('OK',   'every class the markup uses is defined somewhere');
+        }
+
+        echo "\nStyle layers:\n";
+        // The regression this section exists for: press feedback and the tap-highlight reset were
+        // moved into the shared stylesheet, which every page links. The `*` reset then killed the
+        // native highlight on every tappable that had no :active of its own, and the more specific
+        // .btn rule outranked .amount-submit's. Both belong to the page that owns them.
+        $css = (string)file_get_contents(__DIR__ . '/design-tokens/styles.css');
+        !str_contains($css, '-webkit-tap-highlight-color')
+            ? $line('OK',   'the shared stylesheet owns no tap-highlight rule')
+            : $line('FAIL', 'design-tokens/styles.css sets -webkit-tap-highlight-color — that lands on every page; scope it to layout() or renderLanding()');
+        preg_match_all('~(?:^|\}|\*/)\s*(\*[^{;@]*)\{~m', $css, $uni);
+        count($uni[1]) === 1 && str_contains($css, '*, *::before, *::after { box-sizing: border-box; }')
+            ? $line('OK',   'the shared stylesheet has one universal rule (box-sizing)')
+            : $line('FAIL', count($uni[1]) . ' universal selectors in styles.css [' . implode(' | ', array_map('trim', $uni[1]))
+                          . '] — only the box-sizing reset may be global');
+        // …and the pages that do own press feedback must still carry it. Exact strings: a
+        // reformat trips this, and re-approving one line is the price of catching a deletion.
+        $shell = $pages['add'] ?? '';
+        foreach ([
+            'a, button, [role="button"], .row, .cat-chip, .pill-btn { -webkit-tap-highlight-color: transparent; }',
+            '.tabnav a:active:not(.on) { opacity: 1; background: var(--color-neutral-200); }',
+            '.icon-btn:active { background: var(--color-neutral-300); }',
+            '.btn:active { transform: scale(.98); filter: brightness(.95); }',
+            '.amount-submit:active { transform: scale(.94); }',
+        ] as $rule) {
+            if ($shell === '') break;
+            str_contains($shell, $rule)
+                ? $line('OK',   'app shell keeps ' . rtrim(strtok($rule, '{')))
+                : $line('FAIL', 'layout() lost its press feedback: ' . $rule);
+        }
+        foreach ([
+            '.btn { -webkit-tap-highlight-color: transparent; transition: filter .12s, transform .05s; }',
+            '.btn:active { transform: scale(.98); filter: brightness(.95); }',
+        ] as $rule) {
+            str_contains($lp ?? '', $rule)
+                ? $line('OK',   'landing keeps ' . rtrim(strtok($rule, '{')))
+                : $line('FAIL', 'renderLanding() lost its press feedback: ' . $rule);
+        }
+
+        echo "\nIcons:\n";
+        // A name with no matching <symbol> renders a blank box — no error, nothing in the log.
+        preg_match_all('~<symbol id="icon-([a-z0-9-]+)"~', SVG_SPRITE, $sym);
+        preg_match_all("~\bicon\('([a-z0-9-]+)'~", $vsrc, $calls);
+        $missLit = array_diff(array_unique($calls[1]), $sym[1]);
+        $missLit ? $line('FAIL', 'icon() called with a name the sprite lacks: ' . implode(', ', $missLit) . ' — renders blank')
+                 : $line('OK',   count(array_unique($calls[1])) . ' literal icon names all in the sprite');
+        // Most call sites pass a name loaded from the database, which grep cannot see. Seed
+        // list and stored rows both have to keep up with a sprite rename.
+        $missSeed = array_diff(array_column(DEFAULT_CATEGORIES, 1), $sym[1]);
+        $missSeed ? $line('FAIL', 'DEFAULT_CATEGORIES seeds an icon the sprite lacks: ' . implode(', ', $missSeed))
+                  : $line('OK',   count(DEFAULT_CATEGORIES) . ' seeded category icons all in the sprite');
+        $missDb = array_diff(array_filter($db->query("SELECT DISTINCT icon FROM categories")->fetchAll(PDO::FETCH_COLUMN)), $sym[1]);
+        $missDb ? $line('FAIL', 'a stored category icon is not in the sprite: ' . implode(', ', $missDb) . ' — those rows render blank')
+                : $line('OK',   'every icon name stored in categories is in the sprite');
 
         echo "\nRecurring sweep (dry run):\n";
         try {
@@ -791,7 +1105,7 @@ if ($method === 'POST') {
                 $id    = (int)($_POST['id'] ?? 0);
                 $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
-                $kind  = in_array($_POST['kind'] ?? '', ['expense','investment'], true) ? $_POST['kind'] : 'expense';
+                $kind  = in_array($_POST['kind'] ?? '', ['expense','investment','earning'], true) ? $_POST['kind'] : 'expense';
                 $freq  = in_array($_POST['frequency'] ?? '', ['monthly','quarterly','yearly'], true)
                          ? $_POST['frequency'] : 'monthly';
                 $date  = requireDate((string)($_POST['next_date'] ?? today()), 'Next date');

@@ -62,12 +62,13 @@
     <td align="center"><img src="docs/screenshots/history.png" alt="History with budgets" width="240"><br><sub><b>History — budget per category</b></sub></td>
   </tr>
   <tr>
+    <td align="center"><img src="docs/screenshots/earn.png" alt="Earnings" width="240"><br><sub><b>Earnings — rolling 12 months</b></sub></td>
     <td align="center"><img src="docs/screenshots/invest.png" alt="Investments" width="240"><br><sub><b>Investments — active / archived</b></sub></td>
     <td align="center"><img src="docs/screenshots/year.png" alt="Yearly summary" width="240"><br><sub><b>Yearly summary — calendar or FY</b></sub></td>
-    <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring (expense &amp; investment)</b></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — currency, types, members</b></sub></td>
+    <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring — repeats and split bills</b></sub></td>
+    <td align="center" colspan="2"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — currency, types, members</b></sub></td>
   </tr>
 </table>
 

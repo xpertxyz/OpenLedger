@@ -1372,9 +1372,11 @@ function renderAdd(PDO $db, array $user): void {
         <input type="hidden" name="member_id" id="mem-input" value="<?= (int)$selectedMem ?>">
         <div class="pill-row">
           <?php foreach ($mems as $m): ?>
+            <?php /* The sweep is scoped to this row: a global .pill-row query would also clear
+                     the sub-category pills sitting in their own row above. Keep this a PHP
+                     comment — an HTML one here lands inside the tag, and the browser ends the
+                     tag at its `>`, which turns the onclick into visible text. */ ?>
             <button type="button" class="pill-btn<?= $m['id'] == $selectedMem ? ' on' : '' ?>"
-                    <!-- Scoped to this row: a global .pill-row sweep would also clear the
-                         sub-category pills sitting in their own row above. -->
                     onclick="document.getElementById('mem-input').value=<?= (int)$m['id'] ?>;this.parentNode.querySelectorAll('.pill-btn').forEach(e=>e.classList.remove('on'));this.classList.add('on');">
               <?= h($m['name']) ?>
             </button>
