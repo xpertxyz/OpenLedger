@@ -31,6 +31,9 @@
 - **Add expense in three taps** — amount, category, done.
 - **History** grouped by day with per-day totals + monthly category breakdown. Swipe left/right to change month.
 - **Per-category monthly budgets** — set a limit per category and History shows spent / % used / left, turning red when you go over. Budgets **never block a spend**; they report, they don't police.
+- **Sub-categories, one level deep** — nest "Rent" and "Maintenance" under "Household". Their spending rolls up into the parent's bar and counts against the parent's budget, with each child listed beneath it (plus a *Direct* line for the parent's own spend, so the lines always sum to the bar). Sub-categories carry no budget of their own.
+- **Organise expense categories** screen — the one place expense categories are managed: rename, budget, nest, delete, and add. Renders as a tree, with each parent's children on a connector spine. It also merges one category's entries into another (recurring items follow, so nothing keeps posting into the category you just emptied).
+- **Uncategorised is not a dead end** — expenses with no category, or whose category was deleted, are counted on that screen and can either be filed into a real category or deleted outright, behind a confirmation naming the exact count.
 - **Earnings** grouped by month with a per-category breakdown (Salary, Interest, Other by default — add, rename and delete your own). The Earn tab summarises **this month / year to date / all time** and carries a rolling twelve-month **earned vs spent vs invested** chart.
 - **Investments** grouped by month with per-type breakdown (SIP, Stocks, FD-RD, Gold, PPF-EPF, and any custom types you add).
 - **Archive an investment type** when a scheme ends — its entries stay logged but drop out of the active view. The Invest tab summarises **Active / Archived / Total**, and the list filters between them.
@@ -61,7 +64,7 @@
     <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring (expense &amp; investment)</b></sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — budgets, archiving, members</b></sub></td>
+    <td align="center" colspan="3"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — currency, types, members</b></sub></td>
   </tr>
 </table>
 
@@ -238,7 +241,8 @@ Small, single-language, single-file-ish. The whole app is five PHP files.
 ```
 households ─┬─ users        (Google-authenticated, one per person)
             ├─ members      (attributable spender per entry)
-            ├─ categories   (expense categorization; defaults + custom; `budget` = monthly cap, 0 = none)
+            ├─ categories   (expense categorization; defaults + custom; `budget` = monthly cap, 0 = none;
+            │                `parent_id` = sub-category, one level, always budget 0)
             ├─ investment_types    (SIP, Stocks, ...; editable; `archived` hides its entries)
             ├─ earning_categories  (Salary, Interest, Other; fully editable, min one)
             ├─ expenses     (fact table, indexed on (household_id, date))
@@ -254,7 +258,10 @@ Expenses, earnings and investments each carry a nullable `recurring_id` FK so ca
 
 Schema changes are additive and idempotent: append to the `MIGRATIONS` array in `lib.php` and bump the sentinel filename. Each statement runs independently, and a duplicate-column error is logged and skipped, so re-running is safe.
 
-Three behaviours worth knowing:
+Six behaviours worth knowing:
+- **"Uncategorised" has one definition.** `category_id IS NULL` *or* pointing at a row that no longer exists — both render identically, so `uncategorisedWhere()` in `lib.php` is the single predicate the History bucket, the on-screen count, the file-away move and the bulk delete all share. Two definitions would mean the number on the button disagrees with what it touches.
+- **Every structural change confirms first, and the dialog names the consequence.** Deletes, bulk moves, and both directions of nesting go through the shared `askConfirm()` dialog, whose body states the actual outcome — how many entries move, whether they survive, what budget a sub-category gives up. Only same-tap edits (rename, budget, currency, theme) submit straight through. That dialog posts `_csrf` + `id` + `back` and nothing else, which is why lifting a sub-category out needs no extra route: a missing `parent_id` already reads as "top level". Actions carrying more state — the two-select move and nest forms — bring their own `<dialog>`.
+- **Sub-categories are one level and budget-free.** `categories.parent_id` points at a top-level category in the same household; a row that has children can't be given a parent, and a row that has a parent can't be given children. Assigning a parent zeroes the child's budget — the household budget total sums top-level budgets only, so a child holding its own would double-count. Deleting a parent promotes its children to top level rather than stranding them.
 - **Earning categories are referenced by id, not by name** (`earnings.category_id`), so renaming one needs no cascade and deleting one leaves its earnings logged but *Uncategorised*. The last remaining category can't be deleted — the add form picks from that list.
 - **Archiving is per *type*, matched by name** (`investments.type` stores the name, and renames cascade). Archiving hides a type's entries from the active view and removes it from the *add* pickers, but keeps it in the *edit* pickers so existing entries stay editable.
 - **A recurring item keeps posting into an archived type.** Nothing is silently stopped — the archive confirmation says so and points you at the Recurring tab.
@@ -265,7 +272,7 @@ Three behaviours worth knowing:
 - **Sessions**: `HttpOnly` + `SameSite=Lax` + `Secure` (on HTTPS) cookies, `session_regenerate_id(true)` on login, `use_only_cookies` + `use_strict_mode`.
 - **CSRF**: Session-scoped token on every POST form (`hash_equals` compared). Google's own `g_csrf_token` double-submit for the sign-in callback.
 - **Rate limiting**: Atomic per-IP upsert (`INSERT ... ON DUPLICATE KEY UPDATE`) — 10 sign-ins / 15 min, 60 POSTs / min. Returns `429` with `Retry-After`.
-- **Data caps**: Amounts, note lengths, per-household counts (200 expenses/day, 1000 investments, 2000 earnings, 100 recurring, 100 categories of each kind, 20 members) enforced at insert time.
+- **Data caps**: Amounts, note lengths, per-household counts (200 expenses/day, 1000 investments, 2000 earnings, 100 recurring, 100 categories of each kind, 20 members) enforced at insert time. Bulk category moves are scoped to the signed-in household on both sides.
 - **Household scoping on writes**: category and member ids arrive from `<select>` fields, so every one is re-checked against the signed-in household before it is stored (`ownedId()`); a forged id degrades to *uncategorised* instead of attaching to another household's row.
 - **SQL**: PDO prepared statements with `EMULATE_PREPARES=false`.
 - **XSS**: `htmlspecialchars` on every output; JSON payloads inside `onclick=""` attributes go through both `json_encode` and `h()`.

@@ -40,6 +40,7 @@ const SCHEMA_STATEMENTS = [
         icon VARCHAR(30) NOT NULL,
         is_custom TINYINT(1) NOT NULL DEFAULT 0,
         budget DECIMAL(12,2) NOT NULL DEFAULT 0,
+        parent_id INT NULL,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -137,6 +138,9 @@ const MIGRATIONS = [
     // v8 — recurring earnings. Only bites on databases where `earnings` was created by the
     // first cut of this table, before it carried the recurring FK.
     "ALTER TABLE earnings ADD COLUMN recurring_id INT NULL, ADD INDEX ix_recurring (recurring_id)",
+    // v9 — expense sub-categories. One level: a row with a parent_id can never be a parent
+    // itself. No index — a household has at most 100 categories and they load as one set.
+    "ALTER TABLE categories ADD COLUMN parent_id INT NULL",
 ];
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
@@ -165,7 +169,7 @@ function makeDb(array $cfg): PDO {
     ]);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
-    $sentinel = __DIR__ . '/data/.schema-ok-v8';
+    $sentinel = __DIR__ . '/data/.schema-ok-v9';
     if (!file_exists($sentinel)) {
         foreach (SCHEMA_STATEMENTS as $sql) $db->exec($sql);
         foreach (MIGRATIONS as $sql) {
@@ -383,6 +387,79 @@ function rollingMonths(string $todayYmd, int $n): array {
     $keys  = [];
     for ($i = 0, $c = $start; $i < $n; $i++, $c = $c->modify('+1 month')) $keys[] = $c->format('Y-m');
     return [$start->format('Y-m-d'), $first->modify('+1 month')->format('Y-m-d'), $keys];
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Expense sub-categories. One level deep: `categories.parent_id` points at another category
+// in the same household, and a row that has a parent can never be given children.
+// ────────────────────────────────────────────────────────────────────
+
+// Display order for every category picker: each parent immediately followed by its children.
+// Adds a `depth` key (0 or 1). A child whose parent has vanished is shown at top level rather
+// than dropped — losing a category from a picker is worse than showing it unindented.
+function categoryTree(array $cats): array {
+    $topIds = [];
+    $kids   = [];
+    foreach ($cats as $c) {
+        if (empty($c['parent_id'])) $topIds[(int)$c['id']] = true;
+        else                        $kids[(int)$c['parent_id']][] = $c;
+    }
+    $out = [];
+    foreach ($cats as $c) {
+        if (!empty($c['parent_id'])) continue;
+        $c['depth'] = 0; $out[] = $c;
+        foreach ($kids[(int)$c['id']] ?? [] as $k) { $k['depth'] = 1; $out[] = $k; }
+    }
+    foreach ($kids as $pid => $list) {
+        if (isset($topIds[$pid])) continue;
+        foreach ($list as $k) { $k['depth'] = 0; $out[] = $k; }
+    }
+    return $out;
+}
+
+// Fold per-category spend into parent buckets. Each input row carries the category's own
+// columns (cid/name/icon/budget) plus its parent's (pid/pname/picon/pbudget) and `amt`.
+// Child spend lands on the parent's bar — that is the whole point of the feature — and the
+// children come back as sub-lines. A parent that ALSO has direct spend of its own gets a
+// "Direct" sub-line, so the lines under a bar always add up to it.
+// Returns buckets sorted by amount desc, children likewise.
+function rollupCategories(array $rows): array {
+    $out = [];
+    foreach ($rows as $r) {
+        $isChild = !empty($r['pid']);
+        // Both a parent's own row and its children's rows must land on ONE key, or a parent
+        // with direct spend and children would render as two separate bars.
+        $key = 'c' . (int)($isChild ? $r['pid'] : ($r['cid'] ?? 0));
+        if (!isset($out[$key])) {
+            $out[$key] = [
+                'name'     => (string)($isChild ? $r['pname'] : $r['name']),
+                'icon'     => (string)($isChild ? $r['picon'] : $r['icon']),
+                'budget'   => (float)($isChild ? $r['pbudget'] : $r['budget']),
+                'amt'      => 0.0,
+                'children' => [],
+            ];
+        }
+        $out[$key]['amt'] += (float)$r['amt'];
+        if ($isChild) $out[$key]['children'][] = ['name' => (string)$r['name'], 'amt' => (float)$r['amt']];
+    }
+    foreach ($out as $k => $b) {
+        if (!$b['children']) continue;
+        usort($out[$k]['children'], fn($a, $c) => $c['amt'] <=> $a['amt']);
+        $direct = $b['amt'] - array_sum(array_column($b['children'], 'amt'));
+        if ($direct > 0.004) $out[$k]['children'][] = ['name' => 'Direct', 'amt' => round($direct, 2)];
+    }
+    uasort($out, fn($a, $b) => $b['amt'] <=> $a['amt']);
+    return array_values($out);
+}
+
+// What the History and Year breakdowns label "Uncategorised": an expense with no category at
+// all, OR one pointing at a category that has since been deleted. Both look identical in the
+// UI, so every tool that counts, files or clears that bucket must use this one predicate —
+// otherwise the count on screen disagrees with what the button actually touches.
+// Takes the household id twice: once for the row, once for the sub-select.
+function uncategorisedWhere(): string {
+    return "household_id = ? AND (category_id IS NULL OR category_id NOT IN
+            (SELECT id FROM categories WHERE household_id = ?))";
 }
 
 // Confirms the submitted investment type belongs to this household. Rejects free-text.

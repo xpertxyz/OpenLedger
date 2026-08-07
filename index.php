@@ -44,6 +44,39 @@ if (PHP_SAPI === 'cli') {
         assert(rollingMonths('2026-08-07', 12)[2][11] === '2026-08');
         assert(rollingMonths('2026-03-31', 12)[2][11] === '2026-03');  // no month-end overflow
         assert(rollingMonths('2026-01-15', 3)  === ['2025-11-01', '2026-02-01', ['2025-11','2025-12','2026-01']]);
+        // Sub-categories: parents first, each followed by its own children.
+        $flat = [
+            ['id' => 1, 'name' => 'Household', 'parent_id' => null],
+            ['id' => 2, 'name' => 'Rent',      'parent_id' => 1],
+            ['id' => 3, 'name' => 'Transport', 'parent_id' => null],
+            ['id' => 4, 'name' => 'Repairs',   'parent_id' => 1],
+        ];
+        assert(array_column(categoryTree($flat), 'name') === ['Household','Rent','Repairs','Transport']);
+        assert(array_column(categoryTree($flat), 'depth') === [0, 1, 1, 0]);
+        // A child whose parent was deleted still appears, at top level — never dropped.
+        assert(array_column(categoryTree([['id' => 9, 'name' => 'Orphan', 'parent_id' => 77]]), 'name') === ['Orphan']);
+        assert(categoryTree([])  === []);
+
+        // Rollup: child spend lands on the parent's bar and the parent's own spend must not
+        // split it into a second bar. Budget always comes from the parent.
+        $rows = [
+            ['cid'=>2,'name'=>'Rent','icon'=>'home','budget'=>0.0,'pid'=>1,'pname'=>'Household','picon'=>'tag','pbudget'=>9000.0,'amt'=>5000.0],
+            ['cid'=>1,'name'=>'Household','icon'=>'tag','budget'=>9000.0,'pid'=>null,'pname'=>null,'picon'=>null,'pbudget'=>null,'amt'=>250.0],
+            ['cid'=>4,'name'=>'Repairs','icon'=>'zap','budget'=>0.0,'pid'=>1,'pname'=>'Household','picon'=>'tag','pbudget'=>9000.0,'amt'=>1500.0],
+            ['cid'=>3,'name'=>'Transport','icon'=>'car','budget'=>2000.0,'pid'=>null,'pname'=>null,'picon'=>null,'pbudget'=>null,'amt'=>800.0],
+        ];
+        $roll = rollupCategories($rows);
+        assert(count($roll) === 2);                                  // two bars, not three
+        assert($roll[0]['name'] === 'Household' && $roll[0]['amt'] === 6750.0);
+        assert($roll[0]['budget'] === 9000.0 && $roll[0]['icon'] === 'tag');
+        // Sub-lines are sorted, and the parent's own 250 shows as "Direct" so they add up.
+        assert(array_column($roll[0]['children'], 'name') === ['Rent','Repairs','Direct']);
+        assert(array_sum(array_column($roll[0]['children'], 'amt')) === $roll[0]['amt']);
+        assert($roll[1]['name'] === 'Transport' && $roll[1]['children'] === []);
+        // No children, no "Direct" line; uncategorised (cid null) still gets its own bucket.
+        $solo = rollupCategories([['cid'=>null,'name'=>'Uncategorised','icon'=>'tag','budget'=>0.0,'pid'=>null,'pname'=>null,'picon'=>null,'pbudget'=>null,'amt'=>10.0]]);
+        assert(count($solo) === 1 && $solo[0]['children'] === [] && $solo[0]['amt'] === 10.0);
+        assert(rollupCategories([]) === []);
         // Indian grouping: identical to Western up to 5 digits, then diverges.
         assert(groupIndian(0)          === '0.00');
         assert(groupIndian(999.99)     === '999.99');
@@ -145,6 +178,16 @@ if (PHP_SAPI === 'cli') {
             in_array('currency', $ucols, true) ? $line('OK', 'users.currency') : $line('FAIL', 'users.currency missing');
             $ccols = $db->query("SHOW COLUMNS FROM categories")->fetchAll(PDO::FETCH_COLUMN);
             in_array('budget', $ccols, true) ? $line('OK', 'categories.budget') : $line('FAIL', 'categories.budget missing');
+            in_array('parent_id', $ccols, true) ? $line('OK', 'categories.parent_id') : $line('FAIL', 'categories.parent_id missing — sub-categories unavailable');
+            // One level only, and a child must never hold a budget the parent already covers.
+            $bad = (int)$db->query(
+                "SELECT COUNT(*) FROM categories c JOIN categories p ON p.id = c.parent_id WHERE p.parent_id IS NOT NULL"
+            )->fetchColumn();
+            $bad === 0 ? $line('OK', 'no category nested more than one level')
+                       : $line('FAIL', "$bad categor(y/ies) nested two levels deep");
+            $budKids = (int)$db->query("SELECT COUNT(*) FROM categories WHERE parent_id IS NOT NULL AND budget > 0")->fetchColumn();
+            $budKids === 0 ? $line('OK', 'no sub-category carries its own budget')
+                           : $line('WARN', "$budKids sub-categor(y/ies) still carry a budget — the household total will double-count");
             $tcols = $db->query("SHOW COLUMNS FROM investment_types")->fetchAll(PDO::FETCH_COLUMN);
             in_array('archived', $tcols, true) ? $line('OK', 'investment_types.archived') : $line('FAIL', 'investment_types.archived missing');
             // The Invest tab paginates with ORDER BY date DESC — without this composite index it filesorts.
@@ -635,10 +678,96 @@ if ($method === 'POST') {
                 redirect($_POST['back'] ?? '/');
 
             case '/categories/delete':
-                $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
-                   ->execute([(int)$_POST['id'], $hid]);
+                $id = (int)$_POST['id'];
+                $db->beginTransaction();
+                try {
+                    // Children outlive their parent as top-level categories. Leaving them
+                    // pointing at a deleted row would strand their spend in a bar with no name.
+                    $db->prepare("UPDATE categories SET parent_id = NULL WHERE parent_id = ? AND household_id = ?")
+                       ->execute([$id, $hid]);
+                    $db->prepare("DELETE FROM categories WHERE id = ? AND household_id = ? AND is_custom = 1")
+                       ->execute([$id, $hid]);
+                    $db->commit();
+                } catch (Throwable $e) { $db->rollBack(); throw $e; }
                 flash('success', 'Category removed');
                 redirect($_POST['back'] ?? '/');
+
+            case '/categories/uncategorised/delete':
+                // Deletes the expenses themselves — the only irreversible bulk action in the
+                // app, so the UI gates it behind a confirmation carrying the exact count.
+                $delU = $db->prepare("DELETE FROM expenses WHERE " . uncategorisedWhere());
+                $delU->execute([$hid, $hid]);
+                $nU = $delU->rowCount();
+                flash('success', $nU === 0
+                    ? 'Nothing uncategorised to delete'
+                    : "Deleted $nU uncategorised " . ($nU === 1 ? 'expense' : 'expenses'));
+                redirect($_POST['back'] ?? '/organise');
+
+            case '/categories/parent':
+                // Assign or clear a category's parent. One level only, so the target must be
+                // top-level and the category being moved must not have children of its own.
+                $id     = (int)($_POST['id'] ?? 0);
+                $parent = (int)($_POST['parent_id'] ?? 0);
+                if (!ownedId($db, 'categories', $hid, $id)) throw new UserErr('Unknown category.');
+
+                $kids = $db->prepare("SELECT COUNT(*) FROM categories WHERE parent_id = ? AND household_id = ?");
+                $kids->execute([$id, $hid]);
+                if ($parent && (int)$kids->fetchColumn() > 0) {
+                    throw new UserErr('This category already has sub-categories, so it cannot become one itself.');
+                }
+                if ($parent) {
+                    if ($parent === $id) throw new UserErr('A category cannot be its own parent.');
+                    $p = $db->prepare("SELECT parent_id FROM categories WHERE id = ? AND household_id = ?");
+                    $p->execute([$parent, $hid]);
+                    $row = $p->fetch();
+                    if (!$row) throw new UserErr('Unknown parent category.');
+                    if (!empty($row['parent_id'])) throw new UserErr('Sub-categories only go one level deep — pick a top-level category.');
+                }
+
+                // A child never carries its own budget, or the household total counts it twice.
+                $cur = $db->prepare("SELECT name, budget FROM categories WHERE id = ? AND household_id = ?");
+                $cur->execute([$id, $hid]);
+                $me = $cur->fetch();
+                $clearing = $parent && (float)$me['budget'] > 0;
+                $db->prepare("UPDATE categories SET parent_id = ?, budget = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$parent ?: null, $parent ? 0 : (float)$me['budget'], $id, $hid]);
+                flash('success', $parent
+                    ? $me['name'] . ' is now a sub-category'
+                      . ($clearing ? ' — its ' . fmt((float)$me['budget']) . ' budget was cleared, the parent budget now covers it' : '')
+                    : $me['name'] . ' moved back to top level');
+                redirect($_POST['back'] ?? '/organise');
+
+            case '/categories/move':
+                // Bulk re-categorise: every expense in $from becomes $to. Recurring items go
+                // with them, otherwise the next sweep posts straight back into the old category.
+                // from_id 0 is the pseudo-category "Uncategorised" — the one way to file entries
+                // that have no category, or whose category was deleted out from under them.
+                $fromRaw = (int)($_POST['from_id'] ?? 0);
+                $to      = ownedId($db, 'categories', $hid, (int)($_POST['to_id'] ?? 0));
+                if (!$to) throw new UserErr('Pick a category to move into.');
+                $db->beginTransaction();
+                try {
+                    if ($fromRaw === 0) {
+                        $movE = $db->prepare("UPDATE expenses SET category_id = ? WHERE " . uncategorisedWhere());
+                        $movE->execute([$to, $hid, $hid]);
+                        $nE = $movE->rowCount(); $nR = 0;
+                    } else {
+                        $from = ownedId($db, 'categories', $hid, $fromRaw);
+                        if (!$from)        throw new UserErr('Unknown category.');
+                        if ($from === $to) throw new UserErr('Pick two different categories.');
+                        $movE = $db->prepare("UPDATE expenses SET category_id = ? WHERE household_id = ? AND category_id = ?");
+                        $movE->execute([$to, $hid, $from]);
+                        $movR = $db->prepare("UPDATE recurring SET category_id = ? WHERE household_id = ? AND category_id = ? AND kind = 'expense'");
+                        $movR->execute([$to, $hid, $from]);
+                        $nE = $movE->rowCount(); $nR = $movR->rowCount();
+                    }
+                    $db->commit();
+                } catch (Throwable $t) { $db->rollBack(); throw $t; }
+                flash('success', $nE === 0 && $nR === 0
+                    ? 'Nothing to move'
+                    : "Moved $nE " . ($nE === 1 ? 'expense' : 'expenses')
+                      . ($nR ? " and $nR recurring " . ($nR === 1 ? 'item' : 'items') : ''));
+                redirect($_POST['back'] ?? '/organise');
 
             case '/investment-types':
                 $name = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
@@ -755,6 +884,7 @@ switch ($path) {
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
     case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
     case '/earn':      renderEarn($db, $user, isset($_GET['new'])); break;
+    case '/organise':  renderOrganise($db, $user); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;

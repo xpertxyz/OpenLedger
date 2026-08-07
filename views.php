@@ -41,6 +41,7 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
   <symbol id="icon-archive-restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h2"/><path d="M20 8v11a2 2 0 0 1-2 2h-2"/><path d="m9 15 3-3 3 3"/><path d="M12 12v9"/></symbol>
   <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+  <symbol id="icon-corner-left-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="14 9 9 4 4 9"/><path d="M20 20h-7a4 4 0 0 1-4-4V4"/></symbol>
   <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
 </svg>
 SVG;
@@ -221,6 +222,35 @@ $meta
   .bar.over  > i { background:#c0392b; }
   .cat-bar .budget-note { font-size:11px; color:var(--color-neutral-800); margin-top:5px; display:flex; justify-content:space-between; gap:8px; }
   .cat-bar .budget-note .over-amt { color:#c0392b; font-weight:600; }
+  /* Category tree on /organise. One card per top-level category; children hang off a spine
+     drawn with borders rather than ├─ glyphs, so it lines up at any font size. */
+  .tree-node { padding: 10px 12px; gap:0; }
+  .tree-head { display:flex; align-items:center; gap:4px; }
+  .tree-head .tree-name { font-size:14px; font-weight:600; }
+  /* Inline edit row — name always, budget on parents only. */
+  .tree-row { display:flex; align-items:center; gap:6px; margin:0; flex:1; min-width:0; }
+  .tree-row .input { flex:1; min-width:0; padding:6px 10px; font-size:13px; }
+  .tree-row .budget-in { flex:0 0 62px; text-align:right; padding:6px 8px; }
+  .tree-metaline { font-size:11px; color:var(--color-neutral-800); padding: 4px 2px 2px 26px; }
+  .tree-ico { display:inline-flex; color:var(--color-accent-700); flex-shrink:0; }
+  .tree-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tree-meta { font-size:11px; color:var(--color-neutral-800); flex-shrink:0; }
+  .tree-kid { position:relative; display:flex; align-items:center; gap:8px; padding-left:24px; min-height:32px; }
+  .tree-kid .tree-name { font-size:13px; }
+  .tree-kid .tree-ico { color:var(--color-neutral-700); }
+  /* Elbow: down from the row above, then right into the icon. */
+  .tree-kid::before { content:''; position:absolute; left:8px; top:0; height:50%; width:10px;
+                      border-left:1.5px solid var(--color-divider);
+                      border-bottom:1.5px solid var(--color-divider);
+                      border-bottom-left-radius:6px; }
+  /* Spine continuing past this row to the next sibling — .last is set server-side because the
+     card can hold other markup after the children. */
+  .tree-kid:not(.last)::after { content:''; position:absolute; left:8px; top:50%; bottom:0;
+                                border-left:1.5px solid var(--color-divider); }
+
+  /* Sub-category lines under a rolled-up parent bar. They always sum to the bar. */
+  .cat-bar .sub-line { display:flex; justify-content:space-between; gap:8px; font-size:11.5px;
+                       color:var(--color-neutral-800); margin-top:5px; padding-left:2px; }
 
   /* Invest tab: three-up active / archived / total summary.
      Same trap as .row.card — the design system's .card is flex-direction:column. */
@@ -279,16 +309,20 @@ $meta
   .tag-archived { font-size:10px; padding:1px 7px; border-radius:999px; background:var(--color-neutral-300); color:var(--color-neutral-800); margin-left:6px; vertical-align:1px; }
   .day-hdr { font-family:var(--font-heading); font-size:14px; color:var(--color-neutral-800); margin: var(--space-3) 2px var(--space-2); }
 
-  .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:100; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
+  /* Toasts drop in from the top and leave upwards. env() keeps them clear of a notch —
+     the viewport is viewport-fit=cover, so without it they'd sit under the status bar.
+     z-index outranks the profile drawer (201): half the actions that flash a toast are
+     drawer forms, and a toast rendered behind the drawer may as well not exist. */
+  .toast { position:fixed; left:50%; top: calc(env(safe-area-inset-top, 0px) + 12px); transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:250; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
   .toast.success { background:var(--color-accent-2-700); color:var(--color-bg); }
   .toast.error   { background:var(--color-accent-700); color:var(--color-bg); animation: toast-life-long 3.6s forwards; }
   @keyframes toast-life {
-    0%{opacity:0;transform:translate(-50%,8px);} 10%{opacity:1;transform:translate(-50%,0);}
-    80%{opacity:1;} 100%{opacity:0;}
+    0%{opacity:0;transform:translate(-50%,-10px);} 10%{opacity:1;transform:translate(-50%,0);}
+    80%{opacity:1;transform:translate(-50%,0);} 100%{opacity:0;transform:translate(-50%,-10px);}
   }
   @keyframes toast-life-long {
-    0%{opacity:0;transform:translate(-50%,8px);} 5%{opacity:1;transform:translate(-50%,0);}
-    90%{opacity:1;} 100%{opacity:0;}
+    0%{opacity:0;transform:translate(-50%,-10px);} 5%{opacity:1;transform:translate(-50%,0);}
+    90%{opacity:1;transform:translate(-50%,0);} 100%{opacity:0;transform:translate(-50%,-10px);}
   }
 
   .tabnav { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); width:calc(100% - 32px); max-width:448px; background:var(--color-surface); border-radius:999px; padding:6px; display:flex; gap:2px; box-shadow:var(--shadow-md); box-sizing:border-box; }
@@ -440,8 +474,6 @@ DLG;
 // Right-side drawer — replaces the old /manage page. All account/household controls live here.
 function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $hid = (int)$user['household_id'];
-    $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
-    $cats->execute([$hid]); $cats = $cats->fetchAll();
     $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
     $mems->execute([$hid]); $mems = $mems->fetchAll();
     $canDeleteMember = count($mems) > 1;
@@ -485,6 +517,14 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <span>Yearly summary</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
+          <!-- Expense categories are managed entirely on /organise — rename, budget, nest,
+               delete. Keeping a second copy of those controls here would mean two places to
+               fix every time the rules change. -->
+          <a class="drawer-nav" href="/organise">
+            <span class="ico"><?= icon('tag', 18) ?></span>
+            <span>Organise expense categories</span>
+            <span class="chev"><?= icon('chevron-right', 16) ?></span>
+          </a>
         </section>
 
         <hr>
@@ -498,52 +538,6 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <button class="btn btn-primary" type="submit">Save</button>
           </form>
         </section>
-
-        <hr>
-
-        <details>
-          <summary><h4>Categories</h4></summary>
-          <div class="details-body">
-            <div class="muted" style="font-size:11.5px;">Set a monthly budget per category. Blank or 0 means no budget — spending is never blocked either way.</div>
-            <?php foreach ($cats as $c): ?>
-              <div class="cat-row">
-                <form method="post" action="/categories/update">
-                  <?= csrfInput() ?>
-                  <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
-                  <input type="hidden" name="back" value="<?= $back ?>">
-                  <div class="cat-icon-mini"><?= icon($c['icon'], 14) ?></div>
-                  <input class="input" name="name" value="<?= h($c['name']) ?>" maxlength="50">
-                  <input class="input budget-in" name="budget" type="text" inputmode="decimal"
-                         pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
-                         value="<?= (float)$c['budget'] > 0 ? h(rtrim(rtrim(number_format((float)$c['budget'], 2, '.', ''), '0'), '.')) : '' ?>"
-                         placeholder="<?= h($currency) ?>" aria-label="Monthly budget for <?= h($c['name']) ?>">
-                  <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
-                </form>
-                <?php if ($c['is_custom']): ?>
-                  <button type="button" class="icon-btn" aria-label="Delete category"
-                          onclick='askConfirm(<?= h(json_encode([
-                              "action" => "/categories/delete",
-                              "id"     => (int)$c['id'],
-                              "back"   => strtok($requestUri, '#') . '#profile',
-                              "csrf"   => csrfToken(),
-                              "title"  => "Delete category?",
-                              "body"   => "Existing expenses in this category stay logged but become uncategorised: " . $c['name'],
-                              "ok"     => "Delete",
-                          ])) ?>)'><?= icon('trash-2', 14) ?></button>
-                <?php endif; ?>
-              </div>
-            <?php endforeach; ?>
-            <form method="post" action="/categories" class="row-form" style="margin-top:6px;">
-              <?= csrfInput() ?>
-              <input type="hidden" name="back" value="<?= $back ?>">
-              <input class="input" name="name" placeholder="New category" maxlength="50">
-              <input class="input budget-in" name="budget" type="text" inputmode="decimal"
-                     pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
-                     placeholder="<?= h($currency) ?>" aria-label="Monthly budget">
-              <button class="btn btn-primary" type="submit">Add</button>
-            </form>
-          </div>
-        </details>
 
         <hr>
 
@@ -820,11 +814,20 @@ function renderAdd(PDO $db, array $user): void {
     $selectedMem = (int)($_GET['mem'] ?? ($mems[0]['id'] ?? 0));
     $showNewCat  = isset($_GET['newcat']);
 
+    // The grid holds top-level categories only; children hang off their parent in a pill row
+    // that appears when that parent is picked. A sticky child selection therefore has to light
+    // up its parent's chip as well as its own pill.
+    $kids = [];
+    foreach ($cats as $c) if (!empty($c['parent_id'])) $kids[(int)$c['parent_id']][] = $c;
+    $byId = array_column($cats, null, 'id');
+    $selectedParent = (int)($byId[$selectedCat]['parent_id'] ?? 0) ?: $selectedCat;
+    $cats = array_values(array_filter($cats, fn($c) => empty($c['parent_id'])));
+
     // Selected category sorts first, rest keep their original order.
-    if ($selectedCat) {
-        usort($cats, function ($a, $b) use ($selectedCat) {
-            $aSel = $a['id'] == $selectedCat ? 0 : 1;
-            $bSel = $b['id'] == $selectedCat ? 0 : 1;
+    if ($selectedParent) {
+        usort($cats, function ($a, $b) use ($selectedParent) {
+            $aSel = $a['id'] == $selectedParent ? 0 : 1;
+            $bSel = $b['id'] == $selectedParent ? 0 : 1;
             return $aSel <=> $bSel;
         });
     }
@@ -853,10 +856,10 @@ function renderAdd(PDO $db, array $user): void {
       <input type="hidden" name="category_id" id="cat-input" value="<?= (int)$selectedCat ?>">
       <div class="cat-grid">
         <?php foreach ($cats as $c): ?>
-          <button type="button" class="cat-chip<?= $c['id'] == $selectedCat ? ' on' : '' ?>"
-                  onclick="document.getElementById('cat-input').value=<?= (int)$c['id'] ?>;document.querySelectorAll('.cat-chip').forEach(e=>e.classList.remove('on'));this.classList.add('on');">
+          <button type="button" class="cat-chip<?= $c['id'] == $selectedParent ? ' on' : '' ?>"
+                  data-cat="<?= (int)$c['id'] ?>" onclick="pickCat(this)">
             <?= icon($c['icon'], 21) ?>
-            <span><?= h($c['name']) ?></span>
+            <span><?= h($c['name']) ?><?= isset($kids[(int)$c['id']]) ? ' <span style="opacity:.55">▾</span>' : '' ?></span>
           </button>
         <?php endforeach; ?>
         <?php if ($showNewCat): ?>
@@ -869,12 +872,27 @@ function renderAdd(PDO $db, array $user): void {
         <?php endif; ?>
       </div>
 
+      <?php foreach ($kids as $pid => $list): ?>
+        <!-- One row per parent, all rendered up front and toggled client-side — picking a
+             category shouldn't cost a page load. "General" posts the parent's own id. -->
+        <div class="pill-row sub-row" id="sub-<?= (int)$pid ?>" <?= $pid == $selectedParent ? '' : 'hidden' ?>>
+          <button type="button" class="pill-btn<?= $selectedCat == $pid ? ' on' : '' ?>"
+                  data-cat="<?= (int)$pid ?>" onclick="pickSub(this)">General</button>
+          <?php foreach ($list as $k): ?>
+            <button type="button" class="pill-btn<?= $selectedCat == $k['id'] ? ' on' : '' ?>"
+                    data-cat="<?= (int)$k['id'] ?>" onclick="pickSub(this)"><?= h($k['name']) ?></button>
+          <?php endforeach; ?>
+        </div>
+      <?php endforeach; ?>
+
       <?php if (count($mems) > 1): ?>
         <input type="hidden" name="member_id" id="mem-input" value="<?= (int)$selectedMem ?>">
         <div class="pill-row">
           <?php foreach ($mems as $m): ?>
             <button type="button" class="pill-btn<?= $m['id'] == $selectedMem ? ' on' : '' ?>"
-                    onclick="document.getElementById('mem-input').value=<?= (int)$m['id'] ?>;document.querySelectorAll('.pill-row .pill-btn').forEach(e=>e.classList.remove('on'));this.classList.add('on');">
+                    <!-- Scoped to this row: a global .pill-row sweep would also clear the
+                         sub-category pills sitting in their own row above. -->
+                    onclick="document.getElementById('mem-input').value=<?= (int)$m['id'] ?>;this.parentNode.querySelectorAll('.pill-btn').forEach(e=>e.classList.remove('on'));this.classList.add('on');">
               <?= h($m['name']) ?>
             </button>
           <?php endforeach; ?>
@@ -883,6 +901,27 @@ function renderAdd(PDO $db, array $user): void {
         <input type="hidden" name="member_id" value="<?= (int)$mems[0]['id'] ?>">
       <?php endif; ?>
     </form>
+
+    <script>
+    function pickCat(el) {
+      document.querySelectorAll('.cat-grid .cat-chip').forEach(e => e.classList.remove('on'));
+      el.classList.add('on');
+      document.getElementById('cat-input').value = el.dataset.cat;
+      document.querySelectorAll('.sub-row').forEach(r => r.hidden = true);
+      var row = document.getElementById('sub-' + el.dataset.cat);
+      // Reopening a parent resets to "General" — the previously picked child would otherwise
+      // stay lit while the hidden input now holds the parent.
+      if (row) {
+        row.hidden = false;
+        row.querySelectorAll('.pill-btn').forEach((b, i) => b.classList.toggle('on', i === 0));
+      }
+    }
+    function pickSub(el) {
+      document.getElementById('cat-input').value = el.dataset.cat;
+      el.parentNode.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('on'));
+      el.classList.add('on');
+    }
+    </script>
 
     <?php if ($showNewCat): ?>
       <form method="post" action="/categories" id="new-cat-form" style="display:none;">
@@ -933,20 +972,25 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     // ponytail: a budgeted category with zero spend this month is absent from this grouping,
     // so it shows no bar. Under-budget-with-no-spend needs no warning; if a full "every budget,
     // spent or not" view is wanted later, LEFT JOIN from categories instead of from expenses.
+    // Grouped per category, then folded onto parents in PHP — a sub-category's spend belongs
+    // on its parent's bar and against its parent's budget.
     $catStmt = $db->prepare(
-        "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS cat_name,
-                COALESCE(c.icon, 'tag') AS cat_icon, COALESCE(c.budget, 0) AS budget,
+        "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS name,
+                COALESCE(c.icon, 'tag') AS icon, COALESCE(c.budget, 0) AS budget,
+                p.id AS pid, p.name AS pname, p.icon AS picon, p.budget AS pbudget,
                 SUM(e.amount) AS amt
-         FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
+         FROM expenses e
+         LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         LEFT JOIN categories p ON p.id = c.parent_id AND p.household_id = c.household_id
          WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
-         GROUP BY c.id, c.name, c.icon, c.budget
-         ORDER BY amt DESC"
+         GROUP BY c.id, c.name, c.icon, c.budget, p.id, p.name, p.icon, p.budget"
     );
     $catStmt->execute([$hid, $monthStart, $monthEnd]);
-    $byCat = $catStmt->fetchAll();
+    $byCat = rollupCategories($catStmt->fetchAll());
 
-    // Household budget = sum of every category budget, including ones with no spend this month.
-    $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ?");
+    // Household budget = sum of every top-level category budget, including ones with no spend
+    // this month. Children are held at 0 budget, but scope it anyway so a stale row can't double-count.
+    $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ? AND parent_id IS NULL");
     $budStmt->execute([$hid]);
     $budgetTotal = (float)$budStmt->fetchColumn();
 
@@ -964,8 +1008,8 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $expenses = $rows->fetchAll();
 
     // For the edit-expense modal.
-    $catList = $db->prepare("SELECT id, name FROM categories WHERE household_id = ? ORDER BY is_custom, id");
-    $catList->execute([$hid]); $catList = $catList->fetchAll();
+    $catList = $db->prepare("SELECT id, name, parent_id FROM categories WHERE household_id = ? ORDER BY is_custom, id");
+    $catList->execute([$hid]); $catList = categoryTree($catList->fetchAll());
     $memList = $db->prepare("SELECT id, name FROM members WHERE household_id = ? ORDER BY id");
     $memList->execute([$hid]); $memList = $memList->fetchAll();
 
@@ -1010,10 +1054,16 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         ?>
           <div class="card cat-bar">
             <div class="top">
-              <div class="name"><?= icon($c['cat_icon'], 18) ?> <?= h($c['cat_name']) ?></div>
+              <div class="name"><?= icon($c['icon'], 18) ?> <?= h($c['name']) ?></div>
               <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
             <div class="bar<?= $barCls ?>"><i style="width: <?= number_format(max(2, $barPct), 2) ?>%"></i></div>
+            <?php foreach ($c['children'] as $k): ?>
+              <div class="sub-line">
+                <span>↳ <?= h($k['name']) ?></span>
+                <span><?= h(fmt((float)$k['amt'])) ?></span>
+              </div>
+            <?php endforeach; ?>
             <?php if ($budget > 0): $left = $budget - $amt; ?>
               <div class="budget-note">
                 <span><?= h(fmt($budget)) ?> budget · <?= number_format(($amt / $budget) * 100, 0) ?>% used</span>
@@ -1110,7 +1160,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 
         <select class="select" name="category_id" id="ed-category" required>
           <?php foreach ($catList as $c): ?>
-            <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+            <option value="<?= (int)$c['id'] ?>"><?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?></option>
           <?php endforeach; ?>
         </select>
 
@@ -1759,12 +1809,16 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 
     // Breakdowns for the whole period.
     $catStmt = $db->prepare(
-        "SELECT COALESCE(c.name, 'Uncategorised') AS name, COALESCE(c.icon, 'tag') AS ic, SUM(e.amount) AS amt
-         FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
+        "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS name, COALESCE(c.icon, 'tag') AS icon,
+                0 AS budget, p.id AS pid, p.name AS pname, p.icon AS picon, 0 AS pbudget,
+                SUM(e.amount) AS amt
+         FROM expenses e
+         LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         LEFT JOIN categories p ON p.id = c.parent_id AND p.household_id = c.household_id
          WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
-         GROUP BY c.id, c.name, c.icon ORDER BY amt DESC"
+         GROUP BY c.id, c.name, c.icon, p.id, p.name, p.icon"
     );
-    $catStmt->execute([$hid, $start, $end]); $byCat = $catStmt->fetchAll();
+    $catStmt->execute([$hid, $start, $end]); $byCat = rollupCategories($catStmt->fetchAll());
 
     $ernStmt = $db->prepare(
         "SELECT COALESCE(c.name, 'Uncategorised') AS name, SUM(e.amount) AS amt
@@ -1910,10 +1964,13 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
           <?php foreach ($byCat as $c): $amt = (float)$c['amt']; $pct = $expTotal > 0 ? ($amt / $expTotal) * 100 : 0; ?>
             <div class="card cat-bar">
               <div class="top">
-                <div class="name"><?= icon($c['ic'], 18) ?> <?= h($c['name']) ?></div>
+                <div class="name"><?= icon($c['icon'], 18) ?> <?= h($c['name']) ?></div>
                 <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
               </div>
               <div class="bar"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+              <?php foreach ($c['children'] as $k): ?>
+                <div class="sub-line"><span>↳ <?= h($k['name']) ?></span><span><?= h(fmt((float)$k['amt'])) ?></span></div>
+              <?php endforeach; ?>
             </div>
           <?php endforeach; ?>
         </div>
@@ -1949,7 +2006,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
-    $cats->execute([$hid]); $cats = $cats->fetchAll();
+    $cats->execute([$hid]); $cats = categoryTree($cats->fetchAll());
     // Same split as the Invest tab: new recurring investments can only target a live type,
     // but the edit dialog lists archived ones so an existing item keeps its type on save.
     $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
@@ -1985,7 +2042,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
                  oninput="document.getElementById('rec-save').disabled = !(document.getElementById('rec-name').value.trim() && parseFloat(this.value) > 0)">
           <select class="select" name="category_id" id="rec-cat">
             <?php foreach ($cats as $c): ?>
-              <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+              <option value="<?= (int)$c['id'] ?>"><?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?></option>
             <?php endforeach; ?>
           </select>
           <select class="select" name="type" id="rec-type" style="display:none;">
@@ -2093,7 +2150,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             <input class="input" name="amount" id="er-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
             <select class="select" name="category_id" id="er-category">
               <?php foreach ($cats as $c): ?>
-                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
+                <option value="<?= (int)$c['id'] ?>"><?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?></option>
               <?php endforeach; ?>
             </select>
             <select class="select" name="type" id="er-type" style="display:none;">
@@ -2150,6 +2207,313 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <?php
     $content = ob_get_clean();
     layout($db, $user, 'recurring', $content, '/recurring');
+}
+
+// ─── Organise categories ────────────────────────────────────────────
+// Two jobs the profile drawer has no room for: merging one category's entries into another,
+// and nesting a category under a parent.
+function renderOrganise(PDO $db, array $user): void {
+    $hid = (int)$user['household_id'];
+    $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
+    $cats->execute([$hid]); $cats = $cats->fetchAll();
+    $tree = categoryTree($cats);
+
+    // Entry counts drive the "Move 23 expenses" button label, so the tap is never blind.
+    $s = $db->prepare("SELECT category_id, COUNT(*) n FROM expenses WHERE household_id = ? GROUP BY category_id");
+    $s->execute([$hid]); $counts = array_column($s->fetchAll(), 'n', 'category_id');
+    // Same predicate the delete/move tools use, so the number on screen is exactly what they touch.
+    $u = $db->prepare("SELECT COUNT(*) FROM expenses WHERE " . uncategorisedWhere());
+    $u->execute([$hid, $hid]); $nUncat = (int)$u->fetchColumn();
+    $currency = $_SESSION['currency'] ?? '₹';
+    // Children grouped under their parent — the tree renders one card per top-level category.
+    $kids = [];
+    foreach ($cats as $c) if (!empty($c['parent_id'])) $kids[(int)$c['parent_id']][] = $c;
+    $kidCount = array_map('count', $kids);
+    $tops = array_values(array_filter($cats, fn($c) => empty($c['parent_id'])));
+    // Categories that actually have children lead, so the hierarchy is the first thing on the
+    // page rather than something you scroll to find. Ties keep their usual order.
+    usort($tops, fn($a, $b) => ($kidCount[(int)$b['id']] ?? 0) <=> ($kidCount[(int)$a['id']] ?? 0));
+
+    ob_start();
+    ?>
+    <div class="month-switch">
+      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <div class="label" style="font-size:16px;">Organise expense categories</div>
+      <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
+    </div>
+
+    <div class="muted" style="font-size:12px; margin: 0 2px;">
+      Rename, budget, nest and delete — everything about expense categories lives here.
+      A sub-category's spending rolls up into its parent's bar and budget, so only parents carry one.
+    </div>
+
+    <div class="stack">
+      <?php foreach ($tops as $t):
+        $list  = $kids[(int)$t['id']] ?? [];
+        $nAll  = (int)($counts[$t['id']] ?? 0);
+        foreach ($list as $k) $nAll += (int)($counts[$k['id']] ?? 0);
+      ?>
+        <div class="card tree-node">
+          <div class="tree-head">
+            <form method="post" action="/categories/update" class="tree-row">
+              <?= csrfInput() ?>
+              <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+              <input type="hidden" name="back" value="/organise">
+              <span class="tree-ico"><?= icon($t['icon'], 16) ?></span>
+              <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="50" aria-label="Category name">
+              <input class="input budget-in" name="budget" type="text" inputmode="decimal"
+                     pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+                     value="<?= (float)$t['budget'] > 0 ? h(rtrim(rtrim(number_format((float)$t['budget'], 2, '.', ''), '0'), '.')) : '' ?>"
+                     placeholder="<?= h($currency) ?>" aria-label="Monthly budget for <?= h($t['name']) ?>">
+              <button class="icon-btn" type="submit" aria-label="Save <?= h($t['name']) ?>"><?= icon('check', 15) ?></button>
+            </form>
+            <?php if ($t['is_custom']): ?>
+              <button type="button" class="icon-btn" aria-label="Delete <?= h($t['name']) ?>"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/categories/delete",
+                          "id"     => (int)$t['id'],
+                          "back"   => "/organise",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Delete " . $t['name'] . "?",
+                          "body"   => ($nAll === 0 ? 'Nothing is logged under it.' : "Its $nAll entr" . ($nAll === 1 ? 'y stays' : 'ies stay') . ' logged but become uncategorised.')
+                                      . ($list ? ' Its ' . (count($list) === 1 ? 'sub-category moves' : count($list) . ' sub-categories move') . ' back to top level.' : ''),
+                          "ok"     => "Delete",
+                      ])) ?>)'><?= icon('trash-2', 14) ?></button>
+            <?php endif; ?>
+          </div>
+          <div class="tree-metaline">
+            <?php if ((float)$t['budget'] > 0): ?><?= h(fmtShort((float)$t['budget'])) ?> budget · <?php endif; ?>
+            <?= $nAll ?> <?= $nAll === 1 ? 'entry' : 'entries' ?><?= $list ? ' incl. sub' : '' ?>
+            <?= $t['is_custom'] ? '' : ' · built-in' ?>
+          </div>
+
+          <?php foreach ($list as $i => $k): $nK = (int)($counts[$k['id']] ?? 0); ?>
+            <div class="tree-kid<?= $i === count($list) - 1 ? ' last' : '' ?>">
+              <form method="post" action="/categories/update" class="tree-row">
+                <?= csrfInput() ?>
+                <input type="hidden" name="id" value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="back" value="/organise">
+                <!-- No budget field: /categories/update reads a missing `budget` as blank, which
+                     parseBudget turns into 0 — exactly what a sub-category must hold. -->
+                <span class="tree-ico"><?= icon($k['icon'], 14) ?></span>
+                <input class="input" name="name" value="<?= h($k['name']) ?>" maxlength="50" aria-label="Sub-category name">
+                <span class="tree-meta"><?= $nK ?></span>
+                <button class="icon-btn" type="submit" aria-label="Save <?= h($k['name']) ?>"><?= icon('check', 15) ?></button>
+              </form>
+              <!-- The shared dialog posts _csrf + id + back and nothing else. That is exactly
+                   right here: a missing parent_id reads as 0, which is how the handler spells
+                   "back to top level". -->
+              <button type="button" class="icon-btn" title="Move out to top level"
+                      aria-label="Move <?= h($k['name']) ?> out of <?= h($t['name']) ?>"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/categories/parent",
+                          "id"     => (int)$k['id'],
+                          "back"   => "/organise",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Move " . $k['name'] . " out?",
+                          // No possessive on the parent name — half of them already end in "s".
+                          "body"   => $k['name'] . ' becomes a top-level category again'
+                                      . ($nK ? ", keeping its $nK entr" . ($nK === 1 ? 'y' : 'ies') : '')
+                                      . '. Its spending stops rolling up into ' . $t['name']
+                                      . ', so it no longer counts against that budget — and it can carry one of its own again.',
+                          "ok"     => "Move out",
+                          "danger" => false,
+                      ])) ?>)'><?= icon('corner-left-up', 14) ?></button>
+              <?php if ($k['is_custom']): ?>
+                <button type="button" class="icon-btn" aria-label="Delete <?= h($k['name']) ?>"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/categories/delete",
+                            "id"     => (int)$k['id'],
+                            "back"   => "/organise",
+                            "csrf"   => csrfToken(),
+                            "title"  => "Delete " . $k['name'] . "?",
+                            "body"   => $nK === 0 ? 'Nothing is logged under it.'
+                                      : "Its $nK entr" . ($nK === 1 ? 'y stays' : 'ies stay') . ' logged but become uncategorised — they will not fall back to ' . $t['name'] . '.',
+                            "ok"     => "Delete",
+                        ])) ?>)'><?= icon('trash-2', 14) ?></button>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endforeach; ?>
+    </div>
+
+    <form method="post" action="/categories" class="row-form" style="margin-top:2px;">
+      <?= csrfInput() ?>
+      <input type="hidden" name="back" value="/organise">
+      <input class="input" name="name" placeholder="New category" maxlength="50">
+      <input class="input budget-in" name="budget" type="text" inputmode="decimal"
+             pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+             placeholder="<?= h($currency) ?>" aria-label="Monthly budget">
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+
+    <?php
+    // Only a category with no children of its own can become one — one level, enforced server-side.
+    $nestable = array_values(array_filter($cats, fn($c) => ($kidCount[(int)$c['id']] ?? 0) === 0));
+    ?>
+    <?php if ($nestable && count($tops) > 1): ?>
+      <div class="day-hdr">Nest a category</div>
+      <form method="post" action="/categories/parent" class="card stack" id="nest-form"
+            style="padding:var(--space-4); gap:10px;" onsubmit="return askNest(event)">
+        <?= csrfInput() ?>
+        <input type="hidden" name="back" value="/organise">
+        <div class="field-row" style="align-items:center; gap:6px;">
+          <select class="select" name="id" id="nest-id" onchange="syncNest()">
+            <?php foreach ($nestable as $c): ?>
+              <!-- data-budget drives the confirmation: nesting zeroes a budget, and that value
+                   is the one thing here you can't get back with a second tap. -->
+              <option value="<?= (int)$c['id'] ?>" data-budget="<?= h((float)$c['budget'] > 0 ? fmt((float)$c['budget']) : '') ?>"><?= h($c['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="muted" style="flex:0 0 auto; font-size:12px;">under</span>
+          <select class="select" name="parent_id" id="nest-parent" onchange="syncNest()">
+            <?php foreach ($tops as $p): ?>
+              <option value="<?= (int)$p['id'] ?>"><?= h($p['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="muted" style="font-size:11.5px;" id="nest-note"></div>
+        <button class="btn btn-primary btn-block" type="submit" id="nest-btn">Nest</button>
+      </form>
+    <?php endif; ?>
+
+    <div class="day-hdr">Move entries</div>
+    <form method="post" action="/categories/move" id="move-form" class="card stack"
+          style="padding:var(--space-4); gap:10px;" onsubmit="return askMove(event)">
+      <?= csrfInput() ?>
+      <input type="hidden" name="back" value="/organise">
+      <div class="muted" style="font-size:12px;">Merge one category into another. Every expense moves, and so does any recurring item that posts into it. The emptied category stays — delete it from the profile drawer if you're done with it.</div>
+      <label class="muted" style="font-size:11px;">From</label>
+      <select class="select" name="from_id" id="move-from" onchange="syncMove()">
+        <?php if ($nUncat > 0): ?>
+          <!-- id 0 is the pseudo-category; the handler maps it to uncategorisedWhere(). -->
+          <option value="0" data-n="<?= $nUncat ?>" data-name="Uncategorised">Uncategorised (<?= $nUncat ?>)</option>
+        <?php endif; ?>
+        <?php foreach ($tree as $c): $n = (int)($counts[$c['id']] ?? 0); ?>
+          <option value="<?= (int)$c['id'] ?>" data-n="<?= $n ?>" data-name="<?= h($c['name']) ?>">
+            <?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?> (<?= $n ?>)
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <label class="muted" style="font-size:11px;">To</label>
+      <select class="select" name="to_id" id="move-to" onchange="syncMove()">
+        <?php foreach ($tree as $c): ?>
+          <option value="<?= (int)$c['id'] ?>" data-name="<?= h($c['name']) ?>">
+            <?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <button class="btn btn-primary btn-block" type="submit" id="move-btn">Move entries</button>
+    </form>
+
+    <?php if ($nUncat > 0): ?>
+      <div class="card cat-bar">
+        <div class="top">
+          <div class="name"><?= icon('more-horizontal', 18) ?> Uncategorised</div>
+          <div><span class="amt"><?= $nUncat ?> <?= $nUncat === 1 ? 'entry' : 'entries' ?></span></div>
+        </div>
+        <div class="muted" style="font-size:11.5px; margin-top:6px;">
+          Expenses with no category, or whose category was deleted. File them somewhere with
+          <strong>Move entries</strong> above — "Uncategorised" is the first option in the From list.
+        </div>
+        <button type="button" class="btn btn-danger btn-block" style="margin-top:10px;"
+                onclick='askConfirm(<?= h(json_encode([
+                    "action" => "/categories/uncategorised/delete",
+                    "back"   => "/organise",
+                    "csrf"   => csrfToken(),
+                    "title"  => "Delete uncategorised expenses?",
+                    "body"   => "This permanently deletes " . $nUncat . ($nUncat === 1 ? ' expense' : ' expenses')
+                                . ", not just their category. There is no undo. To keep the money logged, cancel and use Move entries instead.",
+                    "ok"     => "Delete " . $nUncat,
+                ])) ?>)'>Delete <?= $nUncat ?> uncategorised <?= $nUncat === 1 ? 'entry' : 'entries' ?></button>
+      </div>
+    <?php endif; ?>
+
+    <!-- Own dialog rather than the shared askConfirm(): that one posts a fixed id/back pair,
+         and this needs two selects' worth of state. -->
+    <dialog id="move-dlg" class="confirm" aria-labelledby="move-title">
+      <form method="dialog">
+        <div class="dlg-title" id="move-title">Move entries?</div>
+        <div class="dlg-body" id="move-body"></div>
+        <div class="dlg-actions">
+          <button type="submit" class="btn btn-secondary" value="cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="doMove()">Move</button>
+        </div>
+      </form>
+    </dialog>
+    <!-- Its own dialog, not askConfirm(): that one posts a fixed id/back pair and this needs
+         the parent from a second select. -->
+    <dialog id="nest-dlg" class="confirm" aria-labelledby="nest-title">
+      <form method="dialog">
+        <div class="dlg-title" id="nest-title"></div>
+        <div class="dlg-body" id="nest-dlg-body"></div>
+        <div class="dlg-actions">
+          <button type="submit" class="btn btn-secondary" value="cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="doNest()">Nest</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+    function syncMove() {
+      var f = document.getElementById('move-from'), t = document.getElementById('move-to');
+      var n = parseInt(f.selectedOptions[0].dataset.n || '0', 10);
+      var same = f.value === t.value;
+      var btn = document.getElementById('move-btn');
+      btn.disabled = same || n === 0;
+      btn.textContent = same ? 'Pick two different categories'
+                     : n === 0 ? 'Nothing to move'
+                     : 'Move ' + n + (n === 1 ? ' expense' : ' expenses');
+    }
+    function askMove(e) {
+      e.preventDefault();
+      var f = document.getElementById('move-from'), t = document.getElementById('move-to');
+      document.getElementById('move-body').textContent =
+        'Every expense in "' + f.selectedOptions[0].dataset.name + '" moves to "' +
+        t.selectedOptions[0].dataset.name + '", along with any recurring item that posts into it. ' +
+        'Moving them back afterwards would also carry entries that were already there.';
+      document.getElementById('move-dlg').showModal();
+      return false;
+    }
+    function doMove() {
+      document.getElementById('move-dlg').close();
+      document.getElementById('move-form').submit();
+    }
+    function syncNest() {
+      var c = document.getElementById('nest-id'), p = document.getElementById('nest-parent');
+      if (!c) return;
+      var same = c.value === p.value;
+      var btn = document.getElementById('nest-btn');
+      btn.disabled = same;
+      btn.textContent = same ? 'Pick a different parent'
+                             : 'Nest ' + c.selectedOptions[0].text + ' under ' + p.selectedOptions[0].text;
+      document.getElementById('nest-note').textContent = same ? ''
+        : c.selectedOptions[0].text + ' keeps its own entries; they just roll up into '
+          + p.selectedOptions[0].text + ' from then on.';
+    }
+    function askNest(e) {
+      e.preventDefault();
+      var c = document.getElementById('nest-id'), p = document.getElementById('nest-parent');
+      var kid = c.selectedOptions[0].text, par = p.selectedOptions[0].text;
+      var bud = c.selectedOptions[0].dataset.budget;
+      document.getElementById('nest-title').textContent = 'Nest ' + kid + ' under ' + par + '?';
+      document.getElementById('nest-dlg-body').textContent =
+        kid + ' keeps its own entries, but its spending now rolls up into ' + par +
+        ' and counts against that budget instead of standing on its own.' +
+        // The budget is the one part that can't be undone by moving it back out.
+        (bud ? ' Its ' + bud + ' monthly budget will be cleared — sub-categories don’t carry one.' : '');
+      document.getElementById('nest-dlg').showModal();
+      return false;
+    }
+    function doNest() {
+      document.getElementById('nest-dlg').close();
+      document.getElementById('nest-form').submit();
+    }
+    syncMove(); syncNest();
+    </script>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'organise', $content, '/organise');
 }
 
 // ─── Terms & Conditions ─────────────────────────────────────────────
