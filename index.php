@@ -16,6 +16,34 @@ if (PHP_SAPI === 'cli') {
         assert(advanceDate('2026-01-15', 'monthly')   === '2026-02-15');
         assert(advanceDate('2026-01-15', 'quarterly') === '2026-04-15');
         assert(advanceDate('2026-01-15', 'yearly')    === '2027-01-15');
+        // Month math clamps instead of overflowing: plain PHP "+1 month" from Jan 31 lands on
+        // Mar 3, so a monthly item would never post in February and would drift after that.
+        assert(advanceDate('2026-01-31', 'monthly')   === '2026-02-28');
+        assert(advanceDate('2028-01-31', 'monthly')   === '2028-02-29');   // leap February
+        assert(advanceDate('2026-03-31', 'monthly')   === '2026-04-30');
+        assert(advanceDate('2026-11-30', 'quarterly') === '2027-02-28');
+        assert(addMonths('2026-01-01', 11) === '2026-12-01');
+        assert(addMonths('2026-08-07', 0)  === '2026-08-07');
+        // Split bills: n equal shares, the last one n-1 months after the payment date.
+        assert(splitPlan(24000.0, 12, '2026-01-01') === [2000.0, '2026-12-01']);
+        assert(splitPlan(1200.0,  24, '2026-06-15') === [50.0,   '2028-05-15']);
+        try { splitPlan(100.0, 1, '2026-01-01');   assert(false, 'a 1-month split should throw'); } catch (UserErr) {}
+        try { splitPlan(100.0, 999, '2026-01-01'); assert(false, 'a 999-month split should throw'); } catch (UserErr) {}
+        try { splitPlan(0.05, 24, '2026-01-01');   assert(false, 'a sub-paise share should throw'); } catch (UserErr) {}
+        // The sweep's stop condition, run without a database: how many times a split posts by
+        // a given day. A split must fire once per month, no more and no fewer, and must stop
+        // itself at end_date instead of running on forever.
+        $postings = function (string $start, int $months, string $today): int {
+            [, $end] = splitPlan(1200.0, $months, $start);
+            $nd = $start; $n = 0;
+            while ($n < 120 && $nd <= $today && $nd <= $end) { $n++; $nd = advanceDate($nd, 'monthly'); }
+            return $n;
+        };
+        assert($postings('2026-01-01', 12, '2027-06-01') === 12);
+        assert($postings('2026-01-31', 12, '2027-06-01') === 12);  // month-end start, February included
+        assert($postings('2026-01-01', 24, '2030-01-01') === 24);
+        assert($postings('2026-01-01', 12, '2026-03-15') === 3);   // only the months that have come due
+        assert($postings('2027-01-01', 12, '2026-08-07') === 0);   // paid in advance, nothing due yet
         // parseAmount edge cases
         try { parseAmount('-1', $config); assert(false, 'neg should throw'); } catch (UserErr) {}
         try { parseAmount('abc', $config); assert(false, 'nan should throw'); } catch (UserErr) {}
@@ -141,6 +169,10 @@ if (PHP_SAPI === 'cli') {
             assert(advanceDate('2026-01-15', 'monthly')   === '2026-02-15');
             assert(advanceDate('2026-01-15', 'quarterly') === '2026-04-15');
             assert(advanceDate('2026-01-15', 'yearly')    === '2027-01-15');
+            assert(advanceDate('2026-01-31', 'monthly')   === '2026-02-28');
+            assert(advanceDate('2028-01-31', 'monthly')   === '2028-02-29');
+            assert(splitPlan(24000.0, 12, '2026-01-01')   === [2000.0, '2026-12-01']);
+            try { splitPlan(0.05, 24, '2026-01-01'); assert(false); } catch (UserErr) {}
             try { parseAmount('-1', $config);   assert(false); } catch (UserErr) {}
             try { parseAmount('abc', $config);  assert(false); } catch (UserErr) {}
             try { parseAmount('1e9', $config);  assert(false); } catch (UserErr) {}
@@ -152,7 +184,7 @@ if (PHP_SAPI === 'cli') {
             assert(groupIndian(1000000) === '10,00,000.00' && groupIndian(10000000) === '1,00,00,000.00');
             assert(rollingMonths('2026-01-15', 3) === ['2025-11-01', '2026-02-01', ['2025-11','2025-12','2026-01']]);
             assert(rollingMonths('2026-03-31', 12)[2][11] === '2026-03');
-            $line('OK', 'date math + parseAmount/parseBudget + investment filter + rolling window + lakh/crore formatting');
+            $line('OK', 'date math + split plans + parseAmount/parseBudget + investment filter + rolling window + lakh/crore formatting');
         } catch (Throwable $e) { $line('FAIL', 'selfcheck: ' . $e->getMessage()); }
 
         echo "\nDatabase:\n";
@@ -165,7 +197,7 @@ if (PHP_SAPI === 'cli') {
             if ($missing) $line('FAIL', 'missing tables: ' . implode(', ', $missing));
             else          $line('OK',   'all ' . count($expected) . ' tables present');
             $cols = $db->query("SHOW COLUMNS FROM recurring")->fetchAll(PDO::FETCH_COLUMN);
-            foreach (['kind','type','category_id','frequency','next_date'] as $c) {
+            foreach (['kind','type','category_id','frequency','next_date','end_date'] as $c) {
                 in_array($c, $cols, true) ? $line('OK', "recurring.$c") : $line('FAIL', "recurring.$c missing");
             }
             $ecols = $db->query("SHOW COLUMNS FROM expenses")->fetchAll(PDO::FETCH_COLUMN);
@@ -705,6 +737,30 @@ if ($method === 'POST') {
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                 )->execute([$hid, $name, $amt, $kind, $catId, $type, $freq, $date]);
                 flash('success', 'Recurring item saved');
+                redirect('/recurring');
+
+            // A bill paid once but used over months — insurance for the year, a domain for two.
+            // Stored as an ordinary monthly expense item with an end_date, so the existing sweep
+            // back-fills every month from the payment date to today and then stops on its own.
+            case '/recurring/split':
+                $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $total = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $start = requireDate((string)($_POST['start_date'] ?? today()), 'Paid on');
+                [$per, $end] = splitPlan($total, (int)($_POST['months'] ?? 0), $start);
+                $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
+                assertUnderLimit(
+                    $db,
+                    "SELECT COUNT(*) FROM recurring WHERE household_id = ?",
+                    [$hid],
+                    $L['recurring_total_max'],
+                    'Recurring items'
+                );
+                $db->prepare(
+                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, frequency, next_date, end_date)
+                     VALUES (?, ?, ?, 'expense', ?, NULL, 'monthly', ?, ?)"
+                )->execute([$hid, $name, $per, $catId, $start, $end]);
+                flash('success', 'Split into ' . (int)$_POST['months'] . ' × ' . fmt($per)
+                    . ' — last on ' . (new DateTimeImmutable($end))->format('M j, Y'));
                 redirect('/recurring');
 
             case '/recurring/delete':

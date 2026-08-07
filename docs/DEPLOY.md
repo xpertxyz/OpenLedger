@@ -17,7 +17,7 @@ Checks:
 - Date math + input validators (parseAmount edge cases)
 - DB connection with configured credentials
 - All 9 expected tables present
-- Every migrated column present (recurring.kind, recurring.type, expenses.recurring_id, investments.recurring_id, users.currency)
+- Every migrated column present (recurring.kind, recurring.type, recurring.end_date, expenses.recurring_id, investments.recurring_id, users.currency)
 - Config sanity (real Google client id set, APP_DEBUG off, DB password not empty)
 - All static assets committed
 - .htaccess denies dotfiles and raw config.php fetch
@@ -36,6 +36,7 @@ Automated checks can't tell you whether the app *feels* right to a real user. Hi
 - [ ] **Invest** — month grouping works, type breakdown renders with sage bars
 - [ ] **Recurring — Expense kind** — set next_date to yesterday, reload any page, verify auto-post to History
 - [ ] **Recurring — Investment kind** — same test, verify auto-post to Invest with the right type
+- [ ] **Recurring — Split a bill** — split a total over 12 months dated a few months back: the preview shows the monthly share before saving, the past months appear in History straight away, and the row reads "Split · next … · last …"
 - [ ] **Edit** — click pencil on any row (History, Invest, Recurring), modal pre-fills, save reflects immediately
 - [ ] **Delete + cascade** — delete a recurring item with the "also delete past entries" checkbox, verify auto-posted entries disappear
 - [ ] **Profile drawer** — avatar opens right-side drawer, all three sections collapsible, rename category → reflects in Add / History

@@ -82,6 +82,7 @@ const SCHEMA_STATEMENTS = [
         type VARCHAR(40) NULL,
         frequency ENUM('monthly','quarterly','yearly') NOT NULL,
         next_date DATE NOT NULL,
+        end_date DATE NULL,
         INDEX ix_household_next (household_id, next_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -153,12 +154,15 @@ const MIGRATIONS = [
     "ALTER TABLE expenses ADD INDEX ix_household_cat (household_id, category_id)",
     "ALTER TABLE earnings ADD INDEX ix_household_cat (household_id, category_id)",
     "ALTER TABLE investments ADD INDEX ix_household_type (household_id, type)",
+    // v11 — split bills: a prepaid lump sum posted as equal monthly shares. NULL means the
+    // item repeats forever, which is every row that existed before this column.
+    "ALTER TABLE recurring ADD COLUMN end_date DATE NULL",
 ];
 
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v10';
+const SCHEMA_SENTINEL = '.schema-ok-v11';
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
 
@@ -283,9 +287,38 @@ function originUrl(): string {
     return (isHttps() ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
 }
 
+// Month arithmetic that clamps to the end of the target month instead of overflowing into
+// the next one. PHP's "+1 month" from Jan 31 lands on Mar 3 — which for a monthly recurring
+// item means February is never posted at all and the due day drifts from then on. Anchoring
+// on the 1st and re-applying the day is the standard fix.
+// Known ceiling: the day only ever ratchets down (Jan 31 → Feb 28 → Mar 28, not Mar 31),
+// because the sweep iterates off the previous posting rather than an original anchor date.
+// Every month still gets exactly one posting, which is the part that matters.
+function addMonths(string $dateStr, int $months): string {
+    $d     = new DateTimeImmutable($dateStr);
+    $first = $d->modify('first day of this month')->add(new DateInterval("P{$months}M"));
+    $day   = min((int)$d->format('j'), (int)$first->format('t'));
+    return $first->setDate((int)$first->format('Y'), (int)$first->format('n'), $day)->format('Y-m-d');
+}
+
 function advanceDate(string $dateStr, string $freq): string {
-    $spec = match ($freq) { 'quarterly' => 'P3M', 'yearly' => 'P1Y', default => 'P1M' };
-    return (new DateTimeImmutable($dateStr))->add(new DateInterval($spec))->format('Y-m-d');
+    return addMonths($dateStr, match ($freq) { 'quarterly' => 3, 'yearly' => 12, default => 1 });
+}
+
+// Split bill: one prepaid lump sum (a year of health insurance, two years of hosting) turned
+// into an equal monthly share plus the date the last share falls on. The row it produces is
+// an ordinary monthly recurring item — the sweep back-fills every month from `start` to today
+// and then stops itself at `end`, so nothing special happens at post time.
+// Returns [perMonth, endDate].
+// ponytail: an equal split can't always hit the total exactly — 10000/12 is 833.33, which
+// leaves 4 paise on the table. The dialog previews `per × months` before saving so the
+// shortfall is visible rather than silent; carrying the residue on the final instalment
+// would need the original total stored on the row.
+function splitPlan(float $total, int $months, string $start): array {
+    if ($months < 2 || $months > 120) throw new UserErr('Split length must be between 2 and 120 months.');
+    $per = round($total / $months, 2);
+    if ($per <= 0) throw new UserErr('That amount is too small to split over ' . $months . ' months.');
+    return [$per, addMonths($start, $months - 1)];
 }
 
 function currentUser(PDO $db): ?array {
@@ -531,11 +564,15 @@ function sweepRecurring(PDO $db, int $hid): void {
     $today = today();
     // Cheap guard: single indexed lookup. The common case (nothing due) exits here
     // without opening the prepare/fetch/update path on every authed request.
-    $probe = $db->prepare("SELECT 1 FROM recurring WHERE household_id = ? AND next_date <= ? LIMIT 1");
+    // The end_date clause is what stops a finished split bill from being re-read on every
+    // request for the rest of time: its next_date stays in the past forever, so without this
+    // it would keep matching the probe and posting nothing.
+    $due = "household_id = ? AND next_date <= ? AND (end_date IS NULL OR next_date <= end_date)";
+    $probe = $db->prepare("SELECT 1 FROM recurring WHERE $due LIMIT 1");
     $probe->execute([$hid, $today]);
     if (!$probe->fetchColumn()) return;
 
-    $rows = $db->prepare("SELECT * FROM recurring WHERE household_id = ? AND next_date <= ?");
+    $rows = $db->prepare("SELECT * FROM recurring WHERE $due");
     $rows->execute([$hid, $today]);
     $insExp = $db->prepare(
         "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, recurring_id)
@@ -551,11 +588,13 @@ function sweepRecurring(PDO $db, int $hid): void {
     );
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
-        $nd = $r['next_date'];
+        $nd   = $r['next_date'];
         $kind = $r['kind'] ?? 'expense';
+        $end  = $r['end_date'] ?? null;   // split bills only; NULL = repeats forever
+        $note = ($end === null ? '[recurring] ' : '[split] ') . $r['name'];
         // Cap iterations — a stale/bad next_date shouldn't insert years of catch-up rows
         // synchronously in one request. 120 = 10 years of monthly / 30 years of quarterly.
-        for ($i = 0; $i < 120 && $nd <= $today; $i++) {
+        for ($i = 0; $i < 120 && $nd <= $today && ($end === null || $nd <= $end); $i++) {
             if ($kind === 'investment') {
                 $insInv->execute([$hid, $r['name'], $r['amount'], (string)($r['type'] ?? 'Other'), $nd, (int)$r['id']]);
             } elseif ($kind === 'earning') {
@@ -564,7 +603,7 @@ function sweepRecurring(PDO $db, int $hid): void {
                 // handlers re-validate it per kind on every save, so it can't cross over.
                 $insErn->execute([$hid, $r['name'], $r['amount'], $r['category_id'], $nd, (int)$r['id']]);
             } else {
-                $insExp->execute([$hid, $r['amount'], $r['category_id'], '[recurring] ' . $r['name'], $nd, (int)$r['id']]);
+                $insExp->execute([$hid, $r['amount'], $r['category_id'], $note, $nd, (int)$r['id']]);
             }
             $nd = advanceDate($nd, $r['frequency']);
         }

@@ -181,14 +181,11 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css">
 <style>
-  body { margin:0; background:var(--color-bg); -webkit-tap-highlight-color: transparent; }
-  a, button, [role="button"], .row, .cat-chip, .pill-btn { -webkit-tap-highlight-color: transparent; }
+  body { margin:0; background:var(--color-bg); }
   .tabnav a { transition: background .15s, color .15s, opacity .15s; }
   .tabnav a:active:not(.on) { opacity: 1; background: var(--color-neutral-200); }
   .icon-btn { transition: background .12s; }
   .icon-btn:active { background: var(--color-neutral-300); }
-  .btn { transition: filter .12s, transform .05s; }
-  .btn:active { transform: scale(.98); filter: brightness(.95); }
   .amount-submit:active { transform: scale(.94); }
   .col { max-width:480px; margin:0 auto; min-height:100vh; padding: 0 0 104px; box-sizing:border-box; }
   .hdr { display:flex; align-items:center; justify-content:space-between; padding: var(--space-4) var(--space-4) var(--space-2); }
@@ -1014,12 +1011,36 @@ function renderLanding(): void {
 
   <section class="feat flip">
     <div>
-      <h2>Earned, spent, invested — on one page.</h2>
-      <p>A yearly summary in calendar year or the Indian financial year, with twelve
-        months of earned against spent against invested and the saved line between
-        them. Tap a month to open it in History. Amounts read ₹10,00,000, the way
-        you'd say it.</p>
+      <h2>The yearly bill, spread over the year.</h2>
+      <p>Health insurance for twelve months, a domain for twenty-four — paid in one
+        go, but used a month at a time. Enter the total and the length and Open
+        Ledger posts an equal share into your category every month, back-filling the
+        months that have already gone by and stopping itself after the last one.</p>
     </div>
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <!-- one payment up top, coming apart into equal months below; the two solid
+             bars are the months already posted. Scaled about the centre of the box so
+             it carries the same visual weight as the other four drawings. -->
+        <g transform="translate(-12,-9) scale(1.15)">
+        <rect x="52" y="14" width="56" height="34" rx="8"/>
+        <circle cx="80" cy="31" r="7" stroke="var(--color-accent)"/>
+        <path d="M60 21 h7 M93 41 h7"/>
+        <path d="M80 48 v9 M74 53 l6 6 l6 -6" stroke="var(--color-accent)"/>
+        <path d="M80 63 C80 73 28 72 28 82 M80 63 C80 73 54 72 54 82 M80 63 v19
+                 M80 63 C80 73 106 72 106 82 M80 63 C80 73 132 72 132 82" opacity=".5"/>
+        <rect x="22" y="84" width="12" height="21" rx="4" fill="var(--color-accent-2)" stroke="none"/>
+        <rect x="48" y="84" width="12" height="21" rx="4" fill="var(--color-accent-2)" stroke="none"/>
+        <rect x="74" y="84" width="12" height="21" rx="4"/>
+        <rect x="100" y="84" width="12" height="21" rx="4"/>
+        <rect x="126" y="84" width="12" height="21" rx="4"/>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <section class="feat">
     <div class="art">
       <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1031,6 +1052,13 @@ function renderLanding(): void {
           <circle cx="80" cy="58" r="4" fill="var(--color-accent-2)" stroke="none"/>
         </g>
       </svg>
+    </div>
+    <div>
+      <h2>Earned, spent, invested — on one page.</h2>
+      <p>A yearly summary in calendar year or the Indian financial year, with twelve
+        months of earned against spent against invested and the saved line between
+        them. Tap a month to open it in History. Amounts read ₹10,00,000, the way
+        you'd say it.</p>
     </div>
   </section>
 
@@ -2517,7 +2545,9 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <div class="muted">Salary, rent, EMIs and subscriptions that repeat.</div>
 
     <div class="pill-row">
-      <button type="button" class="pill-btn act" style="margin-left:auto;"
+      <button type="button" class="pill-btn" style="margin-left:auto;"
+              onclick="document.getElementById('split-dlg').showModal()"><?= icon('calendar', 13) ?>&nbsp;Split a bill</button>
+      <button type="button" class="pill-btn act"
               onclick="document.getElementById('add-rec-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
     </div>
 
@@ -2579,6 +2609,74 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     }
     toggleRecKind();
     </script>
+
+    <!-- Split a prepaid bill. Separate dialog rather than a fourth "kind" in the one above,
+         because every field means something different: one total instead of a per-period
+         amount, a length instead of a frequency, and a date that has already happened. -->
+    <dialog id="split-dlg" class="confirm" style="max-width:360px;">
+      <form method="post" action="/recurring/split">
+        <?= csrfInput() ?>
+        <div class="dlg-title">Split a prepaid bill</div>
+        <div class="muted" style="margin-bottom:10px;">
+          Paid once, used over months — insurance, domains, hosting. An equal share posts to
+          History every month, and months already past appear straight away.
+        </div>
+        <input class="input" name="name" id="sp-name" placeholder="e.g. Health insurance"
+               required maxlength="80" oninput="splitPreview()">
+        <div class="field-row">
+          <input class="input" name="amount" id="sp-amt" type="text" inputmode="decimal"
+                 pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Total paid" oninput="splitPreview()">
+          <select class="select" name="category_id" id="sp-cat">
+            <?php foreach ($cats as $c): ?>
+              <option value="<?= (int)$c['id'] ?>"><?= $c['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($c['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="field-row">
+          <select class="select" name="months" id="sp-months" onchange="splitPreview()">
+            <option value="6">6 months</option>
+            <option value="12" selected>1 year</option>
+            <option value="18">18 months</option>
+            <option value="24">2 years</option>
+            <option value="36">3 years</option>
+          </select>
+          <input class="input" name="start_date" id="sp-date" type="date" value="<?= h(today()) ?>"
+                 onchange="splitPreview()">
+        </div>
+        <div class="muted" id="sp-preview" style="margin-top:10px;"></div>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('split-dlg').close()">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="sp-save" disabled>Save</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+    // Previews exactly what the server will store, so an uneven split (10000 over 12 months
+    // is 833.33 a month, four paise short) is visible before saving rather than after.
+    var SPLIT_CUR = <?= json_encode($_SESSION['currency'] ?? '₹') ?>;
+    function splitPreview() {
+      var total  = parseFloat(document.getElementById('sp-amt').value);
+      var months = parseInt(document.getElementById('sp-months').value, 10);
+      var start  = document.getElementById('sp-date').value;
+      var named  = document.getElementById('sp-name').value.trim() !== '';
+      var per    = (total > 0 && months > 0) ? total / months : 0;
+      // Matches the server: a share that rounds to zero is not a split.
+      document.getElementById('sp-save').disabled = !(named && per >= 0.005 && start);
+      var out = document.getElementById('sp-preview');
+      if (!(per > 0) || !start) {
+        out.textContent = 'Enter the total you paid to see the monthly share.';
+        return;
+      }
+      var p = start.split('-');
+      var span = function (offset) {
+        var d = new Date(+p[0], +p[1] - 1 + offset, 1);
+        return d.toLocaleString(undefined, { month: 'short', year: 'numeric' });
+      };
+      out.textContent = SPLIT_CUR + per.toFixed(2) + ' a month × ' + months
+                      + ' — ' + span(0) + ' through ' + span(months - 1);
+    }
+    splitPreview();
+    </script>
     <?php if ($showForm): ?>
       <script>document.getElementById('add-rec-dlg').showModal();</script>
     <?php endif; ?>
@@ -2605,12 +2703,26 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               'earning'    => [' ink',  'wallet',      $r['ecat_name'] ?? 'Uncategorised'],
               default      => ['',      'repeat',      $r['cat_name'] ?? 'Uncategorised'],
           };
+          // A split bill has a last instalment, so it says where it ends rather than how often
+          // it repeats — and once past it, that it is done and will post nothing more.
+          $end = $r['end_date'] ?? null;
+          if ($end !== null) {
+              $rowIcon = 'calendar';
+              $done    = $r['next_date'] > $end;
+              $sub     = $rowWhat . ' · Split · ' . ($done
+                  ? 'complete ' . (new DateTimeImmutable($end))->format('M Y')
+                  : 'next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')
+                    . ' · last ' . (new DateTimeImmutable($end))->format('M Y'));
+          } else {
+              $sub = $rowWhat . ' · ' . ucfirst($r['frequency'])
+                   . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y');
+          }
           ?>
           <div class="card elev-sm row">
             <div class="row-icon<?= $rowCls ?>"><?= icon($rowIcon, 16) ?></div>
             <div class="row-main">
               <div class="title"><?= h($r['name']) ?></div>
-              <div class="sub"><?= h($rowWhat . ' · ' . ucfirst($r['frequency']) . ' · next ' . (new DateTimeImmutable($r['next_date']))->format('M j, Y')) ?></div>
+              <div class="sub"><?= h($sub) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
             <button class="icon-btn" type="button" aria-label="Edit"
