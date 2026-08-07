@@ -192,6 +192,10 @@ $meta
   .cat-chip.on { border-color:var(--color-accent); background:var(--color-accent-100); color:var(--color-accent-700); }
   .cat-chip.new { border-style:dashed; color:var(--color-neutral-800); }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; }
+  /* The rule above sets display:flex, which outranks the browser's own [hidden]{display:none}
+     — a class beats an attribute selector. Without this every parent's sub-category row shows
+     at once, and you can light a pill under a parent that isn't even selected. */
+  .pill-row.sub-row[hidden] { display:none; }
   .pill-btn { padding:6px 14px; border-radius:999px; border:1.5px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
   .pill-btn.on { background:var(--color-accent); color:var(--color-bg); border-color:transparent; }
   .note-row { display:flex; gap:8px; }
@@ -860,6 +864,23 @@ function renderAdd(PDO $db, array $user): void {
       </div>
 
       <input type="hidden" name="category_id" id="cat-input" value="<?= (int)$selectedCat ?>">
+
+      <?php foreach ($kids as $pid => $list): ?>
+        <!-- One row per parent, all rendered up front and toggled client-side — picking a
+             category shouldn't cost a page load. "General" posts the parent's own id.
+             Sits ABOVE the grid on purpose: the amount field is autofocused, so on a phone
+             the keyboard covers the bottom of the screen and anything below the grid is
+             unreachable without dismissing it first. -->
+        <div class="pill-row sub-row" id="sub-<?= (int)$pid ?>" <?= $pid == $selectedParent ? '' : 'hidden' ?>>
+          <button type="button" class="pill-btn<?= $selectedCat == $pid ? ' on' : '' ?>"
+                  data-cat="<?= (int)$pid ?>" onclick="pickSub(this)">General</button>
+          <?php foreach ($list as $k): ?>
+            <button type="button" class="pill-btn<?= $selectedCat == $k['id'] ? ' on' : '' ?>"
+                    data-cat="<?= (int)$k['id'] ?>" onclick="pickSub(this)"><?= h($k['name']) ?></button>
+          <?php endforeach; ?>
+        </div>
+      <?php endforeach; ?>
+
       <div class="cat-grid">
         <?php foreach ($cats as $c): ?>
           <button type="button" class="cat-chip<?= $c['id'] == $selectedParent ? ' on' : '' ?>"
@@ -877,19 +898,6 @@ function renderAdd(PDO $db, array $user): void {
           <a href="/add?newcat=1" class="cat-chip new"><?= icon('plus', 21) ?><span>New</span></a>
         <?php endif; ?>
       </div>
-
-      <?php foreach ($kids as $pid => $list): ?>
-        <!-- One row per parent, all rendered up front and toggled client-side — picking a
-             category shouldn't cost a page load. "General" posts the parent's own id. -->
-        <div class="pill-row sub-row" id="sub-<?= (int)$pid ?>" <?= $pid == $selectedParent ? '' : 'hidden' ?>>
-          <button type="button" class="pill-btn<?= $selectedCat == $pid ? ' on' : '' ?>"
-                  data-cat="<?= (int)$pid ?>" onclick="pickSub(this)">General</button>
-          <?php foreach ($list as $k): ?>
-            <button type="button" class="pill-btn<?= $selectedCat == $k['id'] ? ' on' : '' ?>"
-                    data-cat="<?= (int)$k['id'] ?>" onclick="pickSub(this)"><?= h($k['name']) ?></button>
-          <?php endforeach; ?>
-        </div>
-      <?php endforeach; ?>
 
       <?php if (count($mems) > 1): ?>
         <input type="hidden" name="member_id" id="mem-input" value="<?= (int)$selectedMem ?>">
@@ -913,19 +921,32 @@ function renderAdd(PDO $db, array $user): void {
       document.querySelectorAll('.cat-grid .cat-chip').forEach(e => e.classList.remove('on'));
       el.classList.add('on');
       document.getElementById('cat-input').value = el.dataset.cat;
+      // Jump the picked card to the top-left of the grid, matching where the server puts the
+      // sticky category on a fresh load — so the selection sits in the same place either way.
+      var grid = el.parentNode;
+      if (el !== grid.firstElementChild) grid.insertBefore(el, grid.firstElementChild);
+      // Clear every sub-row, not just the one being replaced, so exactly one pill is ever lit
+      // anywhere — otherwise a hidden row keeps a stale selection from an earlier tap.
       document.querySelectorAll('.sub-row').forEach(r => r.hidden = true);
+      document.querySelectorAll('.sub-row .pill-btn').forEach(b => b.classList.remove('on'));
       var row = document.getElementById('sub-' + el.dataset.cat);
       // Reopening a parent resets to "General" — the previously picked child would otherwise
       // stay lit while the hidden input now holds the parent.
       if (row) {
         row.hidden = false;
-        row.querySelectorAll('.pill-btn').forEach((b, i) => b.classList.toggle('on', i === 0));
+        row.querySelectorAll('.pill-btn')[0].classList.add('on');
       }
     }
     function pickSub(el) {
       document.getElementById('cat-input').value = el.dataset.cat;
-      el.parentNode.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('on'));
+      // Clear across ALL sub-rows, not just this one: only one category can be selected, so a
+      // pill left lit under another parent is a lie about what will be saved.
+      document.querySelectorAll('.sub-row .pill-btn').forEach(b => b.classList.remove('on'));
       el.classList.add('on');
+      // Picking a sub-category selects its parent card too — the child belongs to it, and the
+      // grid is where you read back what you chose.
+      var pid = el.closest('.sub-row').id.slice(4);   // "sub-<parentId>"
+      document.querySelectorAll('.cat-grid .cat-chip').forEach(c => c.classList.toggle('on', c.dataset.cat === pid));
     }
     </script>
 
