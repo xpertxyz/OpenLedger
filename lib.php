@@ -10,6 +10,8 @@ const SCHEMA_STATEMENTS = [
     "CREATE TABLE IF NOT EXISTS households (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(80) NOT NULL,
+        currency VARCHAR(8) NOT NULL DEFAULT '₹',
+        number_format VARCHAR(12) NOT NULL DEFAULT 'indian',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -26,10 +28,42 @@ const SCHEMA_STATEMENTS = [
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
+    // Who a ledger belongs to. `role` is the whole permission model: an owner edits anything,
+    // a member edits only what they added. A user may sit in several households; the one they
+    // are looking at right now is `users.household_id`.
+    "CREATE TABLE IF NOT EXISTS household_users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        user_id INT NOT NULL,
+        role VARCHAR(10) NOT NULL DEFAULT 'member',
+        joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_household_user (household_id, user_id),
+        INDEX ix_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // One-shot join tokens. `used_at` is what makes a link single-use; `expires_at` is set 30
+    // minutes out at mint time. Rows are kept after use so the owner can see who joined and when.
+    "CREATE TABLE IF NOT EXISTS invites (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        token CHAR(32) NOT NULL,
+        created_by INT NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME NULL,
+        used_by INT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_token (token),
+        INDEX ix_household (household_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // A spender label, not a login. `user_id` links one to the person who signed in, so
+    // "who spent it" and "who may edit it" name the same human. NULL for a label nobody
+    // logs in as — a child, a shared card.
     "CREATE TABLE IF NOT EXISTS members (
         id INT AUTO_INCREMENT PRIMARY KEY,
         household_id INT NOT NULL,
         name VARCHAR(60) NOT NULL,
+        user_id INT NULL,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -51,11 +85,14 @@ const SCHEMA_STATEMENTS = [
         category_id INT NULL,
         member_id INT NULL,
         recurring_id INT NULL,
+        created_by INT NULL,
         note VARCHAR(200) NULL,
         date DATE NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX ix_household_date (household_id, date),
         INDEX ix_household_cat (household_id, category_id),
+        INDEX ix_household_member (household_id, member_id),
+        INDEX ix_household_recent (household_id, id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -65,10 +102,13 @@ const SCHEMA_STATEMENTS = [
         name VARCHAR(80) NOT NULL,
         amount DECIMAL(12,2) NOT NULL,
         type VARCHAR(40) NOT NULL,
+        member_id INT NULL,
         recurring_id INT NULL,
+        created_by INT NULL,
         date DATE NOT NULL,
         INDEX ix_household_date (household_id, date),
         INDEX ix_household_type (household_id, type),
+        INDEX ix_household_member (household_id, member_id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -80,9 +120,13 @@ const SCHEMA_STATEMENTS = [
         kind VARCHAR(20) NOT NULL DEFAULT 'expense',
         category_id INT NULL,
         type VARCHAR(40) NULL,
+        member_id INT NULL,
         frequency ENUM('monthly','quarterly','yearly') NOT NULL,
         next_date DATE NOT NULL,
+        start_date DATE NULL,
         end_date DATE NULL,
+        total_amount DECIMAL(12,2) NULL,
+        created_by INT NULL,
         INDEX ix_household_next (household_id, next_date)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -116,11 +160,14 @@ const SCHEMA_STATEMENTS = [
         name VARCHAR(80) NOT NULL,
         amount DECIMAL(12,2) NOT NULL,
         category_id INT NULL,
+        member_id INT NULL,
         recurring_id INT NULL,
+        created_by INT NULL,
         date DATE NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         INDEX ix_household_date (household_id, date),
         INDEX ix_household_cat (household_id, category_id),
+        INDEX ix_household_member (household_id, member_id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
@@ -157,12 +204,55 @@ const MIGRATIONS = [
     // v11 — split bills: a prepaid lump sum posted as equal monthly shares. NULL means the
     // item repeats forever, which is every row that existed before this column.
     "ALTER TABLE recurring ADD COLUMN end_date DATE NULL",
+    // v12 — shared ledgers. `created_by` is the author of an entry, which is what decides who
+    // may edit it later; NULL means the row predates sharing and only the ledger owner may
+    // touch it. `member_id` reaches earnings and investments so one "who?" filter can span all
+    // three ledgers — expenses have had it since the beginning. The (household, member) indexes
+    // are what keep that filter from re-reading the household's whole table.
+    "ALTER TABLE expenses    ADD COLUMN created_by INT NULL",
+    "ALTER TABLE earnings    ADD COLUMN created_by INT NULL, ADD COLUMN member_id INT NULL",
+    "ALTER TABLE investments ADD COLUMN created_by INT NULL, ADD COLUMN member_id INT NULL",
+    "ALTER TABLE recurring   ADD COLUMN created_by INT NULL, ADD COLUMN member_id INT NULL",
+    "ALTER TABLE members     ADD COLUMN user_id INT NULL",
+    "ALTER TABLE expenses    ADD INDEX ix_household_member (household_id, member_id)",
+    "ALTER TABLE earnings    ADD INDEX ix_household_member (household_id, member_id)",
+    "ALTER TABLE investments ADD INDEX ix_household_member (household_id, member_id)",
+    // The Add screen pre-selects the category you used last, via
+    // `ORDER BY id DESC LIMIT 1`. Neither (household_id, date) nor (household_id, category_id)
+    // can produce that order, so MySQL read every expense the household owned and sorted the
+    // lot to keep one row — on the app's home page, the only unbounded sort left in it.
+    "ALTER TABLE expenses ADD INDEX ix_household_recent (household_id, id)",
+    // v13 — a split bill has to be editable, and editing one means knowing where it began.
+    // `next_date` cannot answer that: the sweep advances it with every share it posts, so by
+    // the second month the original date is gone. Only splits set this; a plain recurring item
+    // leaves it NULL, which is also what every row that predates this column holds.
+    "ALTER TABLE recurring ADD COLUMN start_date DATE NULL",
+    // The bill as it was actually paid. `amount` is the monthly share and stays authoritative
+    // for what gets posted; this is the figure the household typed. Reconstructing it as
+    // share x months loses the rounding — 19,000 over 12 comes back as 18,999.96 — and a
+    // number nobody entered reads as a bug when the dialog is reopened.
+    "ALTER TABLE recurring ADD COLUMN total_amount DECIMAL(12,2) NULL",
+    // v16 — how money is written belongs to the ledger, not to whoever is reading it. A
+    // household keeps one set of books: two people sharing it must not see the same row as
+    // ₹1,00,000 and $100,000. `users.currency` stays where it is, unread, so a rollback to the
+    // previous release still finds the column it expects.
+    "ALTER TABLE households ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'",
+    "ALTER TABLE households ADD COLUMN number_format VARCHAR(12) NOT NULL DEFAULT 'indian'",
 ];
 
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v11';
+const SCHEMA_SENTINEL = '.schema-ok-v16';
+
+// A ledger is a household; these are the only two roles it has. The owner is whoever created
+// it — they can edit every entry, invite people and remove them. Everyone else edits their own.
+const ROLE_OWNER  = 'owner';
+const ROLE_MEMBER = 'member';
+
+// How long a join link stays alive, and how many people one ledger may hold.
+const INVITE_TTL_MINUTES  = 30;
+const HOUSEHOLD_USERS_MAX = 10;
 
 const DEFAULT_INVESTMENT_TYPES = ['SIP', 'Stocks', 'FD-RD', 'Gold', 'PPF-EPF', 'Other'];
 
@@ -219,6 +309,52 @@ function makeDb(array $cfg): PDO {
                 foreach ($defaults as $t) $ins->execute([(int)$hid, $t, (int)$hid, $t]);
             }
         }
+        // v13 backfill — existing splits lost their start date to the sweep. The earliest
+        // share it posted is that date; a split that has not posted yet still holds it in
+        // next_date. Guarded on IS NULL so this never overwrites a real one.
+        $db->exec(
+            "UPDATE recurring r SET r.start_date = COALESCE(
+                 (SELECT MIN(e.date) FROM (SELECT date, recurring_id FROM expenses) e
+                  WHERE e.recurring_id = r.id),
+                 r.next_date)
+             WHERE r.end_date IS NOT NULL AND r.start_date IS NULL"
+        );
+        // v16 backfill — the owner's symbol becomes the ledger's, so the person who set it up
+        // sees exactly what they saw before the upgrade. Guarded on the default so a ledger
+        // whose currency was already set here is never overwritten.
+        $db->exec(
+            "UPDATE households h
+             JOIN (SELECT hu.household_id, MIN(hu.user_id) uid FROM household_users hu
+                   WHERE hu.role = '" . ROLE_OWNER . "' GROUP BY hu.household_id) o
+               ON o.household_id = h.id
+             JOIN users u ON u.id = o.uid
+             SET h.currency = u.currency
+             WHERE h.currency = '₹' AND u.currency <> '₹'"
+        );
+        // No record of the original figure for splits that predate the column, so the sum of
+        // the shares is the closest true statement available.
+        $db->exec(
+            "UPDATE recurring SET total_amount = ROUND(amount * (
+                 (YEAR(end_date) - YEAR(start_date)) * 12 + (MONTH(end_date) - MONTH(start_date)) + 1
+             ), 2)
+             WHERE end_date IS NOT NULL AND start_date IS NOT NULL AND total_amount IS NULL"
+        );
+        // v12 backfill — before sharing existed, a ledger had exactly one user and that user
+        // owned it. Lowest id wins the owner seat, so re-running this can never hand a
+        // household a second owner. NOT EXISTS rather than a plain insert because two requests
+        // can both find the sentinel missing right after a deploy; the unique key would reject
+        // the loser, but throwing inside the bootstrap path is worse than skipping.
+        $db->exec(
+            "INSERT INTO household_users (household_id, user_id, role)
+             SELECT u.household_id, u.id,
+                    CASE WHEN u.id = (SELECT MIN(u2.id) FROM users u2 WHERE u2.household_id = u.household_id)
+                         THEN '" . ROLE_OWNER . "' ELSE '" . ROLE_MEMBER . "' END
+             FROM users u
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM (SELECT household_id, user_id FROM household_users) x
+                 WHERE x.household_id = u.household_id AND x.user_id = u.id
+             )"
+        );
         if (!is_dir(dirname($sentinel))) @mkdir(dirname($sentinel), 0755, true);
         // Without this sentinel the whole schema + migration set re-runs on EVERY request,
         // which is slow and floods the error log. A silent @touch failure would hide that,
@@ -245,6 +381,17 @@ function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES,
 // Indian digit grouping (lakh/crore): the last three digits, then pairs.
 // 10,00,000.00 — not number_format()'s 1,000,000.00. Applies to every money value in the
 // app; percentages, CSS widths and byte counts deliberately keep plain number_format().
+// The two ways to group digits. "indian" puts the first comma after three and every two
+// after that (10,00,000); "world" groups in threes throughout (1,000,000). Stored per user.
+const NUM_STYLES = ['indian', 'world'];
+
+// Group by the reader's convention. Kept as one function so every amount on every screen
+// answers to a single rule — fmt() and fmtShort() are its only callers by design.
+function groupNumber(float $amount, int $decimals = 2, ?string $style = null): string {
+    $style = $style ?? ($_SESSION['numfmt'] ?? 'indian');
+    return $style === 'world' ? number_format($amount, $decimals) : groupIndian($amount, $decimals);
+}
+
 function groupIndian(float $amount, int $decimals = 2): string {
     $n   = number_format(abs($amount), $decimals, '.', '');
     $int = $n; $dec = '';
@@ -254,10 +401,10 @@ function groupIndian(float $amount, int $decimals = 2): string {
     }
     return ($amount < 0 ? '-' : '') . $int . $dec;
 }
-function fmt(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupIndian($amount); }
+function fmt(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupNumber($amount); }
 // Rounded to the rupee — for summary tiles, where paise are noise and three figures
 // share one row. Detail rows keep full precision via fmt().
-function fmtShort(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupIndian($amount, 0); }
+function fmtShort(float $amount): string { return ($_SESSION['currency'] ?? '₹') . groupNumber($amount, 0); }
 // Most redirect targets come from a `back` form field, which is attacker-controllable.
 // Keep them same-site: must be a root-relative path ("/x"), never a protocol-relative
 // "//host" or absolute URL, and never contain CR/LF (header injection).
@@ -314,6 +461,18 @@ function advanceDate(string $dateStr, string $freq): string {
 // leaves 4 paise on the table. The dialog previews `per × months` before saving so the
 // shortfall is visible rather than silent; carrying the residue on the final instalment
 // would need the original total stored on the row.
+// How many shares a split covers, counting both ends — the inverse of splitPlan's end date.
+// Compares year and month only, never days: addMonths() clamps a 31st onto a short month, so
+// 31 Jan + 11 months is 31 Dec but 31 Jan + 1 month is 28 Feb, and any day-level arithmetic
+// would report the wrong length for exactly the splits that start at a month end.
+function monthsSpan(string $start, string $end): int {
+    $a = new DateTimeImmutable($start);
+    $b = new DateTimeImmutable($end);
+    $n = ((int)$b->format('Y') - (int)$a->format('Y')) * 12
+       + ((int)$b->format('n') - (int)$a->format('n'));
+    return max(1, $n + 1);
+}
+
 function splitPlan(float $total, int $months, string $start): array {
     if ($months < 2 || $months > 120) throw new UserErr('Split length must be between 2 and 120 months.');
     $per = round($total / $months, 2);
@@ -420,6 +579,19 @@ function assertUnderLimit(PDO $db, string $sqlCount, array $params, int $max, st
     if ((int)$s->fetchColumn() >= $max) throw new UserErr("$label limit reached ($max).");
 }
 
+// A currency symbol is exactly one character. The old rule was "at most eight", which is how
+// "₹tt" got saved and then prefixed every amount in the app. mb_strlen, never strlen — ₹ is
+// three bytes and one symbol, so a byte count would reject the app's own default.
+// \p{C} and \p{Z} catch what trim() cannot: a lone control character, or a non-breaking space.
+function parseCurrency(string $raw): string {
+    $s = trim($raw);
+    if ($s === '') throw new UserErr('Currency symbol is required.');
+    if (mb_strlen($s, 'UTF-8') !== 1 || preg_match('/^[\p{C}\p{Z}]$/u', $s)) {
+        throw new UserErr('Use a single currency symbol, like ₹, $ or €.');
+    }
+    return $s;
+}
+
 // Row ids arrive from <select> fields, which are attacker-controllable: without this a
 // crafted POST could attach an entry to another household's category or member, and the
 // LEFT JOINs that render lists would then show that household's name back. Returns the id
@@ -431,6 +603,214 @@ function ownedId(PDO $db, string $table, int $hid, int $id): ?int {
     $s = $db->prepare("SELECT id FROM $table WHERE id = ? AND household_id = ?");
     $s->execute([$id, $hid]);
     return $s->fetchColumn() ? $id : null;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Shared ledgers — membership, roles, and who may edit what
+// ────────────────────────────────────────────────────────────────────
+
+// Every ledger this user belongs to, in the order they joined. Drives the sign-in picker and
+// the drawer's switcher, so it carries the name they will read and the role they hold.
+function ledgersFor(PDO $db, int $uid): array {
+    $s = $db->prepare(
+        "SELECT h.id, h.name, hu.role,
+                (SELECT COUNT(*) FROM household_users x WHERE x.household_id = h.id) AS people
+         FROM household_users hu
+         JOIN households h ON h.id = hu.household_id
+         WHERE hu.user_id = ?
+         ORDER BY hu.joined_at, h.id"
+    );
+    $s->execute([$uid]);
+    return $s->fetchAll();
+}
+
+// Role and ledger name in one round trip, for the request bootstrap. Separate from roleIn()
+// because that one is asked a yes/no question by callers who do not need the name; this one
+// runs on every authed request, where a second query for a string would be a waste.
+function activeLedger(PDO $db, int $hid, int $uid): ?array {
+    $s = $db->prepare(
+        "SELECT hu.role, h.name, h.currency, h.number_format FROM household_users hu
+         JOIN households h ON h.id = hu.household_id
+         WHERE hu.household_id = ? AND hu.user_id = ?"
+    );
+    $s->execute([$hid, $uid]);
+    return $s->fetch() ?: null;
+}
+
+// This user's role in one ledger, or NULL if they are not in it. NULL is the signal that an
+// active-ledger id has gone stale — they were removed from it while still signed in — and
+// every request re-asks, because `users.household_id` is a cache of a fact that can change.
+function roleIn(PDO $db, int $hid, int $uid): ?string {
+    $s = $db->prepare("SELECT role FROM household_users WHERE household_id = ? AND user_id = ?");
+    $s->execute([$hid, $uid]);
+    $r = $s->fetchColumn();
+    return $r === false ? null : (string)$r;
+}
+
+// The whole permission model, in one expression. The owner edits anything in their ledger;
+// everyone else edits only what they added. A row with no author predates sharing, so it
+// falls to the owner — which is exactly right, since back then they were the only user.
+function canEditRow(?int $createdBy, int $uid, string $role): bool {
+    return $role === ROLE_OWNER || ($createdBy !== null && $createdBy === $uid);
+}
+
+// Fetch a row for editing or refuse to. Household scope and author scope live together here
+// so a new handler cannot accidentally keep one and drop the other — every update and delete
+// of an entry goes through this, and `--preflight` fails the build if one stops doing so.
+function requireEditable(PDO $db, string $table, int $hid, int $id, int $uid, string $role): array {
+    $s = $db->prepare("SELECT * FROM $table WHERE id = ? AND household_id = ?");
+    $s->execute([$id, $hid]);
+    $row = $s->fetch();
+    if (!$row) throw new UserErr('That entry no longer exists.');
+    $author = $row['created_by'] === null ? null : (int)$row['created_by'];
+    if (!canEditRow($author, $uid, $role)) {
+        throw new UserErr('Only whoever added this — or the ledger owner — can change it.');
+    }
+    return $row;
+}
+
+// Whose name an entry may be filed under. You may name yourself, or anyone who does not sign
+// in — a child, a parent, a shared card. You may not file an entry under another person's
+// name: they have a login, and putting words in their ledger is theirs to do, not yours.
+//
+// $current is the value the row already holds. An edit that leaves it alone is always allowed,
+// so an owner correcting the amount on someone else's entry cannot silently re-attribute it.
+function attributableMember(PDO $db, int $hid, int $uid, int $memberId, ?int $current = null): ?int {
+    if ($memberId <= 0) return null;
+    if ($current !== null && $memberId === $current) return $memberId;
+    $s = $db->prepare("SELECT name, user_id FROM members WHERE id = ? AND household_id = ?");
+    $s->execute([$memberId, $hid]);
+    $row = $s->fetch();
+    if (!$row) return null;                                    // foreign or deleted — uncategorised
+    if ($row['user_id'] === null || (int)$row['user_id'] === $uid) return $memberId;
+    throw new UserErr('Only ' . $row['name'] . ' can file an entry under their own name.');
+}
+
+// The same rule, for building a picker: the ids you may choose. Everything else still renders,
+// disabled, so an entry already filed under someone else keeps its name when you edit it.
+function attributableIds(array $mems, int $uid): array {
+    $out = [];
+    foreach ($mems as $m) {
+        if (!isset($m['user_id']) || $m['user_id'] === null || (int)$m['user_id'] === $uid) {
+            $out[] = (int)$m['id'];
+        }
+    }
+    return $out;
+}
+
+// The view-side twin of requireEditable: same rule, no query, so a list row can hide the two
+// controls the server would refuse anyway. Never the only check — the server still decides.
+function mayEdit(array $row, array $user): bool {
+    return canEditRow(
+        ($row['created_by'] ?? null) === null ? null : (int)$row['created_by'],
+        (int)$user['id'],
+        (string)($user['role'] ?? ROLE_MEMBER)
+    );
+}
+
+// Mint a join link. Minting supersedes any unused predecessor, so a link the owner shared
+// and then thought better of stops working the moment they generate a fresh one.
+function mintInvite(PDO $db, int $hid, int $uid): string {
+    $db->prepare("DELETE FROM invites WHERE household_id = ? AND used_at IS NULL")->execute([$hid]);
+    $token = bin2hex(random_bytes(16));
+    $db->prepare(
+        "INSERT INTO invites (household_id, token, created_by, expires_at)
+         VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL " . INVITE_TTL_MINUTES . " MINUTE))"
+    )->execute([$hid, $token, $uid]);
+    return $token;
+}
+
+// A token that is real, unspent and unexpired — anything else is NULL. One lookup, so
+// "wrong link", "already used" and "too late" can never drift apart into three answers.
+function liveInvite(PDO $db, string $token): ?array {
+    if (!preg_match('/^[0-9a-f]{32}$/', $token)) return null;
+    $s = $db->prepare("SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND expires_at > NOW()");
+    $s->execute([$token]);
+    return $s->fetch() ?: null;
+}
+
+// Spend a token and put the user in the ledger. The UPDATE is the lock: `used_at IS NULL` in
+// its WHERE means two people opening the same link race for one row and exactly one wins,
+// with no transaction and no table lock. Returns why it failed, for the caller to phrase.
+function redeemInvite(PDO $db, string $token, int $uid): array {
+    $inv = liveInvite($db, $token);
+    if (!$inv) return ['status' => 'invalid', 'household_id' => 0];
+    $hid = (int)$inv['household_id'];
+    $out = fn(string $s) => ['status' => $s, 'household_id' => $hid];
+    if (roleIn($db, $hid, $uid) !== null) return $out('already');
+
+    $n = $db->prepare("SELECT COUNT(*) FROM household_users WHERE household_id = ?");
+    $n->execute([$hid]);
+    if ((int)$n->fetchColumn() >= HOUSEHOLD_USERS_MAX) return $out('full');
+
+    $claim = $db->prepare("UPDATE invites SET used_at = NOW(), used_by = ? WHERE id = ? AND used_at IS NULL");
+    $claim->execute([$uid, (int)$inv['id']]);
+    if ($claim->rowCount() !== 1) return $out('invalid');
+
+    $db->prepare("INSERT INTO household_users (household_id, user_id, role) VALUES (?, ?, ?)")
+       ->execute([$hid, $uid, ROLE_MEMBER]);
+    linkMember($db, $hid, $uid);
+    return $out('ok');
+}
+
+// Point a user at one of their ledgers. The membership check is the whole job: the id arrives
+// in a POST field or a query string, so it is attacker-controlled, and `users.household_id` is
+// what every scoped query in the app trusts.
+function switchLedger(PDO $db, int $uid, int $hid): bool {
+    if (roleIn($db, $hid, $uid) === null) return false;
+    $db->prepare("UPDATE users SET household_id = ? WHERE id = ?")->execute([$hid, $uid]);
+    return true;
+}
+
+// Where a freshly signed-in person lands. A join link waiting in the session is spent first —
+// they clicked it wanting the shared ledger, so that is where they go, picker or no picker.
+function afterSignIn(PDO $db, int $uid): string {
+    $token = trim((string)($_SESSION['pending_invite'] ?? ''));
+    unset($_SESSION['pending_invite']);
+    if ($token !== '') {
+        $r = redeemInvite($db, $token, $uid);
+        if ($r['status'] === 'ok' || $r['status'] === 'already') {
+            switchLedger($db, $uid, (int)$r['household_id']);
+            flash('success', $r['status'] === 'ok' ? "You're in." : 'You were already in that ledger.');
+            return '/';
+        }
+        flash('error', $r['status'] === 'full'
+            ? 'That ledger is full — it already has ' . HOUSEHOLD_USERS_MAX . ' people.'
+            : 'That invite link has expired or been used. Ask for a fresh one.');
+    }
+    return count(ledgersFor($db, $uid)) > 1 ? '/ledgers' : '/';
+}
+
+// Give a user a spender label in this ledger, so "who spent it" and "who may edit it" name
+// the same human. Claims a same-named unclaimed label first — a household usually writes its
+// people down before it invites them, and two rows called Arjun would be worse than the cap.
+function linkMember(PDO $db, int $hid, int $uid): void {
+    $s = $db->prepare("SELECT id FROM members WHERE household_id = ? AND user_id = ?");
+    $s->execute([$hid, $uid]);
+    if ($s->fetchColumn()) return;
+
+    $u = $db->prepare("SELECT name FROM users WHERE id = ?");
+    $u->execute([$uid]);
+    $name = mb_substr(trim((string)($u->fetchColumn() ?: '')) ?: 'Member', 0, 60);
+
+    $m = $db->prepare("SELECT id FROM members WHERE household_id = ? AND user_id IS NULL AND name = ? LIMIT 1");
+    $m->execute([$hid, $name]);
+    if ($mid = (int)($m->fetchColumn() ?: 0)) {
+        $db->prepare("UPDATE members SET user_id = ? WHERE id = ? AND household_id = ?")->execute([$uid, $mid, $hid]);
+        return;
+    }
+    // Deliberately not capped by members_total_max: that cap keeps the label list readable,
+    // and a person who has actually joined the ledger has more claim to a row than the cap has.
+    $db->prepare("INSERT INTO members (household_id, name, user_id) VALUES (?, ?, ?)")
+       ->execute([$hid, $name, $uid]);
+}
+
+// The "who?" filter as a SQL fragment plus its bindings — 0 means everyone. One definition,
+// so History, Earn, Invest and Year cannot drift apart on what filtering by a person means.
+// The (household_id, member_id) index added in v12 is what keeps it from re-reading the table.
+function whoWhere(int $who, string $alias = ''): array {
+    if ($who <= 0) return ['', []];
+    return [' AND ' . ($alias !== '' ? $alias . '.' : '') . 'member_id = ?', [$who]];
 }
 
 // Rolling window of $n whole months ending with the month that contains $todayYmd.
@@ -574,17 +954,20 @@ function sweepRecurring(PDO $db, int $hid): void {
 
     $rows = $db->prepare("SELECT * FROM recurring WHERE $due");
     $rows->execute([$hid, $today]);
+    // The sweep runs with no signed-in user — from a cron job as often as from a request — so
+    // the posted rows inherit the recurring item's own author and member. That keeps them
+    // editable by whoever set the item up, instead of falling to the owner as authorless rows.
     $insExp = $db->prepare(
-        "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, recurring_id)
-         VALUES (?, ?, ?, NULL, ?, ?, ?)"
+        "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, recurring_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $insInv = $db->prepare(
-        "INSERT INTO investments (household_id, name, amount, type, date, recurring_id)
-         VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO investments (household_id, name, amount, type, member_id, date, recurring_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $insErn = $db->prepare(
-        "INSERT INTO earnings (household_id, name, amount, category_id, date, recurring_id)
-         VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO earnings (household_id, name, amount, category_id, member_id, date, recurring_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $upd = $db->prepare("UPDATE recurring SET next_date = ? WHERE id = ?");
     foreach ($rows->fetchAll() as $r) {
@@ -596,14 +979,17 @@ function sweepRecurring(PDO $db, int $hid): void {
         // synchronously in one request. 120 = 10 years of monthly / 30 years of quarterly.
         for ($i = 0; $i < 120 && $nd <= $today && ($end === null || $nd <= $end); $i++) {
             if ($kind === 'investment') {
-                $insInv->execute([$hid, $r['name'], $r['amount'], (string)($r['type'] ?? 'Other'), $nd, (int)$r['id']]);
+                $insInv->execute([$hid, $r['name'], $r['amount'], (string)($r['type'] ?? 'Other'),
+                                  $r['member_id'], $nd, (int)$r['id'], $r['created_by']]);
             } elseif ($kind === 'earning') {
                 // `recurring.category_id` is read against whichever category table the kind
                 // implies — expense categories here, earning categories there. The POST
                 // handlers re-validate it per kind on every save, so it can't cross over.
-                $insErn->execute([$hid, $r['name'], $r['amount'], $r['category_id'], $nd, (int)$r['id']]);
+                $insErn->execute([$hid, $r['name'], $r['amount'], $r['category_id'],
+                                  $r['member_id'], $nd, (int)$r['id'], $r['created_by']]);
             } else {
-                $insExp->execute([$hid, $r['amount'], $r['category_id'], $note, $nd, (int)$r['id']]);
+                $insExp->execute([$hid, $r['amount'], $r['category_id'], $r['member_id'],
+                                  $note, $nd, (int)$r['id'], $r['created_by']]);
             }
             $nd = advanceDate($nd, $r['frequency']);
         }
@@ -617,13 +1003,19 @@ function sweepRecurring(PDO $db, int $hid): void {
 function bootstrapHousehold(PDO $db, string $name, string $email, string $googleSub): int {
     $db->beginTransaction();
     try {
-        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute(['My Household']);
+        // "Personal" rather than "My Household": once a person can hold several ledgers this
+        // string is what tells them apart in the picker, and everyone's first one is their own.
+        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute(['Personal']);
         $hid = (int)$db->lastInsertId();
         $db->prepare("INSERT INTO users (household_id, google_sub, email, name) VALUES (?, ?, ?, ?)")
            ->execute([$hid, $googleSub, $email, $name]);
         $uid = (int)$db->lastInsertId();
-        $db->prepare("INSERT INTO members (household_id, name) VALUES (?, ?)")
-           ->execute([$hid, 'Me']);
+        $db->prepare("INSERT INTO household_users (household_id, user_id, role) VALUES (?, ?, ?)")
+           ->execute([$hid, $uid, ROLE_OWNER]);
+        // Their spender label carries their own name and is linked to them from the start, so
+        // if this ledger later becomes the shared one it already reads correctly next to guests.
+        $db->prepare("INSERT INTO members (household_id, name, user_id) VALUES (?, ?, ?)")
+           ->execute([$hid, mb_substr(trim($name) ?: 'Me', 0, 60), $uid]);
         $ins = $db->prepare("INSERT INTO categories (household_id, name, icon, is_custom) VALUES (?, ?, ?, 0)");
         foreach (DEFAULT_CATEGORIES as [$n, $i]) $ins->execute([$hid, $n, $i]);
         $insIt = $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)");

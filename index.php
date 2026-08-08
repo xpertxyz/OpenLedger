@@ -142,6 +142,77 @@ if (PHP_SAPI === 'cli') {
         $_SERVER = ['HTTPS' => 'on', 'HTTP_HOST' => 'ledger.xpertxyz.com'];
         assert(originUrl() === 'https://ledger.xpertxyz.com');
         $_SERVER = $srv;
+
+        // Who may edit what. The owner edits anything in their ledger; everyone else edits only
+        // what they added. A row with no author predates sharing and falls to the owner — back
+        // then they were the only user, so nothing is taken away from anyone.
+        assert(canEditRow(7,    7, ROLE_MEMBER) === true);
+        assert(canEditRow(8,    7, ROLE_MEMBER) === false);
+        assert(canEditRow(null, 7, ROLE_MEMBER) === false);
+        assert(canEditRow(null, 7, ROLE_OWNER)  === true);
+        assert(canEditRow(8,    7, ROLE_OWNER)  === true);
+        // Zero is a user id nobody has; it must not collapse into NULL and match an authorless row.
+        assert(canEditRow(0,    0, ROLE_MEMBER) === true);
+        assert(canEditRow(null, 0, ROLE_MEMBER) === false);
+        // mayEdit reads that same rule off a row and a user, and has to agree with it — the
+        // server refuses on canEditRow, the view hides on mayEdit, and a disagreement between
+        // them shows a control that does nothing.
+        assert(mayEdit(['created_by' => 7],    ['id' => 7, 'role' => ROLE_MEMBER]) === true);
+        assert(mayEdit(['created_by' => '7'],  ['id' => 7, 'role' => ROLE_MEMBER]) === true);  // PDO gives strings
+        assert(mayEdit(['created_by' => 8],    ['id' => 7, 'role' => ROLE_MEMBER]) === false);
+        assert(mayEdit(['created_by' => null], ['id' => 7, 'role' => ROLE_MEMBER]) === false);
+        assert(mayEdit([],                     ['id' => 7, 'role' => ROLE_OWNER])  === true);
+        assert(mayEdit(['created_by' => 8],    ['id' => 7])                        === false); // role absent = member
+
+        // monthsSpan is the inverse of splitPlan's end date, and editing a split depends on it
+        // round-tripping: the dialog re-derives "how many months" from the dates it stored.
+        foreach ([2, 6, 12, 18, 24, 36, 120] as $n) {
+            foreach (['2026-01-01', '2026-01-31', '2026-02-28', '2026-11-30'] as $from) {
+                [, $end] = splitPlan(1200.0, $n, $from);
+                assert(monthsSpan($from, $end) === $n, "span $n from $from gave " . monthsSpan($from, $end));
+            }
+        }
+        assert(monthsSpan('2026-03-10', '2026-03-10') === 1);
+        assert(monthsSpan('2026-12-01', '2027-01-01') === 2);   // across a year boundary
+        // The month-end clamp is why this compares months, not days: 31 Jan + 1 month is 28 Feb,
+        // and a day-level diff would call that span 1 instead of 2.
+        assert(addMonths('2026-01-31', 1) === '2026-02-28');
+        assert(monthsSpan('2026-01-31', '2026-02-28') === 2);
+
+        // The two grouping conventions. The Indian one is not "commas every three" with a
+        // different separator — the first group is three digits and every group after it is
+        // two, which is why it needs its own function rather than a number_format() argument.
+        assert(groupNumber(1000000,  0, 'indian') === '10,00,000');
+        assert(groupNumber(1000000,  0, 'world')  === '1,000,000');
+        assert(groupNumber(10000000, 0, 'indian') === '1,00,00,000');   // one crore
+        assert(groupNumber(10000000, 0, 'world')  === '10,000,000');
+        assert(groupNumber(999,      0, 'indian') === '999');           // no comma either way
+        assert(groupNumber(999,      0, 'world')  === '999');
+        assert(groupNumber(1234.5,   2, 'indian') === '1,234.50');
+        assert(groupNumber(1234.5,   2, 'world')  === '1,234.50');      // identical under 100k
+        assert(groupNumber(-1234567, 0, 'indian') === '-12,34,567');    // sign survives grouping
+        assert(groupNumber(-1234567, 0, 'world')  === '-1,234,567');
+        assert(groupNumber(0,        2, 'indian') === '0.00');
+        // An unknown or missing style falls back to Indian rather than to an ungrouped number.
+        assert(groupNumber(1000000, 0, 'nonsense') === '10,00,000');
+
+        // One symbol, and one means one character — not one byte, and not "up to eight".
+        assert(parseCurrency('₹')   === '₹');
+        assert(parseCurrency('$')   === '$');
+        assert(parseCurrency('€')   === '€');
+        assert(parseCurrency(' ₹ ') === '₹');   // trimmed, not rejected
+        foreach (['₹tt', 'Rs', '', '   ', '$$', "\n", "\u{00A0}", '₹ $'] as $bad) {
+            $threw = false;
+            try { parseCurrency($bad); } catch (UserErr $e) { $threw = true; }
+            assert($threw, 'parseCurrency accepted ' . var_export($bad, true));
+        }
+
+        // The "who?" filter binds its value instead of interpolating it, and 0 means everyone.
+        assert(whoWhere(0)       === ['', []]);
+        assert(whoWhere(-1)      === ['', []]);
+        assert(whoWhere(5)       === [' AND member_id = ?',   [5]]);
+        assert(whoWhere(5, 'e')  === [' AND e.member_id = ?', [5]]);
+
         echo "ok\n"; exit;
     }
     if ($mode === '--preflight') {
@@ -175,7 +246,7 @@ if (PHP_SAPI === 'cli') {
             escapeshellarg(PHP_BINARY) . ' -d zend.assertions=1 ' . escapeshellarg(__FILE__) . ' --selfcheck 2>&1'
         ));
         $sc === 'ok'
-            ? $line('OK',   'every --selfcheck assertion passes (date math, split plans, amount/budget parsing, investment filter, rolling window, lakh/crore, redirect safety, HTTPS behind a proxy, category tree + rollup, sweep stop condition)')
+            ? $line('OK',   'every --selfcheck assertion passes (date math, split plans, amount/budget parsing, investment filter, rolling window, lakh/crore, redirect safety, HTTPS behind a proxy, category tree + rollup, sweep stop condition, who-may-edit, who-filter binding)')
             : $line('FAIL', '--selfcheck: ' . ($sc === '' ? 'no output — assertions did not run' : $sc));
 
         echo "\nDatabase:\n";
@@ -299,6 +370,129 @@ if (PHP_SAPI === 'cli') {
             $orphanType === 0
                 ? $line('OK',   'every investment type name still exists in investment_types')
                 : $line('FAIL', "$orphanType investment(s) name a type that no longer exists — a rename did not repoint them");
+
+            // ── Sharing ────────────────────────────────────────────────
+            // Membership rows are the only thing standing between one household's numbers and
+            // another's, so every way they can be wrong is worth naming separately.
+            $ghost = (int)$db->query(
+                "SELECT COUNT(*) FROM household_users hu
+                 WHERE NOT EXISTS (SELECT 1 FROM users h WHERE h.id = hu.user_id)
+                    OR NOT EXISTS (SELECT 1 FROM households x WHERE x.id = hu.household_id)"
+            )->fetchColumn();
+            $ghost === 0
+                ? $line('OK',   'every membership points at a real user and a real ledger')
+                : $line('FAIL', "$ghost membership row(s) point at a deleted user or ledger");
+
+            // Exactly one owner. Zero means nobody can invite, rename or edit another's entry —
+            // the ledger is stuck. More than one is a backfill that ran twice.
+            $badOwner = $db->query(
+                "SELECT h.id, (SELECT COUNT(*) FROM household_users hu
+                               WHERE hu.household_id = h.id AND hu.role = '" . ROLE_OWNER . "') AS owners
+                 FROM households h HAVING owners <> 1"
+            )->fetchAll();
+            $badOwner
+                ? $line('FAIL', count($badOwner) . ' ledger(s) do not have exactly one owner: '
+                    . implode(', ', array_map(fn($r) => "#{$r['id']} has {$r['owners']}", array_slice($badOwner, 0, 5))))
+                : $line('OK',   'every ledger has exactly one owner');
+
+            $over = $db->query(
+                "SELECT household_id, COUNT(*) n FROM household_users
+                 GROUP BY household_id HAVING n > " . HOUSEHOLD_USERS_MAX
+            )->fetchAll();
+            $over
+                ? $line('FAIL', 'ledger(s) past the ' . HOUSEHOLD_USERS_MAX . '-person cap: '
+                    . implode(', ', array_map(fn($r) => "#{$r['household_id']}={$r['n']}", $over)))
+                : $line('OK',   'no ledger holds more than ' . HOUSEHOLD_USERS_MAX . ' people');
+
+            // A member row linked to someone who is not in that ledger would put a stranger's
+            // name on the "who spent it" filter.
+            $badLink = (int)$db->query(
+                "SELECT COUNT(*) FROM members m WHERE m.user_id IS NOT NULL AND NOT EXISTS
+                 (SELECT 1 FROM household_users hu
+                  WHERE hu.user_id = m.user_id AND hu.household_id = m.household_id)"
+            )->fetchColumn();
+            $badLink === 0
+                ? $line('OK',   'every claimed member belongs to someone in that ledger')
+                : $line('FAIL', "$badLink member label(s) are linked to a user who is not in that ledger");
+
+            // A live invite must not outlive its stated TTL. This is the check that would have
+            // caught the clock bug: MySQL writes expires_at, MySQL enforces it, and anything
+            // that computes it against PHP's clock instead lands in a different timezone.
+            $longLived = (int)$db->query(
+                "SELECT COUNT(*) FROM invites
+                 WHERE used_at IS NULL AND expires_at > DATE_ADD(NOW(), INTERVAL "
+                 . INVITE_TTL_MINUTES . " MINUTE)"
+            )->fetchColumn();
+            $longLived === 0
+                ? $line('OK',   'no live invite outlives its ' . INVITE_TTL_MINUTES . '-minute window')
+                : $line('FAIL', "$longLived invite(s) expire later than " . INVITE_TTL_MINUTES
+                    . ' minutes from now — expires_at and NOW() disagree about the clock');
+
+            // ── Split bills ────────────────────────────────────────────
+            // A split is defined by its dates; editing one deletes every share it posted and
+            // replays them. Each of these is a way that replay can go wrong and leave money
+            // in History that no plan accounts for.
+            $splitNoStart = (int)$db->query(
+                "SELECT COUNT(*) FROM recurring WHERE end_date IS NOT NULL AND start_date IS NULL"
+            )->fetchColumn();
+            $splitNoStart === 0
+                ? $line('OK',   'every split records the date it started')
+                : $line('FAIL', "$splitNoStart split(s) have no start_date — their edit dialog cannot reconstruct the plan");
+
+            // A share posted outside the plan's window is one the sweep should never have
+            // written, or one a replay failed to clear.
+            $strayShare = (int)$db->query(
+                "SELECT COUNT(*) FROM expenses e JOIN recurring r ON r.id = e.recurring_id
+                 WHERE r.end_date IS NOT NULL
+                   AND (e.date < r.start_date OR e.date > r.end_date)"
+            )->fetchColumn();
+            $strayShare === 0
+                ? $line('OK',   'every posted split share falls inside its own start–end window')
+                : $line('FAIL', "$strayShare split share(s) sit outside the plan that posted them");
+
+            // More shares than months means a replay added without clearing.
+            $overPosted = $db->query(
+                "SELECT r.id, r.name, COUNT(e.id) n,
+                        (YEAR(r.end_date) - YEAR(r.start_date)) * 12
+                        + (MONTH(r.end_date) - MONTH(r.start_date)) + 1 AS months
+                 FROM recurring r LEFT JOIN expenses e ON e.recurring_id = r.id
+                 WHERE r.end_date IS NOT NULL AND r.start_date IS NOT NULL
+                 GROUP BY r.id, r.name, r.start_date, r.end_date HAVING n > months"
+            )->fetchAll();
+            $overPosted
+                ? $line('FAIL', 'split(s) with more posted shares than months: '
+                    . implode(', ', array_map(fn($r) => "{$r['name']} ({$r['n']}/{$r['months']})", $overPosted)))
+                : $line('OK',   'no split has posted more shares than it has months');
+
+            // Currency prefixes every amount on every screen, so a bad one is loud. WARN, not
+            // FAIL: these are legacy rows saved when the rule was "up to eight characters",
+            // not corruption, and their owner fixes one by re-saving it.
+            $wideCur = $db->query(
+                "SELECT id, name, currency FROM households WHERE CHAR_LENGTH(currency) <> 1"
+            )->fetchAll();
+            $wideCur
+                ? $line('WARN', count($wideCur) . ' ledger(s) have a multi-character currency saved: '
+                    . implode(', ', array_map(fn($r) => "#{$r['id']} '{$r['currency']}'", array_slice($wideCur, 0, 5)))
+                    . ' — one symbol is the rule now; the owner is asked to pick again on next save')
+                : $line('OK',   'every ledger currency is a single symbol');
+
+            // Both settings belong to the ledger now. A style outside the allow-list would make
+            // every amount silently fall back to Indian grouping, which reads as a bug.
+            $badStyle = $db->query(
+                "SELECT id, name, number_format FROM households
+                 WHERE number_format NOT IN ('" . implode("','", NUM_STYLES) . "')"
+            )->fetchAll();
+            $badStyle
+                ? $line('FAIL', count($badStyle) . ' ledger(s) hold an unknown number style: '
+                    . implode(', ', array_map(fn($r) => "#{$r['id']} '{$r['number_format']}'", $badStyle)))
+                : $line('OK',   'every ledger number style is one the app knows');
+
+            $spentAnon = (int)$db->query(
+                "SELECT COUNT(*) FROM invites WHERE used_at IS NOT NULL AND used_by IS NULL"
+            )->fetchColumn();
+            $spentAnon === 0
+                ? $line('OK',   'every spent invite records who spent it')
+                : $line('FAIL', "$spentAnon used invite(s) have no used_by");
         } catch (Throwable $e) { $line('FAIL', 'DB: ' . $e->getMessage()); }
 
         echo "\nConfig / env:\n";
@@ -374,14 +568,18 @@ if (PHP_SAPI === 'cli') {
         // bare 404 with nothing logged, so it reads as a dead button rather than an error.
         preg_match_all('~(?:^\s*case |\$path === )\'(/[^\']*)\'~m', $src, $m);
         $routes = array_unique($m[1]);
-        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)~', $vsrc, $u);
+        // Three ways a view names a route: a literal attribute, an askConfirm payload, and a
+        // form whose action JS repoints — the split dialog serves both add and edit that way,
+        // and without the third pattern its edit route reads as unreachable.
+        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)|\.action\s*=\s*\'(/[^\']*)~', $vsrc, $u);
         // is_file, not file_exists: href="/" would otherwise match the project directory.
-        $linked = array_filter(array_unique(array_merge($u[1], $u[2])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
+        $linked = array_filter(array_unique(array_merge($u[1], $u[2], $u[3])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
         $orphan = array_diff($linked, $routes);
         $orphan ? $line('FAIL', 'a view links or posts to a path with no route: ' . implode(', ', $orphan))
                 : $line('OK',   count($linked) . ' linked paths all resolve to a route');
         // Reached by the crawler or by an old bookmark, never by a link in the app.
-        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage']);
+        // /join is reached from outside entirely — a link pasted into a chat, not rendered here.
+        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage', '/join']);
         $dead ? $line('WARN', 'route nothing links to: ' . implode(', ', $dead))
               : $line('OK',   'no unreachable routes');
 
@@ -398,14 +596,40 @@ if (PHP_SAPI === 'cli') {
             // redirect() silently runs the following one — which is usually a DELETE.
             if (!preg_match('~\bredirect\(|\bbreak;|\bexit\b~', $body)) $fall[] = $case;
             // Every write must name household_id, or a forged id reaches another household's row.
-            // users is exempt: it is only ever addressed by $user['id'], which comes from the session.
+            // Two exemptions, both addressed by an id that never came from the request:
+            // `users` by $user['id'] out of the session, and `households` by $hid, which the
+            // request bootstrap has already checked against this user's memberships.
             preg_match_all('~"((?:DELETE FROM|UPDATE)\s+(\w+)[^"]*)"(\s*\.\s*\w+\(\))?~s', $body, $q, PREG_SET_ORDER);
             foreach ($q as $x) {
-                if (!str_contains($x[1], 'household_id') && $x[2] !== 'users' && trim($x[3] ?? '') === '') {
+                if (!str_contains($x[1], 'household_id')
+                    && !in_array($x[2], ['users', 'households'], true) && trim($x[3] ?? '') === '') {
                     $unscoped[] = $case . ' → ' . preg_replace('~\s+~', ' ', substr($x[1], 0, 60));
                 }
             }
         }
+        // Sharing means household scope is no longer the whole answer: a member may edit only
+        // what they added. Two checks, because the two halves fail differently — an insert that
+        // forgets created_by makes a row nobody but the owner can ever touch, and an update that
+        // forgets requireEditable lets anyone in the ledger rewrite anyone else's entry.
+        $entryTables = ['expenses', 'earnings', 'investments', 'recurring'];
+        $noStamp = $noGuard = [];
+        for ($i = 0; $i + 1 < count($parts); $i += 2) {
+            [$case, $body] = [trim($parts[$i]), $parts[$i + 1]];
+            if (trim($body) === '') continue;
+            preg_match_all('~"INSERT INTO (\w+)~', $body, $ins);
+            foreach (array_intersect($ins[1], $entryTables) as $t) {
+                if (!str_contains($body, 'created_by')) $noStamp[] = "$case → $t";
+            }
+            preg_match_all('~"(?:UPDATE|DELETE FROM)\s+(\w+)[^"]*WHERE id = \?~s', $body, $upd);
+            foreach (array_intersect($upd[1], $entryTables) as $t) {
+                if (!str_contains($body, 'requireEditable(')) $noGuard[] = "$case → $t";
+            }
+        }
+        $noStamp ? $line('FAIL', 'entry INSERT that does not record created_by: ' . implode(' ; ', array_unique($noStamp)))
+                 : $line('OK',   'every entry INSERT records who created it');
+        $noGuard ? $line('FAIL', 'single-row entry write with no requireEditable() guard: ' . implode(' ; ', array_unique($noGuard)))
+                 : $line('OK',   'every single-row entry update/delete goes through requireEditable()');
+
         $fall ? $line('FAIL', 'POST handler with no redirect/break/exit (falls into the next case): ' . implode(', ', $fall))
               : $line('OK',   ((int)(count($parts) / 2)) . ' POST handlers all terminate');
         $unscoped ? $line('FAIL', 'write not scoped by household_id: ' . implode(' ; ', $unscoped))
@@ -544,7 +768,11 @@ if (PHP_SAPI === 'cli') {
                           (SELECT COUNT(*) FROM expenses    e WHERE e.household_id = h.id) DESC
                  LIMIT 1"
             )->fetchColumn() ?: 0);
-            $stub = ['id' => 0, 'household_id' => $hid0, 'name' => 'Preflight', 'email' => 'preflight@local', 'is_dark' => 0];
+            // Rendered as the owner, because the owner sees the most markup: a member's view
+            // hides every edit and delete control, and the id/duplicate/comment checks below
+            // would then never look at them. The member's view gets its own pass afterwards.
+            $stub = ['id' => 0, 'household_id' => $hid0, 'name' => 'Preflight',
+                     'email' => 'preflight@local', 'is_dark' => 0, 'role' => ROLE_OWNER];
             foreach ([
                 'add'       => ['renderAdd',       [$db, $stub]],
                 'history'   => ['renderHistory',   [$db, $stub, 0]],
@@ -553,6 +781,7 @@ if (PHP_SAPI === 'cli') {
                 'recurring' => ['renderRecurring', [$db, $stub, true]],
                 'year'      => ['renderYear',      [$db, $stub, (int)date('Y'), 'cal', 'all']],
                 'organise'  => ['renderOrganise',  [$db, $stub]],
+                'ledgers'   => ['renderLedgers',   [$db, $stub]],
                 'terms'     => ['renderTerms',     [$db, $stub]],
             ] as $name => [$fn, $args]) {
                 ob_start(); $fn(...$args); $pages[$name] = (string)ob_get_clean();
@@ -560,6 +789,31 @@ if (PHP_SAPI === 'cli') {
             $line('OK', count($pages) . ' tabs render without fataling against household ' . $hid0
                       . ' (' . number_format(array_sum(array_map('strlen', $pages))) . ' bytes)');
             if ($hid0 === 0) $line('WARN', 'no household has categories — pages rendered empty, so their conditional dialogs went unchecked');
+
+            // The same pages as somebody who joined and has added nothing. Every edit and delete
+            // control must be gone: leaving one visible offers an action the server will refuse,
+            // which reads as a broken app rather than as a permission boundary.
+            // User id -1 can own no row, so this is the strictest possible member.
+            $guest = ['id' => -1, 'household_id' => $hid0, 'name' => 'Guest',
+                      'email' => 'guest@local', 'is_dark' => 0, 'role' => ROLE_MEMBER];
+            $leaked = [];
+            foreach ([
+                'history'   => ['renderHistory',   [$db, $guest, 0]],
+                'earn'      => ['renderEarn',      [$db, $guest, true]],
+                'invest'    => ['renderInvest',    [$db, $guest, true, 'active']],
+                'recurring' => ['renderRecurring', [$db, $guest, true]],
+            ] as $name => [$fn, $args]) {
+                ob_start(); $fn(...$args); $html = (string)ob_get_clean();
+                // The row controls, and only those: the drawer and the dialogs legitimately keep
+                // their own buttons, so match the confirm payloads that name an entry endpoint.
+                if (preg_match('~/(expenses|earnings|investments|recurring)/delete~', $html)
+                    || preg_match("~openEdit(Expense|Earning|Investment|Recurring)\(~", $html)) {
+                    // The edit dialogs define openEdit* as a function; a row *calls* it.
+                    if (preg_match("~onclick='openEdit~", $html)) $leaked[] = $name;
+                }
+            }
+            $leaked ? $line('FAIL', 'a member who created nothing is still offered edit controls on: ' . implode(', ', $leaked))
+                    : $line('OK',   'a member sees no edit or delete control on rows they did not create');
         } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'render: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
 
         if ($pages) {
@@ -624,6 +878,17 @@ if (PHP_SAPI === 'cli') {
         // native highlight on every tappable that had no :active of its own, and the more specific
         // .btn rule outranked .amount-submit's. Both belong to the page that owns them.
         $css = (string)file_get_contents(__DIR__ . '/design-tokens/styles.css');
+
+        // A var(--typo) is not an error anywhere — CSS drops the declaration and the element
+        // renders with no background, or no border, and looks merely "a bit off". The design
+        // system is the whole point of this app's look, so a token that does not exist is a bug.
+        preg_match_all('~var\(\s*(--[a-z0-9-]+)~i', $vsrc . $css, $used);
+        preg_match_all('~(--[a-z0-9-]+)\s*:~i',     $vsrc . $css, $defined);
+        $ghostVars = array_values(array_unique(array_diff($used[1], $defined[1])));
+        $ghostVars
+            ? $line('FAIL', 'CSS uses a token nothing defines: ' . implode(', ', $ghostVars))
+            : $line('OK',   count(array_unique($used[1])) . ' CSS tokens used, all defined');
+
         !str_contains($css, '-webkit-tap-highlight-color')
             ? $line('OK',   'the shared stylesheet owns no tap-highlight rule')
             : $line('FAIL', 'design-tokens/styles.css sets -webkit-tap-highlight-color — that lands on every page; scope it to layout() or renderLanding()');
@@ -786,6 +1051,12 @@ if (!$user) {
         renderLanding();
         exit;
     }
+    // A join link opened by someone not signed in. Hold the token across the Google round-trip
+    // and redeem it on the way back — nothing is spent until we know who is spending it.
+    if ($method === 'GET' && $path === '/join') {
+        $_SESSION['pending_invite'] = trim((string)($_GET['t'] ?? ''));
+        redirect('/login');
+    }
     if ($method === 'GET' && $path === '/login') {
         renderSignIn();
         exit;
@@ -803,7 +1074,7 @@ if (!$user) {
             $uid = $stmt->fetchColumn() ?: bootstrapHousehold($db, 'You', 'you@localhost', $devSub);
             session_regenerate_id(true);
             $_SESSION['user_id'] = (int)$uid;
-            redirect('/');
+            redirect(afterSignIn($db, (int)$uid));
         }
 
         // Google's own double-submit CSRF: g_csrf_token cookie must equal the POST field.
@@ -832,13 +1103,50 @@ if (!$user) {
 
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int)$uid;
-        redirect('/');
+        redirect(afterSignIn($db, (int)$uid));
     }
     redirect('/login');
 }
 
-$hid = (int)$user['household_id'];
-$_SESSION['currency'] = $user['currency'] ?? '₹';
+// `users.household_id` is the ledger this person is currently looking at — a cache of a fact
+// that can change under them, since an owner may remove someone between two clicks. Re-ask on
+// every request, and if the answer is "you are not in that one any more", move them to one
+// they are in rather than showing an empty ledger or, worse, someone else's.
+$uid    = (int)$user['id'];
+$hid    = (int)$user['household_id'];
+$active = activeLedger($db, $hid, $uid);
+$role   = $active['role'] ?? null;
+$ledgerName = (string)($active['name'] ?? '');
+if ($role === null) {
+    $mine = ledgersFor($db, $uid);
+    if ($mine) {
+        $hid        = (int)$mine[0]['id'];
+        $role       = (string)$mine[0]['role'];
+        $ledgerName = (string)$mine[0]['name'];
+        $db->prepare("UPDATE users SET household_id = ? WHERE id = ?")->execute([$hid, $uid]);
+    } else {
+        // No memberships at all — a row that predates v12 and slipped past the backfill.
+        // They were the only user of this ledger, so they own it. Self-healing beats a 500.
+        $db->prepare("INSERT INTO household_users (household_id, user_id, role) VALUES (?, ?, ?)")
+           ->execute([$hid, $uid, ROLE_OWNER]);
+        $role       = ROLE_OWNER;
+        $ledgerName = (string)(activeLedger($db, $hid, $uid)['name'] ?? '');
+    }
+}
+// Both keys ride along on $user, which every render function and every handler already
+// receives — that is why none of their signatures had to change to learn about sharing.
+$user['household_id']   = $hid;
+$user['role']           = $role;
+$user['household_name'] = $ledgerName;
+// The header switcher needs to know how many there are before it can decide whether tapping
+// it should toggle or ask. One small query on a table that holds a handful of rows per person;
+// /ledgers reuses this rather than asking again.
+$user['ledgers']        = ledgersFor($db, $uid);
+
+// Both come off the ledger, so switching ledgers switches how its money reads. activeLedger()
+// already fetched them; there is no second query and no per-user copy to fall out of step.
+$_SESSION['currency'] = (string)($active['currency'] ?? '₹');
+$_SESSION['numfmt']   = (string)($active['number_format'] ?? 'indian');
 sweepRecurring($db, $hid);
 
 // ────────────────────────────────────────────────────────────────────
@@ -861,11 +1169,85 @@ if ($method === 'POST') {
                 $db->prepare("UPDATE users SET is_dark = 1 - is_dark WHERE id = ?")->execute([$user['id']]);
                 redirect($_POST['back'] ?? '/');
 
+            case '/number-format':
+                // The allow-list is the same constant the view builds its buttons from, so a
+                // style the form offers and one the server accepts cannot drift apart.
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can change this.');
+                $style = in_array($_POST['style'] ?? '', NUM_STYLES, true) ? $_POST['style'] : 'indian';
+                $db->prepare("UPDATE households SET number_format = ? WHERE id = ?")->execute([$style, $hid]);
+                $_SESSION['numfmt'] = $style;
+                flash('success', $style === 'world' ? 'Grouping in thousands' : 'Grouping in lakh and crore');
+                redirect($_POST['back'] ?? '/');
+
             case '/currency':
-                $sym = requireStr((string)($_POST['symbol'] ?? ''), 8, 'Currency');
-                $db->prepare("UPDATE users SET currency = ? WHERE id = ?")->execute([$sym, $user['id']]);
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can change this.');
+                $sym = parseCurrency((string)($_POST['symbol'] ?? ''));
+                $db->prepare("UPDATE households SET currency = ? WHERE id = ?")->execute([$sym, $hid]);
                 $_SESSION['currency'] = $sym;
                 flash('success', 'Currency updated');
+                redirect($_POST['back'] ?? '/');
+
+            // ── Sharing ────────────────────────────────────────────────
+            // These five write `household_users`, `invites` and `households`, none of which
+            // carry a household_id-scoped row the way an entry does. They scope by membership
+            // instead — `switchLedger` and the `$role` check below are the equivalent guard.
+            case '/ledgers/switch':
+                if (!switchLedger($db, $uid, (int)($_POST['household_id'] ?? 0))) {
+                    throw new UserErr('That ledger is not yours to open.');
+                }
+                // Where you land depends on which button you pressed: the row keeps you on
+                // /ledgers with the settings for the ledger you just picked, Open takes you
+                // into it. safeRedirectTarget() still refuses anything that is not a local path.
+                redirect($_POST['back'] ?? '/');
+
+            case '/ledgers/rename':
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can rename it.');
+                $nm = requireStr((string)($_POST['name'] ?? ''), 80, 'Ledger name');
+                $db->prepare("UPDATE households SET name = ? WHERE id = ?")->execute([$nm, $hid]);
+                flash('success', 'Ledger renamed');
+                redirect($_POST['back'] ?? '/');
+
+            case '/ledgers/leave':
+                if ($role === ROLE_OWNER) {
+                    throw new UserErr('You own this ledger — it cannot be left, only renamed or emptied.');
+                }
+                $db->prepare("DELETE FROM household_users WHERE household_id = ? AND user_id = ?")
+                   ->execute([$hid, $uid]);
+                // Their entries stay: the household paid for them, and deleting a departing
+                // member's history would silently rewrite everyone else's totals.
+                flash('success', 'You have left that ledger.');
+                redirect('/');
+
+            case '/invite':
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can invite people.');
+                $people = $db->prepare("SELECT COUNT(*) FROM household_users WHERE household_id = ?");
+                $people->execute([$hid]);
+                if ((int)$people->fetchColumn() >= HOUSEHOLD_USERS_MAX) {
+                    throw new UserErr('This ledger is full — ' . HOUSEHOLD_USERS_MAX . ' people is the limit.');
+                }
+                mintInvite($db, $hid, $uid);
+                flash('success', 'Invite link ready — it works once, for the next '
+                    . INVITE_TTL_MINUTES . ' minutes.');
+                redirect($_POST['back'] ?? '/');
+
+            case '/invite/revoke':
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can revoke invites.');
+                $db->prepare("DELETE FROM invites WHERE household_id = ? AND used_at IS NULL")->execute([$hid]);
+                flash('success', 'Invite link cancelled');
+                redirect($_POST['back'] ?? '/');
+
+            case '/household-users/remove':
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can remove people.');
+                // `id`, not `user_id` — the shared confirm dialog posts one fixed field name,
+                // and bending it for this one caller would break every other use of it.
+                $drop = (int)($_POST['id'] ?? 0);
+                if ($drop === $uid) throw new UserErr('You cannot remove yourself from a ledger you own.');
+                $db->prepare("DELETE FROM household_users WHERE household_id = ? AND user_id = ? AND role <> ?")
+                   ->execute([$hid, $drop, ROLE_OWNER]);
+                // The spender label outlives the login, so past entries keep saying who spent.
+                $db->prepare("UPDATE members SET user_id = NULL WHERE household_id = ? AND user_id = ?")
+                   ->execute([$hid, $drop]);
+                flash('success', 'Removed from this ledger');
                 redirect($_POST['back'] ?? '/');
 
             case '/expenses':
@@ -873,7 +1255,7 @@ if ($method === 'POST') {
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
                 $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = ownedId($db, 'members', $hid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
@@ -882,13 +1264,14 @@ if ($method === 'POST') {
                     'Daily expenses'
                 );
                 $db->prepare(
-                    "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date)
-                     VALUES (?, ?, ?, ?, ?, ?)"
-                )->execute([$hid, $amt, $catId, $memId, $note, $date]);
+                    "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $amt, $catId, $memId, $note, $date, $uid]);
                 flash('success', 'Expense added');
                 redirect('/');
 
             case '/expenses/delete':
+                requireEditable($db, 'expenses', $hid, (int)$_POST['id'], $uid, $role);
                 $db->prepare("DELETE FROM expenses WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Expense deleted');
@@ -896,11 +1279,13 @@ if ($method === 'POST') {
 
             case '/expenses/update':
                 $id    = (int)($_POST['id'] ?? 0);
+                $row = requireEditable($db, 'expenses', $hid, $id, $uid, $role);
                 $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $date  = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note  = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
                 $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = ownedId($db, 'members', $hid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                                          $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
                     "UPDATE expenses SET amount = ?, category_id = ?, member_id = ?, note = ?, date = ?
                      WHERE id = ? AND household_id = ?"
@@ -913,6 +1298,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM investments WHERE household_id = ?",
@@ -921,13 +1307,14 @@ if ($method === 'POST') {
                     'Investments'
                 );
                 $db->prepare(
-                    "INSERT INTO investments (household_id, name, amount, type, date)
-                     VALUES (?, ?, ?, ?, ?)"
-                )->execute([$hid, $name, $amt, $type, $date]);
+                    "INSERT INTO investments (household_id, name, amount, type, member_id, date, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $type, $memId, $date, $uid]);
                 flash('success', 'Investment saved');
                 redirect('/invest');
 
             case '/investments/delete':
+                requireEditable($db, 'investments', $hid, (int)$_POST['id'], $uid, $role);
                 $db->prepare("DELETE FROM investments WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Investment deleted');
@@ -935,14 +1322,17 @@ if ($method === 'POST') {
 
             case '/investments/update':
                 $id   = (int)($_POST['id'] ?? 0);
+                $row = requireEditable($db, 'investments', $hid, $id, $uid, $role);
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                                          $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
-                    "UPDATE investments SET name = ?, amount = ?, type = ?, date = ?
+                    "UPDATE investments SET name = ?, amount = ?, type = ?, member_id = ?, date = ?
                      WHERE id = ? AND household_id = ?"
-                )->execute([$name, $amt, $type, $date, $id, $hid]);
+                )->execute([$name, $amt, $type, $memId, $date, $id, $hid]);
                 flash('success', 'Investment updated');
                 redirect($_POST['back'] ?? '/invest');
 
@@ -951,6 +1341,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM earnings WHERE household_id = ?",
@@ -959,13 +1350,14 @@ if ($method === 'POST') {
                     'Earnings'
                 );
                 $db->prepare(
-                    "INSERT INTO earnings (household_id, name, amount, category_id, date)
-                     VALUES (?, ?, ?, ?, ?)"
-                )->execute([$hid, $name, $amt, $cat, $date]);
+                    "INSERT INTO earnings (household_id, name, amount, category_id, member_id, date, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $cat, $memId, $date, $uid]);
                 flash('success', 'Earning saved');
                 redirect('/earn');
 
             case '/earnings/delete':
+                requireEditable($db, 'earnings', $hid, (int)$_POST['id'], $uid, $role);
                 $db->prepare("DELETE FROM earnings WHERE id = ? AND household_id = ?")
                    ->execute([(int)$_POST['id'], $hid]);
                 flash('success', 'Earning deleted');
@@ -973,14 +1365,17 @@ if ($method === 'POST') {
 
             case '/earnings/update':
                 $id   = (int)($_POST['id'] ?? 0);
+                $row = requireEditable($db, 'earnings', $hid, $id, $uid, $role);
                 $name = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                                          $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
-                    "UPDATE earnings SET name = ?, amount = ?, category_id = ?, date = ?
+                    "UPDATE earnings SET name = ?, amount = ?, category_id = ?, member_id = ?, date = ?
                      WHERE id = ? AND household_id = ?"
-                )->execute([$name, $amt, $cat, $date, $id, $hid]);
+                )->execute([$name, $amt, $cat, $memId, $date, $id, $hid]);
                 flash('success', 'Earning updated');
                 redirect($_POST['back'] ?? '/earn');
 
@@ -1046,10 +1441,11 @@ if ($method === 'POST') {
                     $L['recurring_total_max'],
                     'Recurring items'
                 );
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
                 $db->prepare(
-                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, frequency, next_date)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-                )->execute([$hid, $name, $amt, $kind, $catId, $type, $freq, $date]);
+                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, member_id, frequency, next_date, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $amt, $kind, $catId, $type, $memId, $freq, $date, $uid]);
                 flash('success', 'Recurring item saved');
                 redirect('/recurring');
 
@@ -1069,16 +1465,59 @@ if ($method === 'POST') {
                     $L['recurring_total_max'],
                     'Recurring items'
                 );
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
                 $db->prepare(
-                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, frequency, next_date, end_date)
-                     VALUES (?, ?, ?, 'expense', ?, NULL, 'monthly', ?, ?)"
-                )->execute([$hid, $name, $per, $catId, $start, $end]);
+                    "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, member_id, frequency, next_date, start_date, end_date, total_amount, created_by)
+                     VALUES (?, ?, ?, 'expense', ?, NULL, ?, 'monthly', ?, ?, ?, ?, ?)"
+                )->execute([$hid, $name, $per, $catId, $memId, $start, $start, $end, $total, $uid]);
                 flash('success', 'Split into ' . (int)$_POST['months'] . ' × ' . fmt($per)
                     . ' — last on ' . (new DateTimeImmutable($end))->format('M j, Y'));
                 redirect('/recurring');
 
+            // Editing a split is not editing a row — it is restating the whole plan. A wrong
+            // total or start date has already been posted into History as monthly shares, so
+            // the shares have to be thrown away and recomputed. Anything hand-edited on one of
+            // those auto-posted rows is lost with them; that is what the dialog warns about.
+            case '/recurring/split/update':
+                $rid  = (int)($_POST['id'] ?? 0);
+                $prev = requireEditable($db, 'recurring', $hid, $rid, $uid, $role);
+                if ($prev['end_date'] === null) {
+                    throw new UserErr('That is a repeating item, not a split — edit it from its own dialog.');
+                }
+                $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
+                $total = parseAmount((string)($_POST['amount'] ?? ''), $config);
+                $start = requireDate((string)($_POST['start_date'] ?? today()), 'Paid on');
+                $mths  = (int)($_POST['months'] ?? 0);
+                [$per, $end] = splitPlan($total, $mths, $start);
+                $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                                          $prev['member_id'] === null ? null : (int)$prev['member_id']);
+                $db->beginTransaction();
+                try {
+                    // Only this item's own postings, and only in this household.
+                    $del = $db->prepare("DELETE FROM expenses WHERE household_id = ? AND recurring_id = ?");
+                    $del->execute([$hid, $rid]);
+                    $wiped = $del->rowCount();
+                    // next_date returns to the start so the sweep replays the whole plan from
+                    // the beginning; start_date is what lets this dialog be opened again later.
+                    $db->prepare(
+                        "UPDATE recurring SET name = ?, amount = ?, category_id = ?, member_id = ?,
+                                kind = 'expense', frequency = 'monthly',
+                                next_date = ?, start_date = ?, end_date = ?, total_amount = ?
+                         WHERE id = ? AND household_id = ?"
+                    )->execute([$name, $per, $catId, $memId, $start, $start, $end, $total, $rid, $hid]);
+                    $db->commit();
+                } catch (Throwable $e) { $db->rollBack(); throw $e; }
+                // Re-post immediately rather than waiting for the next request's sweep, so the
+                // History tab is already correct when the redirect lands.
+                sweepRecurring($db, $hid);
+                flash('success', 'Split updated — ' . $mths . ' × ' . fmt($per)
+                    . ($wiped ? ', ' . $wiped . ' posted ' . ($wiped === 1 ? 'entry' : 'entries') . ' recalculated' : ''));
+                redirect('/recurring');
+
             case '/recurring/delete':
                 $rid = (int)($_POST['id'] ?? 0);
+                requireEditable($db, 'recurring', $hid, $rid, $uid, $role);
                 $cascade = !empty($_POST['cascade']);
                 $db->beginTransaction();
                 try {
@@ -1103,6 +1542,7 @@ if ($method === 'POST') {
 
             case '/recurring/update':
                 $id    = (int)($_POST['id'] ?? 0);
+                $row = requireEditable($db, 'recurring', $hid, $id, $uid, $role);
                 $name  = requireStr((string)($_POST['name'] ?? ''), $L['name_len_max'], 'Name');
                 $amt   = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $kind  = in_array($_POST['kind'] ?? '', ['expense','investment','earning'], true) ? $_POST['kind'] : 'expense';
@@ -1120,10 +1560,12 @@ if ($method === 'POST') {
                     $catTable = $kind === 'earning' ? 'earning_categories' : 'categories';
                     $catId = ownedId($db, $catTable, $hid, (int)($_POST['category_id'] ?? 0));
                 }
+                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                                          $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
-                    "UPDATE recurring SET name = ?, amount = ?, kind = ?, category_id = ?, type = ?, frequency = ?, next_date = ?
+                    "UPDATE recurring SET name = ?, amount = ?, kind = ?, category_id = ?, type = ?, member_id = ?, frequency = ?, next_date = ?
                      WHERE id = ? AND household_id = ?"
-                )->execute([$name, $amt, $kind, $catId, $type, $freq, $date, $id, $hid]);
+                )->execute([$name, $amt, $kind, $catId, $type, $memId, $freq, $date, $id, $hid]);
                 flash('success', 'Recurring item updated');
                 redirect('/recurring');
 
@@ -1328,7 +1770,22 @@ if ($method === 'POST') {
                 flash('success', 'Member added');
                 redirect($_POST['back'] ?? '/');
 
+            case '/members/update':
+                // A rename, not a replace. Entries hold `member_id`, so every expense, earning
+                // and investment already filed under this person follows the new name on its
+                // own — nothing is re-pointed, and no history is orphaned by a nickname.
+                $mid = (int)($_POST['id'] ?? 0);
+                $nm  = requireStr((string)($_POST['name'] ?? ''), 60, 'Name');
+                $db->prepare("UPDATE members SET name = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$nm, $mid, $hid]);
+                flash('success', 'Name updated');
+                redirect($_POST['back'] ?? '/');
+
             case '/members/delete':
+                // Adding a name is everyone's job; removing one rewrites what the whole
+                // household sees on its filters, so it stays with the owner — and the UI
+                // only offers the button to them, which this makes true rather than assumed.
+                if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can remove a name.');
                 $countStmt = $db->prepare("SELECT COUNT(*) FROM members WHERE household_id = ?");
                 $countStmt->execute([$hid]);
                 if ((int)$countStmt->fetchColumn() > 1) {
@@ -1362,6 +1819,12 @@ switch ($path) {
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
+    case '/ledgers':   renderLedgers($db, $user); break;
+    // A join link opened while already signed in — redeem straight away, no detour. The token
+    // goes through the session either way so there is one redemption path, not two.
+    case '/join':
+        $_SESSION['pending_invite'] = trim((string)($_GET['t'] ?? ''));
+        redirect(afterSignIn($db, $uid));
     case '/login':     redirect('/');                   // already signed in
     case '/manage':    redirect('/#profile');           // legacy path
     default:           http_response_code(404); exit('404');

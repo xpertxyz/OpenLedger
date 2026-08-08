@@ -42,9 +42,19 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-archive-restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h2"/><path d="M20 8v11a2 2 0 0 1-2 2h-2"/><path d="m9 15 3-3 3 3"/><path d="M12 12v9"/></symbol>
   <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
   <symbol id="icon-corner-left-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="14 9 9 4 4 9"/><path d="M20 20h-7a4 4 0 0 1-4-4V4"/></symbol>
+  <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="icon-log-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
   <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
 </svg>
 SVG;
+
+// Cache-buster for the one external stylesheet. .htaccess tells browsers to keep it for a
+// week, which is only safe because this changes the moment the file does.
+function cssVersion(): string {
+    static $v = null;
+    return $v ??= (string)(@filemtime(__DIR__ . '/design-tokens/styles.css') ?: 0);
+}
 
 function icon(string $name, int $size = 20): string {
     $n = htmlspecialchars($name, ENT_QUOTES);
@@ -170,6 +180,62 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
     $origin = originUrl();
     $themeColor = $user['is_dark'] ? '#201e1d' : '#f5ead8';
     $meta = metaHead($origin, $themeColor);
+    $cssV = cssVersion();
+    // Which ledger am I looking at? Once a person can hold several, every screen needs to say
+    // so — a shared ledger and a personal one look identical otherwise. Truncated rather than
+    // wrapped: the header is one line, and a long name must not push the avatar off a phone.
+    //
+    // What the tap does depends on how many you have, because the useful action does:
+    //   one   — nothing to switch to, so it opens the settings page
+    //   two   — the "other one" is unambiguous, so it just switches, in one tap
+    //   three+ — there is a choice to make, so it asks
+    // All three land back on the page you were already on, so switching mid-task keeps you there.
+    $ledgerName = (string)($user['household_name'] ?? '');
+    $ledgers    = $user['ledgers'] ?? [];
+    $ledgerDlg  = '';
+    $ledgerTag  = '';
+    if ($ledgerName !== '') {
+        $others = array_values(array_filter($ledgers, fn($l) => (int)$l['id'] !== (int)$user['household_id']));
+        $label  = h($ledgerName);
+        if (count($ledgers) === 2 && $others) {
+            // display:contents so the form itself does not become a flex item and knock the
+            // header's spacing about — the button stays a direct child for layout purposes.
+            $ledgerTag = '<form method="post" action="/ledgers/switch" style="display:contents">'
+                . csrfInput()
+                . '<input type="hidden" name="household_id" value="' . (int)$others[0]['id'] . '">'
+                . '<input type="hidden" name="back" value="' . h($requestUri) . '">'
+                . '<button type="submit" class="hdr-ledger" title="Switch to '
+                . h((string)$others[0]['name']) . '">' . $label . '</button></form>';
+        } elseif (count($ledgers) > 2) {
+            $ledgerTag = '<button type="button" class="hdr-ledger" title="Switch ledger"'
+                . ' onclick="document.getElementById(\'ledger-dlg\').showModal()">' . $label . '</button>';
+            $rows = '';
+            foreach ($ledgers as $l) {
+                $on = (int)$l['id'] === (int)$user['household_id'];
+                $rows .= '<form method="post" action="/ledgers/switch">' . csrfInput()
+                    . '<input type="hidden" name="household_id" value="' . (int)$l['id'] . '">'
+                    . '<input type="hidden" name="back" value="' . h($requestUri) . '">'
+                    // autofocus on the current one: showModal() rings whatever it focuses, and
+                    // with the ring on the first row it read as a second "selected" marker
+                    // competing with the real one. Now focus and selection are the same row.
+                    . '<button type="submit" class="card elev-sm row"' . ($on ? ' autofocus' : '')
+                    . ' style="width:100%; margin:0 0 8px; text-align:left; border:none; cursor:pointer;'
+                    . ($on ? ' outline:2px solid var(--color-accent); outline-offset:-2px;' : '') . '">'
+                    . '<span class="row-icon">' . icon($on ? 'check' : 'wallet', 18) . '</span>'
+                    . '<span class="row-main"><span class="title" style="display:block;">' . h((string)$l['name']) . '</span>'
+                    . '<span class="sub" style="display:block;">'
+                    . ($l['role'] === ROLE_OWNER ? 'You own this' : 'Shared with you') . '</span></span>'
+                    . '</button></form>';
+            }
+            $ledgerDlg = '<dialog id="ledger-dlg" class="confirm" style="max-width:360px;">'
+                . '<div class="dlg-title">Switch ledger</div>' . $rows
+                . '<div class="dlg-actions">'
+                . '<button type="button" class="btn btn-secondary" onclick="document.getElementById(\'ledger-dlg\').close()">Cancel</button>'
+                . '<a class="btn" href="/ledgers">Manage</a></div></dialog>';
+        } else {
+            $ledgerTag = '<a class="hdr-ledger" href="/ledgers" title="' . $label . '">' . $label . '</a>';
+        }
+    }
 
     echo <<<HTML
 <!doctype html>
@@ -179,7 +245,7 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Open Ledger</title>
 $meta
-<link rel="stylesheet" href="/design-tokens/styles.css">
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
 <style>
   body { margin:0; background:var(--color-bg); -webkit-tap-highlight-color: transparent; }
   a, button, [role="button"], .row, .cat-chip, .pill-btn { -webkit-tap-highlight-color: transparent; }
@@ -193,7 +259,16 @@ $meta
   .col { max-width:480px; margin:0 auto; min-height:100vh; padding: 0 0 104px; box-sizing:border-box; }
   .hdr { display:flex; align-items:center; justify-content:space-between; padding: var(--space-4) var(--space-4) var(--space-2); }
   .brand { font-family:var(--font-heading); font-size:22px; }
-  .hdr-actions { display:flex; align-items:center; gap:4px; }
+  .hdr-actions { display:flex; align-items:center; gap:4px; min-width:0; }
+  /* max-width in vw, not px: the brand is fixed-width, so the ledger name is the only thing
+     that can give, and it must give before the avatar is pushed off a 320px screen. */
+  .hdr-ledger {
+    max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:12px; padding:4px 10px; border-radius:999px; text-decoration:none;
+    color:var(--color-text); background:var(--color-surface);
+    border:1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+  }
+  .hdr-ledger:active { transform:scale(0.97); }
   .hdr-actions form, .hdr-actions a { display:inline-flex; margin:0; }
   .avatar { width:34px; height:34px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); border:none; cursor:pointer; font-family:var(--font-heading); font-size:13px; }
   .content { padding: 0 var(--space-4); display:flex; flex-direction:column; gap:var(--space-4); }
@@ -308,6 +383,21 @@ $meta
   .year-seg .seg-opt { flex:1; justify-content:center; font-size:13px; padding:8px 4px;
                        text-decoration:none; color:var(--color-text); }
   .year-seg .seg-opt.on { background:var(--color-accent); color:var(--color-bg); }
+  /* The shared .seg-opt is written for the radio pattern (:has(input:checked)) and for the
+     Year tab's links. The grouping toggle on /ledgers is two submit buttons, so it needs the
+     UA button chrome off and a selected state of its own. Kept here, not in the shared sheet —
+     that sheet is linked by every page including the landing one. */
+  /* A <button> does not inherit colour or font from the page — it takes the UA's own
+     ButtonText, which is black. Black on cream reads fine, so the light theme hid this; on the
+     dark theme the ledger picker's names were black on near-black. Any card or row that is a
+     button has to say this out loud. */
+  button.card, button.row { color:var(--color-text); font-family:inherit; }
+  .seg-opt[type=submit] {
+    background:none; border:0; margin:0; font-family:inherit; font-size:13px;
+    color:var(--color-text); -webkit-appearance:none; appearance:none;
+  }
+  .seg-opt[type=submit].on { background:var(--color-accent); color:var(--color-bg); }
+  .seg-opt[type=submit]:active { transform:scale(0.97); }
   /* Year summary card = figures row + investment filter footer, stacked. */
   .yearcard { flex-direction:column !important; padding:0; overflow:hidden; gap:0; }
   .yearcard .split-card { background:none; box-shadow:none; border-radius:0; }
@@ -420,6 +510,7 @@ $sprite
   <div class="hdr">
     <div class="brand">Open Ledger</div>
     <div class="hdr-actions">
+      $ledgerTag
       <form method="post" action="/theme">$csrf<input type="hidden" name="back" value="{$backUri}"><button class="btn btn-icon" type="submit" aria-label="Toggle theme" style="color:var(--color-text);">$themeBtn</button></form>
       <button class="avatar" type="button" aria-label="Profile" onclick="openProfile()">$initial</button>
     </div>
@@ -450,11 +541,15 @@ HTML;
     // Right-side profile drawer — triggered by the header avatar.
     renderProfileDrawer($db, $user, $requestUri);
 
+    // Emitted only when there is actually a choice to make, so the id the header's onclick
+    // reaches for exists exactly when something reaches for it.
+    echo $ledgerDlg;
+
     // Shared confirmation dialog + trigger helper. Every destructive form / signout uses this.
     echo <<<DLG
 <dialog id="confirm-dlg" class="confirm" aria-labelledby="dlg-title">
   <form method="post" id="confirm-form">
-    <input type="hidden" name="_csrf" id="confirm-csrf">
+    <input type="hidden" name="_csrf" id="confirm-csrf" value="$csrfTok">
     <input type="hidden" name="id" id="confirm-id">
     <input type="hidden" name="back" id="confirm-back">
     <div class="dlg-title" id="dlg-title"></div>
@@ -475,7 +570,9 @@ function askConfirm(opts) {
   f.action = opts.action;
   document.getElementById('confirm-id').value = opts.id || '';
   document.getElementById('confirm-back').value = opts.back || '';
-  document.getElementById('confirm-csrf').value = opts.csrf || '';
+  // Pre-filled from the page, so a caller only overrides it deliberately. Dropping it from
+  // the per-row payloads takes a 32-char token off every one of a 200-row History page.
+  if (opts.csrf) document.getElementById('confirm-csrf').value = opts.csrf;
   document.getElementById('dlg-title').textContent = opts.title || 'Are you sure?';
   document.getElementById('dlg-body').textContent  = opts.body  || '';
   document.getElementById('confirm-ok').textContent = opts.ok || 'Delete';
@@ -490,6 +587,14 @@ function askConfirm(opts) {
     wrap.style.display = 'none';
   }
   document.getElementById('confirm-dlg').showModal();
+}
+// Keeps every other query string the page is carrying — month, invest filter, year, mode —
+// and drops only the row offset, because page 3 of "everyone" is not page 3 of one person.
+function setWho(v) {
+  var u = new URL(location.href);
+  if (v && v !== '0') u.searchParams.set('who', v); else u.searchParams.delete('who');
+  u.searchParams.delete('o');
+  location.href = u.toString();
 }
 function openProfile() {
   document.getElementById('drawer-backdrop').classList.add('open');
@@ -513,9 +618,6 @@ DLG;
 // Right-side drawer — replaces the old /manage page. All account/household controls live here.
 function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $hid = (int)$user['household_id'];
-    $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
-    $canDeleteMember = count($mems) > 1;
     $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY archived, id");
     $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
     $canDeleteType = count($iTypes) > 1;
@@ -564,19 +666,19 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <span>Organise expense categories</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
+          <?php /* Sharing lives on its own page rather than in here. This drawer renders on
+                   every request whether or not anyone opens it, and the invite link, the people
+                   list and the ledger switcher would have cost three more queries per page for
+                   a panel that starts closed. */ ?>
+          <a class="drawer-nav" href="/ledgers">
+            <span class="ico"><?= icon('users', 18) ?></span>
+            <span>Ledgers &amp; sharing</span>
+            <span class="chev"><?= icon('chevron-right', 16) ?></span>
+          </a>
         </section>
 
         <hr>
 
-        <section>
-          <h4>Currency</h4>
-          <form method="post" action="/currency" class="row-form">
-            <?= csrfInput() ?>
-            <input type="hidden" name="back" value="<?= $back ?>">
-            <input class="input" name="symbol" value="<?= h($currency) ?>" maxlength="8" style="max-width:80px; text-align:center; font-family:var(--font-heading); font-size:18px;">
-            <button class="btn btn-primary" type="submit">Save</button>
-          </form>
-        </section>
 
         <hr>
 
@@ -697,34 +799,6 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <hr>
 
-        <details>
-          <summary><h4>Household members</h4></summary>
-          <div class="details-body">
-            <?php foreach ($mems as $m): ?>
-              <div class="cat-row" style="padding: 2px 0;">
-                <div style="flex:1; font-size:14px;"><?= h($m['name']) ?></div>
-                <?php if ($canDeleteMember): ?>
-                  <button type="button" class="icon-btn" aria-label="Remove member"
-                          onclick='askConfirm(<?= h(json_encode([
-                              "action" => "/members/delete",
-                              "id"     => (int)$m['id'],
-                              "back"   => strtok($requestUri, '#') . '#profile',
-                              "csrf"   => csrfToken(),
-                              "title"  => "Remove member?",
-                              "body"   => "Existing entries for " . $m['name'] . " stay logged; new ones can no longer be attributed to them.",
-                              "ok"     => "Remove",
-                          ])) ?>)'>×</button>
-                <?php endif; ?>
-              </div>
-            <?php endforeach; ?>
-            <form method="post" action="/members" class="row-form" style="margin-top:6px;">
-              <?= csrfInput() ?>
-              <input type="hidden" name="back" value="<?= $back ?>">
-              <input class="input" name="name" placeholder="Add member" maxlength="60">
-              <button class="btn btn-primary" type="submit">Add</button>
-            </form>
-          </div>
-        </details>
 
         <div style="flex:1;"></div>
 
@@ -771,7 +845,7 @@ function renderLanding(): void {
 <title>Open Ledger — a free, open-source household ledger</title>
 <?= metaHead($origin) ?>
 <link rel="canonical" href="<?= h($origin) ?>/">
-<link rel="stylesheet" href="/design-tokens/styles.css">
+<link rel="stylesheet" href="/design-tokens/styles.css?v=<?= h(cssVersion()) ?>">
 <?= themeBootScript() ?>
 <style>
   /* :not([data-theme]) is what makes "system" the default and still lets an
@@ -1201,6 +1275,7 @@ DEV
     $meta = metaHead($origin);
     $dark = THEME_DARK_VARS;
     $boot = themeBootScript();
+    $cssV = cssVersion();
 
     echo <<<HTML
 <!doctype html>
@@ -1210,7 +1285,7 @@ DEV
 <meta name="robots" content="noindex">
 <title>Open Ledger — Sign in</title>
 $meta
-<link rel="stylesheet" href="/design-tokens/styles.css">
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
 $boot
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -1284,7 +1359,14 @@ function renderAdd(PDO $db, array $user): void {
     $lastCat->execute([$hid]);
     $defaultCat = (int)($lastCat->fetchColumn() ?: ($cats[0]['id'] ?? 0));
     $selectedCat = (int)($_GET['cat'] ?? $defaultCat);
-    $selectedMem = (int)($_GET['mem'] ?? ($mems[0]['id'] ?? 0));
+    // Default to your own name. It used to be whichever member sorted first, which in a
+    // shared ledger meant the Add screen opened pre-filled with somebody else's name.
+    $uid     = (int)$user['id'];
+    $mineIds = attributableIds($mems, $uid);
+    $ownMem  = 0;
+    foreach ($mems as $m) if (isset($m['user_id']) && (int)$m['user_id'] === $uid) $ownMem = (int)$m['id'];
+    $selectedMem = (int)($_GET['mem'] ?? ($ownMem ?: ($mineIds[0] ?? 0)));
+    if (!in_array($selectedMem, $mineIds, true)) $selectedMem = $ownMem ?: ($mineIds[0] ?? 0);
     $showNewCat  = isset($_GET['newcat']);
 
     // The grid holds top-level categories only; children hang off their parent in a pill row
@@ -1368,10 +1450,10 @@ function renderAdd(PDO $db, array $user): void {
         <?php endif; ?>
       </div>
 
-      <?php if (count($mems) > 1): ?>
+      <?php if (count($mineIds) > 1): ?>
         <input type="hidden" name="member_id" id="mem-input" value="<?= (int)$selectedMem ?>">
         <div class="pill-row">
-          <?php foreach ($mems as $m): ?>
+          <?php foreach ($mems as $m): if (!in_array((int)$m['id'], $mineIds, true)) continue; ?>
             <?php /* The sweep is scoped to this row: a global .pill-row query would also clear
                      the sub-category pills sitting in their own row above. Keep this a PHP
                      comment — an HTML one here lands inside the tag, and the browser ends the
@@ -1382,8 +1464,9 @@ function renderAdd(PDO $db, array $user): void {
             </button>
           <?php endforeach; ?>
         </div>
-      <?php elseif ($mems): ?>
-        <input type="hidden" name="member_id" value="<?= (int)$mems[0]['id'] ?>">
+      <?php elseif ($selectedMem): ?>
+        <?php /* One name you may file under, so there is nothing to choose — send it silently. */ ?>
+        <input type="hidden" name="member_id" value="<?= (int)$selectedMem ?>">
       <?php endif; ?>
     </form>
 
@@ -1444,6 +1527,7 @@ function renderAdd(PDO $db, array $user): void {
 // ─── History ────────────────────────────────────────────────────────
 function renderHistory(PDO $db, array $user, int $offset): void {
     $hid = (int)$user['household_id'];
+    $uid = (int)$user['id'];
     if ($offset < 0)   $offset = 0;
     if ($offset > 600) $offset = 600; // sanity cap ~50 years
     $anchor     = (new DateTimeImmutable('first day of this month 00:00:00'))->modify("-{$offset} months");
@@ -1453,15 +1537,27 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 
     // Pagination for the transaction list. Aggregates (total, breakdown) still cover the
     // whole month via a separate cheap SUM; only the row list is capped.
+    // The upper clamp matters: OFFSET is walked, not seeked, so ?o=9999999 would have MySQL
+    // step through ten million index entries and discard every one of them.
     $pageSize = 200;
-    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+    $rowOffset = min(100000, max(0, (int)($_GET['o'] ?? 0)));
+
+    // Filter by who spent it. Validated against this household's members, so a crafted id
+    // can neither name someone else's member nor survive as a filter that matches nothing.
+    $who = (int)($_GET['who'] ?? 0);
+    $who = $who > 0 ? (int)(ownedId($db, 'members', $hid, $who) ?? 0) : 0;
+    [$whoSql,  $whoBind]  = whoWhere($who);
+    [$whoSqlE, $whoBindE] = whoWhere($who, 'e');
+    // Appended to every link this page emits, so the filter survives month navigation, paging,
+    // and the round trip through an edit or a delete.
+    $whoQ = $who > 0 ? '&amp;who=' . $who : '';
 
     // Monthly aggregates — one indexed SUM per query, no fetchAll of the whole month.
     $sumStmt = $db->prepare(
         "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
-         FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?"
+         FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql"
     );
-    $sumStmt->execute([$hid, $monthStart, $monthEnd]);
+    $sumStmt->execute([$hid, $monthStart, $monthEnd, ...$whoBind]);
     $agg = $sumStmt->fetch();
     $entryCount = (int)$agg['n'];
     $total      = (float)$agg['total'];
@@ -1480,10 +1576,10 @@ function renderHistory(PDO $db, array $user, int $offset): void {
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
          LEFT JOIN categories p ON p.id = c.parent_id AND p.household_id = c.household_id
-         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE
          GROUP BY c.id, c.name, c.icon, c.budget, p.id, p.name, p.icon, p.budget"
     );
-    $catStmt->execute([$hid, $monthStart, $monthEnd]);
+    $catStmt->execute([$hid, $monthStart, $monthEnd, ...$whoBindE]);
     $byCat = rollupCategories($catStmt->fetchAll());
 
     // Household budget = sum of every top-level category budget, including ones with no spend
@@ -1498,26 +1594,27 @@ function renderHistory(PDO $db, array $user, int $offset): void {
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id
          LEFT JOIN members m ON m.id = e.member_id
-         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE
          ORDER BY e.`date` DESC, e.id DESC
          LIMIT $pageSize OFFSET $rowOffset"
     );
-    $rows->execute([$hid, $monthStart, $monthEnd]);
+    $rows->execute([$hid, $monthStart, $monthEnd, ...$whoBindE]);
     $expenses = $rows->fetchAll();
 
     // For the edit-expense modal.
     $catList = $db->prepare("SELECT id, name, parent_id FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $catList->execute([$hid]); $catList = categoryTree($catList->fetchAll());
-    $memList = $db->prepare("SELECT id, name FROM members WHERE household_id = ? ORDER BY id");
+    $memList = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
     $memList->execute([$hid]); $memList = $memList->fetchAll();
 
     ob_start();
     ?>
+    <?= whoFilterRow($db, $hid, $memList, $who) ?>
     <div class="month-switch">
-      <a href="/history?m=<?= $offset + 1 ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
+      <a href="/history?m=<?= $offset + 1 ?><?= $whoQ ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
       <div class="label"><?= h($label) ?></div>
       <?php if ($offset > 0): ?>
-        <a href="/history?m=<?= $offset - 1 ?>" class="btn btn-icon" aria-label="Next month"><?= icon('chevron-right', 20) ?></a>
+        <a href="/history?m=<?= $offset - 1 ?><?= $whoQ ?>" class="btn btn-icon" aria-label="Next month"><?= icon('chevron-right', 20) ?></a>
       <?php else: ?>
         <span class="btn btn-icon" style="opacity:.35;pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
       <?php endif; ?>
@@ -1604,22 +1701,23 @@ function renderHistory(PDO $db, array $user, int $offset): void {
                 <div class="sub"><?= h(trim(($e['note'] ?? '') . ($e['note'] && $e['mem_name'] ? ' · ' : '') . ($e['mem_name'] ?? ''))) ?></div>
               </div>
               <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
-              <button class="icon-btn" type="button" aria-label="Edit"
-                      onclick='openEditExpense(<?= h($rowJson) ?>)'>
-                <?= icon('edit', 15) ?>
-              </button>
-              <button class="icon-btn" type="button" aria-label="Delete"
-                      onclick='askConfirm(<?= h(json_encode([
-                          "action" => "/expenses/delete",
-                          "id"     => (int)$e['id'],
-                          "back"   => "/history?m=$offset",
-                          "csrf"   => csrfToken(),
-                          "title"  => "Delete expense?",
-                          "body"   => fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised'),
-                          "ok"     => "Delete",
-                      ])) ?>)'>
-                <?= icon('trash-2', 15) ?>
-              </button>
+              <?php if (mayEdit($e, $user)): ?>
+                <button class="icon-btn" type="button" aria-label="Edit"
+                        onclick='openEditExpense(<?= h($rowJson) ?>)'>
+                  <?= icon('edit', 15) ?>
+                </button>
+                <button class="icon-btn" type="button" aria-label="Delete"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/expenses/delete",
+                            "id"     => (int)$e['id'],
+                            "back"   => "/history?m=$offset" . ($who > 0 ? "&who=$who" : ""),
+                            "title"  => "Delete expense?",
+                            "body"   => fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised'),
+                            "ok"     => "Delete",
+                        ])) ?>)'>
+                  <?= icon('trash-2', 15) ?>
+                </button>
+              <?php endif; ?>
             </div>
           <?php endforeach; ?>
         </div>
@@ -1633,11 +1731,11 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <?php if ($hasMore || $hasPrev): ?>
         <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
           <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
-            <a class="btn btn-secondary" href="/history?m=<?= $offset ?>&amp;o=<?= $prev ?>">← Newer</a>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?>&amp;o=<?= $prev ?>">← Newer</a>
           <?php else: ?><span></span><?php endif; ?>
           <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
           <?php if ($hasMore): ?>
-            <a class="btn btn-secondary" href="/history?m=<?= $offset ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
           <?php else: ?><span></span><?php endif; ?>
         </div>
       <?php endif; ?>
@@ -1648,7 +1746,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <form method="post" action="/expenses/update">
         <?= csrfInput() ?>
         <input type="hidden" name="id" id="ed-id">
-        <input type="hidden" name="back" value="/history?m=<?= $offset ?>">
+        <input type="hidden" name="back" value="/history?m=<?= $offset ?><?= $whoQ ?>">
         <div class="dlg-title">Edit expense</div>
 
         <div class="field-row">
@@ -1665,8 +1763,9 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         <?php if (count($memList) > 1): ?>
           <select class="select" name="member_id" id="ed-member">
             <option value="">— No member —</option>
-            <?php foreach ($memList as $m): ?>
-              <option value="<?= (int)$m['id'] ?>"><?= h($m['name']) ?></option>
+            <?php $mine = attributableIds($memList, $uid); ?>
+            <?php foreach ($memList as $m): $off = !in_array((int)$m['id'], $mine, true); ?>
+              <option value="<?= (int)$m['id'] ?>"<?= $off ? ' disabled' : '' ?>><?= h($m['name']) ?><?= $off ? ' — signs in' : '' ?></option>
             <?php endforeach; ?>
           </select>
         <?php elseif ($memList): ?>
@@ -1694,16 +1793,24 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     }
 
     </script>
-    <?= swipeNavScript("/history?m=" . ($offset + 1), $offset > 0 ? "/history?m=" . ($offset - 1) : null) ?>
+    <?= swipeNavScript("/history?m=" . ($offset + 1) . $whoQ, $offset > 0 ? "/history?m=" . ($offset - 1) . $whoQ : null) ?>
     <?php
     $content = ob_get_clean();
-    layout($db, $user, 'history', $content, "/history?m=$offset");
+    layout($db, $user, 'history', $content, "/history?m=$offset" . ($who > 0 ? "&who=$who" : ""));
 }
 
 // ─── Investments ────────────────────────────────────────────────────
 function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'active'): void {
     $hid = (int)$user['household_id'];
+    $uid  = (int)$user['id'];
+    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
+    $mems->execute([$hid]); $mems = $mems->fetchAll();
     if (!in_array($filter, ['all', 'active', 'archived'], true)) $filter = 'active';
+
+    // Filter by whose investment it is. Validated against this household's members.
+    $who = (int)($_GET['who'] ?? 0);
+    $who = $who > 0 ? (int)(ownedId($db, 'members', $hid, $who) ?? 0) : 0;
+    [$whoSql, $whoBind] = whoWhere($who);
 
     // Archiving lives on the type, so an investment is archived iff its type name is.
     $archived = archivedTypeNames($db, $hid);
@@ -1712,9 +1819,9 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     // One grouped scan powers the three summary figures AND the per-type bars — the split
     // is a name lookup in PHP, which beats three near-identical SUM queries.
     $grp = $db->prepare(
-        "SELECT type, COUNT(*) AS n, SUM(amount) AS amt FROM investments WHERE household_id = ? GROUP BY type"
+        "SELECT type, COUNT(*) AS n, SUM(amount) AS amt FROM investments WHERE household_id = ?$whoSql GROUP BY type"
     );
-    $grp->execute([$hid]);
+    $grp->execute([$hid, ...$whoBind]);
     $allTypes = $grp->fetchAll();
 
     $sum = [
@@ -1742,12 +1849,12 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     // Paginated list, scoped to the filter.
     $pageSize  = 200;
-    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+    $rowOffset = min(100000, max(0, (int)($_GET['o'] ?? 0)));
     [$clause, $clauseParams] = investmentFilterSql($filter, $archived);
     $rows = $db->prepare(
-        "SELECT * FROM investments WHERE household_id = ?$clause ORDER BY date DESC, id DESC LIMIT $pageSize OFFSET $rowOffset"
+        "SELECT * FROM investments WHERE household_id = ?$clause$whoSql ORDER BY date DESC, id DESC LIMIT $pageSize OFFSET $rowOffset"
     );
-    $rows->execute(array_merge([$hid], $clauseParams)); $invs = $rows->fetchAll();
+    $rows->execute(array_merge([$hid], $clauseParams, $whoBind)); $invs = $rows->fetchAll();
 
     // Archived types stay in the edit dialog (so existing entries remain editable) but drop
     // out of the add form — you don't log new money into a scheme that has ended.
@@ -1755,7 +1862,9 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     $typeStmt->execute([$hid]); $typeList = $typeStmt->fetchAll();
     $activeTypes = array_values(array_filter($typeList, fn($t) => !(int)$t['archived']));
 
-    $qs = fn(string $f) => '/invest?f=' . $f;
+    // Every link on the page keeps the person filter alongside the archived/active one.
+    $whoQ = $who > 0 ? '&amp;who=' . $who : '';
+    $qs = fn(string $f) => '/invest?f=' . $f . ($who > 0 ? '&who=' . $who : '');
 
     ob_start();
     ?>
@@ -1791,6 +1900,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       <button type="button" class="pill-btn act" style="margin-left:auto;"
               onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
     </div>
+    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <?php if ($grandCount > 0): ?>
       <div class="stack">
@@ -1833,7 +1943,10 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
               <?php endforeach; ?>
             </select>
           </div>
-          <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+          <div class="field-row">
+            <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+            <?= memberSelect($mems, $uid) ?>
+          </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-inv-dlg').close()">Cancel</button>
             <button class="btn btn-primary" type="submit" id="inv-save" disabled>Save</button>
@@ -1870,6 +1983,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
               'amount' => (string)$i['amount'],
               'type'   => $i['type'],
               'date'   => $i['date'],
+              'member_id' => (int)($i['member_id'] ?? 0),
           ]); ?>
           <?php $rowArch = isset($archSet[$i['type']]); ?>
           <div class="card elev-sm row<?= $rowArch ? ' archived' : '' ?>">
@@ -1879,22 +1993,23 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
               <div class="sub"><?= h($i['type']) ?><?= $rowArch ? ' (archived)' : '' ?> · <?= h((new DateTimeImmutable($i['date']))->format('M j')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
-            <button class="icon-btn" type="button" aria-label="Edit"
-                    onclick='openEditInvestment(<?= h($invJson) ?>)'>
-              <?= icon('edit', 15) ?>
-            </button>
-            <button class="icon-btn" type="button" aria-label="Delete"
-                    onclick='askConfirm(<?= h(json_encode([
-                        "action" => "/investments/delete",
-                        "id"     => (int)$i['id'],
-                        "back"   => "/invest?f=$filter",
-                        "csrf"   => csrfToken(),
-                        "title"  => "Delete investment?",
-                        "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
-                        "ok"     => "Delete",
-                    ])) ?>)'>
-              <?= icon('trash-2', 15) ?>
-            </button>
+            <?php if (mayEdit($i, $user)): ?>
+              <button class="icon-btn" type="button" aria-label="Edit"
+                      onclick='openEditInvestment(<?= h($invJson) ?>)'>
+                <?= icon('edit', 15) ?>
+              </button>
+              <button class="icon-btn" type="button" aria-label="Delete"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/investments/delete",
+                          "id"     => (int)$i['id'],
+                          "back"   => "/invest?f=$filter" . ($who > 0 ? "&who=$who" : ""),
+                          "title"  => "Delete investment?",
+                          "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
+                          "ok"     => "Delete",
+                      ])) ?>)'>
+                <?= icon('trash-2', 15) ?>
+              </button>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -1908,11 +2023,11 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       <?php if ($hasMore || $hasPrev): ?>
         <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
           <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
-            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?>&amp;o=<?= $prev ?>">← Newer</a>
+            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?><?= $whoQ ?>&amp;o=<?= $prev ?>">← Newer</a>
           <?php else: ?><span></span><?php endif; ?>
           <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
           <?php if ($hasMore): ?>
-            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
+            <a class="btn btn-secondary" href="/invest?f=<?= h($filter) ?><?= $whoQ ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
           <?php else: ?><span></span><?php endif; ?>
         </div>
       <?php endif; ?>
@@ -1921,7 +2036,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         <form method="post" action="/investments/update">
           <?= csrfInput() ?>
           <input type="hidden" name="id" id="ei-id">
-          <input type="hidden" name="back" value="/invest?f=<?= h($filter) ?>">
+          <input type="hidden" name="back" value="/invest?f=<?= h($filter) ?><?= $whoQ ?>">
           <div class="dlg-title">Edit investment</div>
           <input class="input" name="name" id="ei-name" required maxlength="80" placeholder="Name">
           <div class="field-row">
@@ -1933,7 +2048,10 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
               <?php endforeach; ?>
             </select>
           </div>
-          <input class="input" name="date" id="ei-date" type="date" required>
+          <div class="field-row">
+            <input class="input" name="date" id="ei-date" type="date" required>
+            <?= memberSelect($mems, $uid, 'ei-member') ?>
+          </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-investment-dlg').close()">Cancel</button>
             <button type="submit" class="btn btn-primary">Save</button>
@@ -1947,13 +2065,15 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         document.getElementById('ei-amount').value = d.amount;
         document.getElementById('ei-type').value   = d.type;
         document.getElementById('ei-date').value   = d.date;
+        var m = document.getElementById('ei-member');
+        if (m) m.value = d.member_id || 0;
         document.getElementById('edit-investment-dlg').showModal();
       }
       </script>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($db, $user, 'invest', $content, '/invest');
+    layout($db, $user, 'invest', $content, '/invest?f=' . $filter . ($who > 0 ? '&who=' . $who : ''));
 }
 
 // ─── Earnings ───────────────────────────────────────────────────────
@@ -1961,6 +2081,16 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 // the twelve-month earned/spent/invested chart — the one place the three ledgers meet.
 function renderEarn(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
+    $uid  = (int)$user['id'];
+    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
+    $mems->execute([$hid]); $mems = $mems->fetchAll();
+
+    // Filter by whose money it is. Validated against this household's members.
+    $who = (int)($_GET['who'] ?? 0);
+    $who = $who > 0 ? (int)(ownedId($db, 'members', $hid, $who) ?? 0) : 0;
+    [$whoSql,  $whoBind]  = whoWhere($who);
+    [$whoSqlE, $whoBindE] = whoWhere($who, 'e');
+    $whoQ = $who > 0 ? '&amp;who=' . $who : '';
 
     // Headline figures in one pass. Bounded on both sides so a future-dated entry doesn't
     // inflate "this month" — the same range semantics the History tab uses.
@@ -1972,9 +2102,9 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total,
                 COALESCE(SUM(CASE WHEN `date` >= ? AND `date` < ? THEN amount END), 0) AS mtd,
                 COALESCE(SUM(CASE WHEN `date` >= ? AND `date` < ? THEN amount END), 0) AS ytd
-         FROM earnings WHERE household_id = ?"
+         FROM earnings WHERE household_id = ?$whoSql"
     );
-    $s->execute([$monthStart, $monthEnd, $yearStart, $yearEnd, $hid]);
+    $s->execute([$monthStart, $monthEnd, $yearStart, $yearEnd, $hid, ...$whoBind]);
     $agg = $s->fetch();
     $entryCount = (int)$agg['n'];
 
@@ -1984,9 +2114,9 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
     foreach (['ern' => 'earnings', 'exp' => 'expenses', 'inv' => 'investments'] as $k => $table) {
         $q = $db->prepare(
             "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt FROM $table
-             WHERE household_id = ? AND `date` >= ? AND `date` < ? GROUP BY ym"
+             WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql GROUP BY ym"
         );
-        $q->execute([$hid, $winStart, $winEnd]);
+        $q->execute([$hid, $winStart, $winEnd, ...$whoBind]);
         foreach ($q->fetchAll() as $r) $series[$k][$r['ym']] = (float)$r['amt'];
     }
     $peak = 0.0; $winEarn = 0.0; $winSpent = 0.0; $winInv = 0.0;
@@ -2003,21 +2133,21 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         "SELECT COALESCE(c.name, 'Uncategorised') AS name, SUM(e.amount) AS amt
          FROM earnings e
          LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
-         WHERE e.household_id = ?
+         WHERE e.household_id = ?$whoSqlE
          GROUP BY c.id, c.name ORDER BY amt DESC"
     );
-    $catStmt->execute([$hid]); $byCat = $catStmt->fetchAll();
+    $catStmt->execute([$hid, ...$whoBindE]); $byCat = $catStmt->fetchAll();
 
     $pageSize  = 200;
-    $rowOffset = max(0, (int)($_GET['o'] ?? 0));
+    $rowOffset = min(100000, max(0, (int)($_GET['o'] ?? 0)));
     $rows = $db->prepare(
         "SELECT e.*, c.name AS cat_name
          FROM earnings e
          LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
-         WHERE e.household_id = ?
+         WHERE e.household_id = ?$whoSqlE
          ORDER BY e.`date` DESC, e.id DESC LIMIT $pageSize OFFSET $rowOffset"
     );
-    $rows->execute([$hid]); $earns = $rows->fetchAll();
+    $rows->execute([$hid, ...$whoBindE]); $earns = $rows->fetchAll();
 
     $catList = $db->prepare("SELECT id, name FROM earning_categories WHERE household_id = ? ORDER BY id");
     $catList->execute([$hid]); $catList = $catList->fetchAll();
@@ -2099,6 +2229,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
       <button type="button" class="pill-btn act" style="margin-left:auto;"
               onclick="document.getElementById('add-ern-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
     </div>
+    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <dialog id="add-ern-dlg" class="confirm" style="max-width:360px;">
       <?php if (!$catList): ?>
@@ -2122,7 +2253,10 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
               <?php endforeach; ?>
             </select>
           </div>
-          <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+          <div class="field-row">
+            <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+            <?= memberSelect($mems, $uid) ?>
+          </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-ern-dlg').close()">Cancel</button>
             <button class="btn btn-primary" type="submit" id="ern-save" disabled>Save</button>
@@ -2156,6 +2290,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
               'amount'      => (string)$e['amount'],
               'category_id' => (int)($e['category_id'] ?? 0),
               'date'        => $e['date'],
+              'member_id'   => (int)($e['member_id'] ?? 0),
           ]); ?>
           <div class="card elev-sm row">
             <div class="row-icon ink"><?= icon('wallet', 16) ?></div>
@@ -2164,22 +2299,23 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
               <div class="sub"><?= h(($e['cat_name'] ?? 'Uncategorised') . ' · ' . (new DateTimeImmutable($e['date']))->format('M j')) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
-            <button class="icon-btn" type="button" aria-label="Edit"
-                    onclick='openEditEarning(<?= h($ernJson) ?>)'>
-              <?= icon('edit', 15) ?>
-            </button>
-            <button class="icon-btn" type="button" aria-label="Delete"
-                    onclick='askConfirm(<?= h(json_encode([
-                        "action" => "/earnings/delete",
-                        "id"     => (int)$e['id'],
-                        "back"   => "/earn",
-                        "csrf"   => csrfToken(),
-                        "title"  => "Delete earning?",
-                        "body"   => $e['name'] . ' — ' . fmt((float)$e['amount']),
-                        "ok"     => "Delete",
-                    ])) ?>)'>
-              <?= icon('trash-2', 15) ?>
-            </button>
+            <?php if (mayEdit($e, $user)): ?>
+              <button class="icon-btn" type="button" aria-label="Edit"
+                      onclick='openEditEarning(<?= h($ernJson) ?>)'>
+                <?= icon('edit', 15) ?>
+              </button>
+              <button class="icon-btn" type="button" aria-label="Delete"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/earnings/delete",
+                          "id"     => (int)$e['id'],
+                          "back"   => "/earn" . ($who > 0 ? "?who=$who" : ""),
+                          "title"  => "Delete earning?",
+                          "body"   => $e['name'] . ' — ' . fmt((float)$e['amount']),
+                          "ok"     => "Delete",
+                      ])) ?>)'>
+                <?= icon('trash-2', 15) ?>
+              </button>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -2193,11 +2329,11 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
       <?php if ($hasMore || $hasPrev): ?>
         <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
           <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
-            <a class="btn btn-secondary" href="/earn?o=<?= $prev ?>">← Newer</a>
+            <a class="btn btn-secondary" href="/earn?o=<?= $prev ?><?= $whoQ ?>">← Newer</a>
           <?php else: ?><span></span><?php endif; ?>
           <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
           <?php if ($hasMore): ?>
-            <a class="btn btn-secondary" href="/earn?o=<?= $rowOffset + $pageSize ?>">Older →</a>
+            <a class="btn btn-secondary" href="/earn?o=<?= $rowOffset + $pageSize ?><?= $whoQ ?>">Older →</a>
           <?php else: ?><span></span><?php endif; ?>
         </div>
       <?php endif; ?>
@@ -2206,7 +2342,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         <form method="post" action="/earnings/update">
           <?= csrfInput() ?>
           <input type="hidden" name="id" id="ee-id">
-          <input type="hidden" name="back" value="/earn">
+          <input type="hidden" name="back" value="/earn<?= $who > 0 ? '?who=' . $who : '' ?>">
           <div class="dlg-title">Edit earning</div>
           <input class="input" name="name" id="ee-name" required maxlength="80" placeholder="Name">
           <div class="field-row">
@@ -2220,7 +2356,10 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
               <?php endforeach; ?>
             </select>
           </div>
-          <input class="input" name="date" id="ee-date" type="date" required>
+          <div class="field-row">
+            <input class="input" name="date" id="ee-date" type="date" required>
+            <?= memberSelect($mems, $uid, 'ee-member') ?>
+          </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-earning-dlg').close()">Cancel</button>
             <button type="submit" class="btn btn-primary">Save</button>
@@ -2234,13 +2373,15 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         document.getElementById('ee-amount').value   = d.amount;
         document.getElementById('ee-category').value = d.category_id || '';
         document.getElementById('ee-date').value     = d.date;
+        var m = document.getElementById('ee-member');
+        if (m) m.value = d.member_id || 0;
         document.getElementById('edit-earning-dlg').showModal();
       }
       </script>
     <?php endif; ?>
     <?php
     $content = ob_get_clean();
-    layout($db, $user, 'earn', $content, '/earn');
+    layout($db, $user, 'earn', $content, '/earn' . ($who > 0 ? '?who=' . $who : ''));
 }
 
 // ─── Year summary ───────────────────────────────────────────────────
@@ -2251,6 +2392,15 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     $mode = $mode === 'fy' ? 'fy' : 'cal';
     if (!in_array($invFilter, ['all', 'active', 'archived'], true)) $invFilter = 'all';
     $now  = new DateTimeImmutable('today');
+    $uid  = (int)$user['id'];
+    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
+    $mems->execute([$hid]); $mems = $mems->fetchAll();
+
+    // Filter the whole year to one person. Validated against this household's members.
+    $who = (int)($_GET['who'] ?? 0);
+    $who = $who > 0 ? (int)(ownedId($db, 'members', $hid, $who) ?? 0) : 0;
+    [$whoSql,  $whoBind]  = whoWhere($who);
+    [$whoSqlE, $whoBindE] = whoWhere($who, 'e');
 
     // Default to the period we're currently in. The FY that contains today starts in
     // April, so Jan–Mar still belongs to the FY that began the previous calendar year.
@@ -2262,13 +2412,17 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 
     // Clamp to [earliest year with data, current period] so you can't wander into empty
     // decades. One indexed MIN() per table — cheap on (household_id, date).
-    $minDate = null;
-    foreach (['expenses', 'investments', 'earnings'] as $t) {
-        $s = $db->prepare("SELECT MIN(`date`) FROM $t WHERE household_id = ?");
-        $s->execute([$hid]);
-        $d = $s->fetchColumn();
-        if ($d && ($minDate === null || $d < $minDate)) $minDate = $d;
-    }
+    // One round trip, not three: each branch is still an index seek on (household_id, date),
+    // but the year-nav clamp is not worth three PREPARE/EXECUTE pairs on the heaviest page.
+    $s = $db->prepare(
+        "SELECT MIN(d) FROM (
+            SELECT MIN(`date`) AS d FROM expenses    WHERE household_id = ?
+            UNION ALL SELECT MIN(`date`) FROM investments WHERE household_id = ?
+            UNION ALL SELECT MIN(`date`) FROM earnings    WHERE household_id = ?
+         ) x"
+    );
+    $s->execute([$hid, $hid, $hid]);
+    $minDate = $s->fetchColumn() ?: null;
     $firstYear = $curStart;
     if ($minDate) {
         $md = new DateTimeImmutable($minDate);
@@ -2294,23 +2448,23 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     $selectYm = "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt, COUNT(*) AS n FROM ";
     $whereYm  = " WHERE household_id = ? AND `date` >= ? AND `date` < ?";
 
-    $s = $db->prepare($selectYm . "expenses" . $whereYm . " GROUP BY ym");
-    $s->execute([$hid, $start, $end]);
+    $s = $db->prepare($selectYm . "expenses" . $whereYm . $whoSql . " GROUP BY ym");
+    $s->execute([$hid, $start, $end, ...$whoBind]);
     foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['exp'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
 
-    $s = $db->prepare($selectYm . "investments" . $whereYm . $invClause . " GROUP BY ym");
-    $s->execute(array_merge([$hid, $start, $end], $invParams));
+    $s = $db->prepare($selectYm . "investments" . $whereYm . $invClause . $whoSql . " GROUP BY ym");
+    $s->execute(array_merge([$hid, $start, $end], $invParams, $whoBind));
     foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['inv'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
 
-    $s = $db->prepare($selectYm . "earnings" . $whereYm . " GROUP BY ym");
-    $s->execute([$hid, $start, $end]);
+    $s = $db->prepare($selectYm . "earnings" . $whereYm . $whoSql . " GROUP BY ym");
+    $s->execute([$hid, $start, $end, ...$whoBind]);
     foreach ($s->fetchAll() as $r) $monthly[$r['ym']]['ern'] = ['amt' => (float)$r['amt'], 'n' => (int)$r['n']];
 
     // Unfiltered count, so "is this period empty?" is answered by the data rather than by
     // the current toggle. Otherwise picking Archived on a household with none would report
     // an empty year and hide the toggle that switches back — a dead end.
-    $s = $db->prepare("SELECT COUNT(*) FROM investments" . $whereYm);
-    $s->execute([$hid, $start, $end]);
+    $s = $db->prepare("SELECT COUNT(*) FROM investments" . $whereYm . $whoSql);
+    $s->execute([$hid, $start, $end, ...$whoBind]);
     $invAllCount = (int)$s->fetchColumn();
 
     // Twelve buckets in period order, so an empty month still gets a column.
@@ -2344,28 +2498,29 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
          LEFT JOIN categories p ON p.id = c.parent_id AND p.household_id = c.household_id
-         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE
          GROUP BY c.id, c.name, c.icon, p.id, p.name, p.icon"
     );
-    $catStmt->execute([$hid, $start, $end]); $byCat = rollupCategories($catStmt->fetchAll());
+    $catStmt->execute([$hid, $start, $end, ...$whoBindE]); $byCat = rollupCategories($catStmt->fetchAll());
 
     $ernStmt = $db->prepare(
         "SELECT COALESCE(c.name, 'Uncategorised') AS name, SUM(e.amount) AS amt
          FROM earnings e
          LEFT JOIN earning_categories c ON c.id = e.category_id AND c.household_id = e.household_id
-         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE
          GROUP BY c.id, c.name ORDER BY amt DESC"
     );
-    $ernStmt->execute([$hid, $start, $end]); $byErn = $ernStmt->fetchAll();
+    $ernStmt->execute([$hid, $start, $end, ...$whoBindE]); $byErn = $ernStmt->fetchAll();
 
     $typeStmt = $db->prepare(
         "SELECT type, SUM(amount) AS amt FROM investments
-         WHERE household_id = ? AND `date` >= ? AND `date` < ?$invClause
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$invClause$whoSql
          GROUP BY type ORDER BY amt DESC"
     );
-    $typeStmt->execute(array_merge([$hid, $start, $end], $invParams)); $byType = $typeStmt->fetchAll();
+    $typeStmt->execute(array_merge([$hid, $start, $end], $invParams, $whoBind)); $byType = $typeStmt->fetchAll();
 
-    $qs      = fn(int $yy) => "/year?mode=$mode&amp;inv=$invFilter&amp;y=$yy";
+    $whoQ    = $who > 0 ? '&amp;who=' . $who : '';
+    $qs      = fn(int $yy) => "/year?mode=$mode&amp;inv=$invFilter&amp;y=$yy$whoQ";
     $hasPrev = $y > $firstYear;
     $hasNext = $y < $curStart;
     // Elapsed months, so a period still in progress isn't averaged over a full 12.
@@ -2380,11 +2535,12 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     <!-- Plain links, not radios+onchange: a change handler can fire from scroll/state
          restoration and navigate unintentionally. Links only move when tapped. -->
     <div class="seg year-seg" role="group" aria-label="Year type">
-      <a class="seg-opt<?= $mode === 'cal' ? ' on' : '' ?>" href="/year?mode=cal&amp;inv=<?= h($invFilter) ?>"
+      <a class="seg-opt<?= $mode === 'cal' ? ' on' : '' ?>" href="/year?mode=cal&amp;inv=<?= h($invFilter) ?><?= $whoQ ?>"
          <?= $mode === 'cal' ? 'aria-current="page"' : '' ?>>Calendar year</a>
-      <a class="seg-opt<?= $mode === 'fy' ? ' on' : '' ?>" href="/year?mode=fy&amp;inv=<?= h($invFilter) ?>"
+      <a class="seg-opt<?= $mode === 'fy' ? ' on' : '' ?>" href="/year?mode=fy&amp;inv=<?= h($invFilter) ?><?= $whoQ ?>"
          <?= $mode === 'fy' ? 'aria-current="page"' : '' ?>>Financial year</a>
     </div>
+    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <div class="month-switch">
       <?php if ($hasPrev): ?>
@@ -2437,7 +2593,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
           <span class="lbl">Investments</span>
           <?php foreach (['all' => 'All', 'active' => 'Active', 'archived' => 'Archived'] as $k => $txt): ?>
             <a class="opt<?= $invFilter === $k ? ' on' : '' ?>"
-               href="/year?mode=<?= $mode ?>&amp;y=<?= $y ?>&amp;inv=<?= $k ?>"
+               href="/year?mode=<?= $mode ?>&amp;y=<?= $y ?>&amp;inv=<?= $k ?><?= $whoQ ?>"
                <?= $invFilter === $k ? 'aria-current="true"' : '' ?>><?= $txt ?></a>
           <?php endforeach; ?>
         </div>
@@ -2457,7 +2613,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
             $tip = $m['full'] . ' — earned ' . fmt($m['ern']) . ', spent ' . fmt($m['exp']) . ', invested ' . fmt($m['inv']);
             // Past months link into History; a future month in the current year does not.
             $tag = $m['back'] >= 0 ? 'a' : 'div';
-            $href = $m['back'] >= 0 ? ' href="/history?m=' . $m['back'] . '"' : '';
+            $href = $m['back'] >= 0 ? ' href="/history?m=' . $m['back'] . ($who > 0 ? "&amp;who=$who" : '') . '"' : '';
           ?>
             <<?= $tag ?> class="ycol"<?= $href ?> title="<?= h($tip) ?>" aria-label="<?= h($tip) ?>">
               <div class="ystack">
@@ -2524,11 +2680,12 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
         </div>
       <?php endif; ?>
     <?php endif; ?>
-    <?= swipeNavScript($hasPrev ? "/year?mode=$mode&inv=$invFilter&y=" . ($y - 1) : null,
-                       $hasNext ? "/year?mode=$mode&inv=$invFilter&y=" . ($y + 1) : null) ?>
+    <?php $whoR = $who > 0 ? "&who=$who" : ''; ?>
+    <?= swipeNavScript($hasPrev ? "/year?mode=$mode&inv=$invFilter&y=" . ($y - 1) . $whoR : null,
+                       $hasNext ? "/year?mode=$mode&inv=$invFilter&y=" . ($y + 1) . $whoR : null) ?>
     <?php
     $content = ob_get_clean();
-    layout($db, $user, 'year', $content, "/year?mode=$mode&inv=$invFilter&y=$y");
+    layout($db, $user, 'year', $content, "/year?mode=$mode&inv=$invFilter&y=$y" . ($who > 0 ? "&who=$who" : ""));
 }
 
 // ─── Recurring ──────────────────────────────────────────────────────
@@ -2536,6 +2693,9 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = categoryTree($cats->fetchAll());
+    $uid  = (int)$user['id'];
+    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
+    $mems->execute([$hid]); $mems = $mems->fetchAll();
     // Same split as the Invest tab: new recurring investments can only target a live type,
     // but the edit dialog lists archived ones so an existing item keeps its type on save.
     $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
@@ -2558,7 +2718,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
 
     <div class="pill-row">
       <button type="button" class="pill-btn" style="margin-left:auto;"
-              onclick="document.getElementById('split-dlg').showModal()"><?= icon('calendar', 13) ?>&nbsp;Split a bill</button>
+              onclick="openAddSplit()"><?= icon('calendar', 13) ?>&nbsp;Split a bill</button>
       <button type="button" class="pill-btn act"
               onclick="document.getElementById('add-rec-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
     </div>
@@ -2602,6 +2762,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             <option value="yearly">Yearly</option>
           </select>
           <input class="input" name="next_date" type="date" value="<?= h(today()) ?>">
+          <?= memberSelect($mems, $uid) ?>
         </div>
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-rec-dlg').close()">Cancel</button>
@@ -2625,11 +2786,15 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <!-- Split a prepaid bill. Separate dialog rather than a fourth "kind" in the one above,
          because every field means something different: one total instead of a per-period
          amount, a length instead of a frequency, and a date that has already happened. -->
+    <?php /* One dialog, two jobs. Editing a split asks for exactly the same four things as
+             creating one, so a second dialog would mean two copies of the preview maths and two
+             sets of ids to keep in step. openEditSplit() repoints the action and the copy. */ ?>
     <dialog id="split-dlg" class="confirm" style="max-width:360px;">
-      <form method="post" action="/recurring/split">
+      <form method="post" action="/recurring/split" id="sp-form">
         <?= csrfInput() ?>
-        <div class="dlg-title">Split a prepaid bill</div>
-        <div class="muted" style="margin-bottom:10px;">
+        <input type="hidden" name="id" id="sp-id" value="" disabled>
+        <div class="dlg-title" id="sp-title">Split a prepaid bill</div>
+        <div class="muted" style="margin-bottom:10px;" id="sp-blurb">
           Paid once, used over months — insurance, domains, hosting. An equal share posts to
           History every month, and months already past appear straight away.
         </div>
@@ -2655,6 +2820,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <input class="input" name="start_date" id="sp-date" type="date" value="<?= h(today()) ?>"
                  onchange="splitPreview()">
         </div>
+        <?php if ($ms = memberSelect($mems, $uid, 'sp-member')): ?><div class="field-row"><?= $ms ?></div><?php endif; ?>
         <div class="muted" id="sp-preview" style="margin-top:10px;"></div>
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('split-dlg').close()">Cancel</button>
@@ -2665,7 +2831,8 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     <script>
     // Previews exactly what the server will store, so an uneven split (10000 over 12 months
     // is 833.33 a month, four paise short) is visible before saving rather than after.
-    var SPLIT_CUR = <?= json_encode($_SESSION['currency'] ?? '₹') ?>;
+    var SPLIT_CUR   = <?= json_encode($_SESSION['currency'] ?? '₹') ?>;
+    var SPLIT_TODAY = <?= json_encode(today()) ?>;
     function splitPreview() {
       var total  = parseFloat(document.getElementById('sp-amt').value);
       var months = parseInt(document.getElementById('sp-months').value, 10);
@@ -2688,6 +2855,56 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
                       + ' — ' + span(0) + ' through ' + span(months - 1);
     }
     splitPreview();
+
+    // Add mode: a fresh plan, posting to /recurring/split. The id field stays disabled so it
+    // is not submitted at all, rather than submitted empty.
+    function openAddSplit() {
+      var f = document.getElementById('sp-form');
+      f.action = '/recurring/split';
+      document.getElementById('sp-id').disabled = true;
+      document.getElementById('sp-title').textContent = 'Split a prepaid bill';
+      document.getElementById('sp-blurb').textContent =
+        'Paid once, used over months \u2014 insurance, domains, hosting. An equal share posts to '
+        + 'History every month, and months already past appear straight away.';
+      document.getElementById('sp-name').value = '';
+      document.getElementById('sp-amt').value  = '';
+      document.getElementById('sp-months').value = '12';
+      document.getElementById('sp-date').value = SPLIT_TODAY;
+      splitPreview();
+      document.getElementById('split-dlg').showModal();
+    }
+
+    // Edit mode: the same four questions, restated. d.total is the whole bill again, not the
+    // monthly share, because that is what was typed in the first place.
+    function openEditSplit(d) {
+      var f = document.getElementById('sp-form');
+      f.action = '/recurring/split/update';
+      var idf = document.getElementById('sp-id');
+      idf.disabled = false;
+      idf.value = d.id;
+      document.getElementById('sp-title').textContent = 'Edit split bill';
+      document.getElementById('sp-blurb').textContent =
+        'Changing any of this recalculates every share and re-posts them to History. '
+        + 'Anything you edited by hand on those posted entries is replaced.';
+      document.getElementById('sp-name').value = d.name;
+      document.getElementById('sp-amt').value  = d.total;
+      // A split made before this list existed, or one whose length was never on it, still has
+      // to be openable — so its own length joins the options rather than being rounded to one.
+      var sel = document.getElementById('sp-months');
+      if (!Array.prototype.some.call(sel.options, function (o) { return +o.value === +d.months; })) {
+        var o = document.createElement('option');
+        o.value = d.months; o.textContent = d.months + ' months';
+        sel.appendChild(o);
+      }
+      sel.value = d.months;
+      document.getElementById('sp-date').value = d.start_date;
+      var m = document.getElementById('sp-member');
+      if (m) m.value = d.member_id || 0;
+      var c = document.getElementById('sp-cat');
+      if (c) c.value = d.category_id || '';
+      splitPreview();
+      document.getElementById('split-dlg').showModal();
+    }
     </script>
     <?php if ($showForm): ?>
       <script>document.getElementById('add-rec-dlg').showModal();</script>
@@ -2707,7 +2924,30 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               'type'        => (string)($r['type'] ?? ''),
               'frequency'   => $r['frequency'],
               'next_date'   => $r['next_date'],
+              'member_id'   => (int)($r['member_id'] ?? 0),
           ]); ?>
+          <?php
+          // A split is a recurring row with an end date. Its dialog asks for the whole bill and
+          // its length, so both are reconstructed here: the total from the share it posts, the
+          // length from the two dates. start_date is NULL only on rows that predate it.
+          $isSplit = $r['end_date'] !== null;
+          $spMonths = $isSplit
+              ? monthsSpan((string)($r['start_date'] ?: $r['next_date']), (string)$r['end_date'])
+              : 0;
+          $splitJson = $isSplit ? json_encode([
+              'id'          => (int)$r['id'],
+              'name'        => $r['name'],
+              // What was typed, when we have it. Splits made before the column exists fall
+              // back to the sum of their shares, which is the only figure they can offer.
+              'total'       => $r['total_amount'] !== null
+                                 ? number_format((float)$r['total_amount'], 2, '.', '')
+                                 : number_format((float)$r['amount'] * $spMonths, 2, '.', ''),
+              'months'      => $spMonths,
+              'start_date'  => (string)($r['start_date'] ?: $r['next_date']),
+              'category_id' => (int)($r['category_id'] ?? 0),
+              'member_id'   => (int)($r['member_id'] ?? 0),
+          ]) : '';
+          ?>
           <?php
           $kind = $r['kind'] ?? 'expense';
           [$rowCls, $rowIcon, $rowWhat] = match ($kind) {
@@ -2737,22 +2977,23 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               <div class="sub"><?= h($sub) ?></div>
             </div>
             <div class="row-amt"><?= h(fmt((float)$r['amount'])) ?></div>
-            <button class="icon-btn" type="button" aria-label="Edit"
-                    onclick='openEditRecurring(<?= h($recJson) ?>)'>
-              <?= icon('edit', 15) ?>
-            </button>
-            <button class="icon-btn" type="button" aria-label="Delete"
-                    onclick='askConfirm(<?= h(json_encode([
-                        "action" => "/recurring/delete",
-                        "id"     => (int)$r['id'],
-                        "csrf"   => csrfToken(),
-                        "title"  => "Delete recurring item?",
-                        "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
-                        "ok"     => "Delete",
-                        "extra"  => "Also delete all past auto-posted entries for this item",
-                    ])) ?>)'>
-              <?= icon('trash-2', 15) ?>
-            </button>
+            <?php if (mayEdit($r, $user)): ?>
+              <button class="icon-btn" type="button" aria-label="Edit"
+                      onclick='<?= $isSplit ? 'openEditSplit(' . h($splitJson) . ')' : 'openEditRecurring(' . h($recJson) . ')' ?>'>
+                <?= icon('edit', 15) ?>
+              </button>
+              <button class="icon-btn" type="button" aria-label="Delete"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/recurring/delete",
+                          "id"     => (int)$r['id'],
+                          "title"  => "Delete recurring item?",
+                          "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
+                          "ok"     => "Delete",
+                          "extra"  => "Also delete all past auto-posted entries for this item",
+                      ])) ?>)'>
+                <?= icon('trash-2', 15) ?>
+              </button>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -2794,6 +3035,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               <option value="yearly">Yearly</option>
             </select>
             <input class="input" name="next_date" id="er-next" type="date" required>
+            <?= memberSelect($mems, $uid, 'er-member') ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-recurring-dlg').close()">Cancel</button>
@@ -2821,6 +3063,8 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
         if (d.type) document.getElementById('er-type').value = d.type;
         document.getElementById('er-frequency').value = d.frequency;
         document.getElementById('er-next').value      = d.next_date;
+        var m = document.getElementById('er-member');
+        if (m) m.value = d.member_id || 0;
         toggleErKind();
         document.getElementById('edit-recurring-dlg').showModal();
       }
@@ -3141,6 +3385,338 @@ function renderOrganise(PDO $db, array $user): void {
 // ─── Terms & Conditions ─────────────────────────────────────────────
 
 // Shared prose block — no chrome; both the authed and public wrappers embed this.
+// ────────────────────────────────────────────────────────────────────
+// /ledgers — pick which ledger you are looking at, and share it.
+// This is also where sign-in lands anyone who belongs to more than one.
+// ────────────────────────────────────────────────────────────────────
+// The "who?" select, shared by every add and edit dialog outside the Add tab (which has its
+// own chips). A ledger with one member has nothing to choose, so this emits nothing at all
+// and the entry simply carries no member — same as before sharing existed.
+// $uid decides which options are pickable. Another person's name renders but is disabled —
+// present so an entry already filed under them keeps its name when someone edits the amount,
+// unpickable so nobody files a fresh entry in their name. A disabled option can still be
+// selected programmatically and still submits, which is exactly what that needs.
+function memberSelect(array $mems, int $uid, string $id = '', ?int $selected = null): string {
+    if (count($mems) < 2) return '';
+    $mine = attributableIds($mems, $uid);
+    $out = '<select class="select" name="member_id"' . ($id !== '' ? ' id="' . h($id) . '"' : '') . '>'
+         . '<option value="0">Anyone</option>';
+    foreach ($mems as $m) {
+        $mid = (int)$m['id'];
+        $on  = ($selected !== null && $mid === $selected) ? ' selected' : '';
+        $off = in_array($mid, $mine, true) ? '' : ' disabled';
+        $out .= '<option value="' . $mid . '"' . $on . $off . '>' . h($m['name'])
+              . ($off !== '' ? ' — signs in' : '') . '</option>';
+    }
+    return $out . '</select>';
+}
+
+// The "who?" filter. Same pills as the Invest tab's All/Active/Archived row, so the two
+// filters on this app look and behave alike; setWho() keeps whatever query string the page is
+// already carrying, which is why these are buttons rather than per-page hrefs.
+//
+// Two conditions, both required. There must be more than one name to choose between, and the
+// ledger must actually be shared — on a ledger only one person can open, "who spent it?" is a
+// question nobody is asking, and the row is just clutter above every list.
+function whoFilterRow(PDO $db, int $hid, array $mems, int $who): string {
+    if (count($mems) < 2) return '';
+    $n = $db->prepare("SELECT COUNT(*) FROM household_users WHERE household_id = ?");
+    $n->execute([$hid]);
+    if ((int)$n->fetchColumn() < 2) return '';
+
+    $pills = '<button type="button" class="pill-btn' . ($who === 0 ? ' on' : '')
+           . '" onclick="setWho(0)">All</button>';
+    foreach ($mems as $m) {
+        $id = (int)$m['id'];
+        $pills .= '<button type="button" class="pill-btn' . ($id === $who ? ' on' : '')
+                . '" onclick="setWho(' . $id . ')">' . h($m['name']) . '</button>';
+    }
+    return '<div class="pill-row" role="group" aria-label="Filter by person">' . $pills . '</div>';
+}
+
+function renderLedgers(PDO $db, array $user): void {
+    $hid     = (int)$user['household_id'];
+    $uid     = (int)$user['id'];
+    $isOwner = ($user['role'] ?? ROLE_MEMBER) === ROLE_OWNER;
+
+    $mine = $user['ledgers'] ?? ledgersFor($db, $uid);
+
+    $people = $db->prepare(
+        "SELECT u.id, u.name, u.email, hu.role
+         FROM household_users hu JOIN users u ON u.id = hu.user_id
+         WHERE hu.household_id = ? ORDER BY hu.joined_at, u.id"
+    );
+    $people->execute([$hid]);
+    $people = $people->fetchAll();
+
+    // Every name that can appear on an entry, including the ones belonging to people who sign
+    // in. Two cards, two questions: the one above is who may open the ledger, this one is what
+    // they are called on an entry. They are genuinely different — a household calls someone
+    // "Appa" long after Google has decided he is "Rajesh Kumar".
+    $labels = $db->prepare(
+        "SELECT m.id, m.name, m.user_id, u.name AS user_name
+         FROM members m LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.household_id = ? ORDER BY m.id"
+    );
+    $labels->execute([$hid]);
+    $labels = $labels->fetchAll();
+    $memberCount = (int)$db->query("SELECT COUNT(*) FROM members WHERE household_id = " . (int)$hid)->fetchColumn();
+
+    // Only the owner can mint one, so only the owner pays for the lookup.
+    $inv = null;
+    if ($isOwner) {
+        // Seconds-left comes from MySQL, not PHP. `expires_at` is written with MySQL's NOW()
+        // and enforced against MySQL's NOW(), and the two clocks sit in different timezones —
+        // doing the subtraction here read 360 minutes for a 30-minute link.
+        $s = $db->prepare(
+            "SELECT token, TIMESTAMPDIFF(SECOND, NOW(), expires_at) AS secs_left FROM invites
+             WHERE household_id = ? AND used_at IS NULL AND expires_at > NOW() LIMIT 1"
+        );
+        $s->execute([$hid]);
+        $inv = $s->fetch() ?: null;
+    }
+    $full = count($people) >= HOUSEHOLD_USERS_MAX;
+    $link = $inv ? originUrl() . '/join?t=' . $inv['token'] : '';
+    $here = '';
+    foreach ($mine as $l) if ((int)$l['id'] === $hid) $here = (string)$l['name'];
+
+    ob_start();
+    ?>
+    <div class="month-switch">
+      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <div class="label" style="font-size:16px;">Ledgers &amp; sharing</div>
+      <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
+    </div>
+
+    <?php if (count($mine) > 1): ?>
+      <div class="muted" style="font-size:12px; margin: 0 2px 6px;">
+        You belong to <?= count($mine) ?> ledgers. Tap one to manage it below, or
+        <strong>Open</strong> to start using it.
+      </div>
+      <?php /* Two submit buttons, one form, differing only in where they send you back to.
+               Tapping the row keeps you on this page so its settings are right there; Open
+               leaves for the ledger itself. Both do the same switch — the selected ledger IS
+               the active one, which is what keeps every handler on this page unambiguous
+               about which ledger it is writing to. */ ?>
+      <?php foreach ($mine as $l): $on = (int)$l['id'] === $hid; ?>
+        <form method="post" action="/ledgers/switch"
+              style="display:flex; gap:8px; align-items:stretch; margin-bottom:8px;">
+          <?= csrfInput() ?>
+          <input type="hidden" name="household_id" value="<?= (int)$l['id'] ?>">
+          <button type="submit" name="back" value="/ledgers" class="card elev-sm row"
+                  aria-current="<?= $on ? 'true' : 'false' ?>"
+                  style="flex:1; margin:0; text-align:left; border:none; cursor:pointer;<?= $on ? ' outline:2px solid var(--color-accent); outline-offset:-2px;' : '' ?>">
+            <span class="row-icon"><?= icon($on ? 'check' : 'wallet', 18) ?></span>
+            <span class="row-main">
+              <span class="title" style="display:block;"><?= h($l['name']) ?></span>
+              <span class="sub" style="display:block;">
+                <?= $l['role'] === ROLE_OWNER ? 'You own this' : 'Shared with you' ?>
+                · <?= (int)$l['people'] ?> <?= (int)$l['people'] === 1 ? 'person' : 'people' ?>
+              </span>
+            </span>
+          </button>
+          <button type="submit" name="back" value="/" class="btn<?= $on ? ' btn-primary' : '' ?>"
+                  style="white-space:nowrap;">Open</button>
+        </form>
+      <?php endforeach; ?>
+      <hr style="margin:14px 0;">
+    <?php endif; ?>
+
+    <div class="card elev-sm" style="padding:14px;">
+      <h4 style="margin:0 0 8px;">This ledger</h4>
+      <?php if ($isOwner): ?>
+        <form method="post" action="/ledgers/rename" class="row-form">
+          <?= csrfInput() ?>
+          <input type="hidden" name="back" value="/ledgers">
+          <input class="input" name="name" maxlength="80" value="<?= h($here) ?>" placeholder="Ledger name">
+          <button class="btn btn-primary" type="submit">Rename</button>
+        </form>
+      <?php else: ?>
+        <div style="font-size:15px;"><?= h($here) ?></div>
+      <?php endif; ?>
+
+      <?php /* How money is written belongs to the ledger, not to whoever is reading it — a
+               household keeps one set of books, and two people in it must not see the same row
+               as ₹1,00,000 and $100,000. Members see the setting; the owner sets it. */ ?>
+      <?php $cur = $_SESSION['currency'] ?? '₹'; $nf = $_SESSION['numfmt'] ?? 'indian'; ?>
+      <hr style="margin:12px 0 10px;">
+      <h4 style="margin:0 0 6px;">How money is written</h4>
+      <?php if ($isOwner): ?>
+        <form method="post" action="/currency" class="row-form" style="margin-bottom:8px;">
+          <?= csrfInput() ?>
+          <input type="hidden" name="back" value="/ledgers">
+          <input class="input" name="symbol" value="<?= h($cur) ?>" maxlength="1" required
+                 aria-label="Currency symbol" title="One symbol, like ₹, $ or €"
+                 style="max-width:70px; text-align:center; font-family:var(--font-heading); font-size:18px;">
+          <button class="btn btn-primary" type="submit">Save</button>
+        </form>
+        <form method="post" action="/number-format" class="row-form">
+          <?= csrfInput() ?>
+          <input type="hidden" name="back" value="/ledgers">
+          <div class="seg" role="group" aria-label="Number grouping">
+            <button class="seg-opt<?= $nf === 'indian' ? ' on' : '' ?>" type="submit" name="style" value="indian"
+                    <?= $nf === 'indian' ? 'aria-current="true"' : '' ?>><?= h($cur) ?>10,00,000</button>
+            <button class="seg-opt<?= $nf === 'world' ? ' on' : '' ?>" type="submit" name="style" value="world"
+                    <?= $nf === 'world' ? 'aria-current="true"' : '' ?>><?= h($cur) ?>1,000,000</button>
+          </div>
+        </form>
+      <?php else: ?>
+        <div class="muted" style="font-size:13px;">
+          <?= h(fmtShort(1000000)) ?> — set by the ledger's owner.
+        </div>
+      <?php endif; ?>
+    </div>
+
+    <div class="card elev-sm" style="padding:14px; margin-top:10px;">
+      <h4 style="margin:0 0 2px;">Signed in (<?= count($people) ?> of <?= HOUSEHOLD_USERS_MAX ?>)</h4>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">People who can open this ledger.</div>
+      <?php foreach ($people as $p): ?>
+        <div class="cat-row" style="padding:4px 0;">
+          <div style="flex:1;">
+            <div style="font-size:14px;"><?= h($p['name']) ?><?= (int)$p['id'] === $uid ? ' (you)' : '' ?></div>
+            <div class="muted" style="font-size:12px;"><?= h($p['email']) ?></div>
+          </div>
+          <?php if ($p['role'] === ROLE_OWNER): ?>
+            <span class="muted" style="font-size:12px;">Owner</span>
+          <?php elseif ($isOwner): ?>
+            <button type="button" class="icon-btn" aria-label="Remove person"
+                    onclick='askConfirm(<?= h(json_encode([
+                        "action" => "/household-users/remove",
+                        "id"     => (int)$p['id'],
+                        "back"   => "/ledgers",
+                        "csrf"   => csrfToken(),
+                        "title"  => "Remove " . $p['name'] . "?",
+                        "body"   => "They lose access to this ledger. Everything they entered stays — it is the household's record, not theirs.",
+                        "ok"     => "Remove",
+                    ])) ?>)'><?= icon('x', 16) ?></button>
+          <?php endif; ?>
+        </div>
+      <?php endforeach; ?>
+
+      <?php /* Adding and renaming are everyone's job — neither loses anything. Removing takes
+               away a name the rest of the household files entries under, so that stays with
+               the owner. The server enforces the same split; this only reflects it. */ ?>
+        <hr style="margin:12px 0 8px;">
+        <h4 style="margin:0 0 2px;">Names on entries</h4>
+        <div class="muted" style="font-size:12px; margin-bottom:8px;">
+          What each person is called on an entry and on the filter. Rename freely — entries stay
+          attached to the person, not to the spelling. Add a name for someone who does not sign
+          in: a child, a parent, a shared card. A name gets no access; only an invite does.
+        </div>
+        <?php foreach ($labels as $m): $linked = !empty($m['user_id']); ?>
+          <div class="row-form" style="margin-bottom:6px; align-items:center;">
+            <form method="post" action="/members/update" class="row-form" style="flex:1; margin:0;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="/ledgers">
+              <input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
+              <input class="input" name="name" value="<?= h($m['name']) ?>" maxlength="60" required
+                     aria-label="Name on entries">
+              <button class="btn" type="submit">Save</button>
+            </form>
+            <?php if ($linked): ?>
+              <span class="muted" style="font-size:11px; white-space:nowrap;" title="<?= h($m['user_name'] ?? '') ?>">signs in</span>
+            <?php elseif ($isOwner && $memberCount > 1): ?>
+              <button type="button" class="icon-btn" aria-label="Remove name"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/members/delete",
+                          "id"     => (int)$m['id'],
+                          "back"   => "/ledgers",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Remove " . $m['name'] . "?",
+                          "body"   => "Entries already filed under them stay logged and keep the name; new ones can no longer name them.",
+                          "ok"     => "Remove",
+                      ])) ?>)'><?= icon('x', 16) ?></button>
+            <?php endif; ?>
+          </div>
+        <?php endforeach; ?>
+          <form method="post" action="/members" class="row-form" style="margin-top:10px;">
+            <?= csrfInput() ?>
+            <input type="hidden" name="back" value="/ledgers">
+            <input class="input" name="name" placeholder="Add a name" maxlength="60">
+            <button class="btn" type="submit">Add</button>
+          </form>
+    </div>
+
+    <?php if ($isOwner): ?>
+      <div class="card elev-sm" style="padding:14px; margin-top:10px;">
+        <h4 style="margin:0 0 8px;">Invite someone</h4>
+        <?php if ($full): ?>
+          <div class="muted" style="font-size:13px;">
+            This ledger is full — <?= HOUSEHOLD_USERS_MAX ?> people is the limit. Remove someone to make room.
+          </div>
+        <?php elseif ($link !== ''): ?>
+          <div class="muted" style="font-size:12px; margin-bottom:6px;">
+            Send this to one person. It works <strong>once</strong> and then stops —
+            <span id="inv-left" data-secs="<?= max(0, (int)$inv['secs_left']) ?>">expires in
+              <?= max(1, (int)ceil(max(0, (int)$inv['secs_left']) / 60)) ?> min</span>.
+          </div>
+          <div class="row-form">
+            <input class="input" id="inv-link" readonly value="<?= h($link) ?>" onclick="this.select()">
+            <button class="btn btn-primary" type="button" onclick="copyInvite()"><?= icon('copy', 16) ?></button>
+          </div>
+          <div class="row-form" style="margin-top:8px;">
+            <form method="post" action="/invite" style="flex:1;">
+              <?= csrfInput() ?><input type="hidden" name="back" value="/ledgers">
+              <button class="btn btn-block" type="submit">New link</button>
+            </form>
+            <form method="post" action="/invite/revoke" style="flex:1;">
+              <?= csrfInput() ?><input type="hidden" name="back" value="/ledgers">
+              <button class="btn btn-danger btn-block" type="submit">Cancel link</button>
+            </form>
+          </div>
+          <?php /* Emitted here, not at the foot of the page: both ids only exist while a live
+                   link does, and a script reaching for an absent element is exactly what
+                   `--preflight` fails the build over. */ ?>
+          <script>
+          function copyInvite() {
+            var el = document.getElementById('inv-link');
+            el.select();
+            // The Clipboard API needs a secure context; select()+execCommand is the fallback
+            // that still works when the app is opened over plain http on the home network.
+            if (navigator.clipboard) navigator.clipboard.writeText(el.value).catch(function () { document.execCommand('copy'); });
+            else document.execCommand('copy');
+          }
+          (function () {
+            var el = document.getElementById('inv-left');
+            // Anchored on the browser's own clock plus the seconds the server said were left,
+            // so a phone whose clock is off by an hour still counts down correctly.
+            var until = Date.now() + (parseInt(el.dataset.secs, 10) || 0) * 1000;
+            setInterval(function tick() {
+              var left = Math.ceil((until - Date.now()) / 60000);
+              el.textContent = left > 0 ? 'expires in ' + left + ' min' : 'expired — make a new one';
+              return tick;
+            }(), 20000);
+          })();
+          </script>
+        <?php else: ?>
+          <div class="muted" style="font-size:12px; margin-bottom:8px;">
+            Creates a single-use link that stops working after <?= INVITE_TTL_MINUTES ?> minutes.
+            They sign in with Google and keep their own ledger too.
+          </div>
+          <form method="post" action="/invite">
+            <?= csrfInput() ?><input type="hidden" name="back" value="/ledgers">
+            <button class="btn btn-primary btn-block" type="submit">Create invite link</button>
+          </form>
+        <?php endif; ?>
+      </div>
+    <?php else: ?>
+      <div class="card elev-sm" style="padding:14px; margin-top:10px;">
+        <button class="btn btn-danger btn-block" type="button"
+                onclick='askConfirm(<?= h(json_encode([
+                    "action" => "/ledgers/leave",
+                    "back"   => "/ledgers",
+                    "csrf"   => csrfToken(),
+                    "title"  => "Leave this ledger?",
+                    "body"   => "You will need a fresh invite to come back. Everything you entered stays with the household.",
+                    "ok"     => "Leave",
+                ])) ?>)'>Leave this ledger</button>
+      </div>
+    <?php endif; ?>
+
+    <?php
+    layout($db, $user, '', ob_get_clean(), '/ledgers');
+}
+
 function termsBody(): string {
     ob_start();
     ?>
@@ -3203,13 +3779,14 @@ function renderTerms(PDO $db, array $user): void {
 function renderTermsPublic(): void {
     $sprite = SVG_SPRITE;
     $body   = termsBody();
+    $cssV   = cssVersion();
     echo <<<HTML
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Open Ledger — Terms &amp; conditions</title>
-<link rel="stylesheet" href="/design-tokens/styles.css">
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
 <style>
   body { margin:0; background:var(--color-bg); }
   .col { max-width:480px; margin:0 auto; padding: var(--space-4) var(--space-4) var(--space-8); }

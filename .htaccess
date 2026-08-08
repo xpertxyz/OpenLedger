@@ -31,3 +31,23 @@ RewriteRule ^ index.php [L]
     Header set X-Frame-Options "DENY"
     Header set Referrer-Policy "same-origin"
 </IfModule>
+
+# Every page carries its stylesheet and icon sprite inline — about 30 KB of highly repetitive
+# CSS and SVG that compresses to roughly a fifth of that. Without this the host's default
+# decides, and the default is not guaranteed to be on.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css text/plain
+    AddOutputFilterByType DEFLATE application/javascript application/json
+    AddOutputFilterByType DEFLATE image/svg+xml application/manifest+json
+</IfModule>
+
+# Static assets only. HTML is deliberately absent: pages are per-user and per-session, and a
+# cached one would show the wrong household's numbers after a ledger switch.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 7 days"
+    ExpiresByType image/svg+xml "access plus 30 days"
+    ExpiresByType image/png "access plus 30 days"
+    ExpiresByType image/x-icon "access plus 30 days"
+    ExpiresByType application/manifest+json "access plus 7 days"
+</IfModule>

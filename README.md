@@ -5,7 +5,7 @@
 <h1 align="center">Open Ledger</h1>
 
 <p align="center">
-  A warm, mobile-first household ledger — earnings, expenses, investments, recurring bills — for one shared household.<br>
+  A warm, mobile-first household ledger — earnings, expenses, investments, recurring bills — shared with the people you actually live with.<br>
   PHP + MySQL + Google One Tap sign-in. No build step. Deploys to any shared host.
 </p>
 
@@ -39,16 +39,17 @@
 - **Archive an investment type** when a scheme ends — its entries stay logged but drop out of the active view. The Invest tab summarises **Active / Archived / Total**, and the list filters between them.
 - **Yearly summary** — calendar year *or* Indian financial year (Apr–Mar), with a twelve-month earnings-vs-expenses-vs-investments chart, **Earned / Spent / Invested** totals, a *saved* line (earned − spent), income-source and category and type breakdowns, and per-month averages that divide by *elapsed* months so a year in progress isn't understated. Tap any month to open it in History.
 - **Recurring items** that auto-post on their due date — expenses (rent, EMIs, subscriptions), earnings (salary, interest payouts) and investments (SIPs, RDs, auto-debits). Missed periods catch up in one sweep. Cascade delete of past auto-entries is optional per item.
-- **Split a prepaid bill across the months it covers** — a year of health insurance or two years of hosting is paid once but *used* monthly. Enter the total, the length (6 months to 3 years) and the date you paid it, and an equal share posts to History every month in the category you picked. Months that have already gone by appear immediately; the item stops itself after the last one. The dialog previews the exact monthly share before you save.
-- **Household sharing** — multiple members share one ledger. Attribute each expense to a member.
+- **Split a prepaid bill across the months it covers** — a year of health insurance or two years of hosting is paid once but *used* monthly. Enter the total, the length (6 months to 3 years) and the date you paid it, and an equal share posts to History every month in the category you picked. Months that have already gone by appear immediately; the item stops itself after the last one. The dialog previews the exact monthly share before you save. **Editable afterwards** — got the total or the start date wrong? Reopen it, restate the plan, and every share already posted to History is recalculated and re-posted to match.
+- **Share a ledger with your family** — the owner generates an invite link that works **once** and dies after 30 minutes. Whoever opens it signs in with Google, joins the ledger, and keeps their own private one too; from then on sign-in offers a picker. Up to 10 people per ledger.
+- **Everyone sees everything, everyone owns their own entries** — every member reads the whole ledger, but can only edit or delete what they added. The ledger owner can edit anything. The controls are hidden where they wouldn't work, so the rule is visible rather than discovered by being refused.
+- **Filter by person** — one "who?" dropdown on History, Earn, Invest and the yearly summary. Every total, bar and breakdown on the page follows it, and it survives month and year navigation.
 - **Editable everything** — every list row opens an inline edit modal. Rename categories and investment types anywhere and it reflects app-wide.
 - **Public landing page at `/`** for signed-out visitors — what the app is, drawn with inline SVG illustrations built from the design tokens. It loads no third-party script at all: Google Identity Services is pulled only on `/login`, so someone who never signs in never touches Google.
 - **`/robots.txt` and `/sitemap.xml`** generated from the request host, so they're correct on any deployment with nothing to configure. The sitemap lists the landing page only — every app route redirects a crawler to `/login`, which is `noindex`.
 - **Google One Tap sign-in** at `/login` — no passwords, no signup form, no account management surface.
-- **Indian number formatting** — ₹10,00,000 (lakh/crore grouping), not ₹1,000,000.
+- **Currency and number grouping belong to the ledger**, not to the reader — ₹10,00,000 or ₹1,000,000, one symbol, set once by the owner. A household keeps one set of books, so two people sharing it can never see the same row as ₹1,00,000 and $100,000.
 - **Installable** — web app manifest + full app-icon set, so "Add to Home Screen" gets a real icon and standalone chrome on iOS and Android.
 - **Warm light + dark themes**, per-user, persisted.
-- **Any currency symbol** — free text, per user.
 - **CSRF-guarded**, rate-limited (10 sign-ins / 15 min, 60 POSTs / min per IP), data-caps enforced server-side.
 - **Pagination** on history, earnings + investments, with SQL-side aggregates so month/all-time totals stay cheap.
 - **No build step, no npm, no composer** — just PHP + MySQL + a stylesheet.
