@@ -40,9 +40,9 @@
 - **Yearly summary** — calendar year *or* Indian financial year (Apr–Mar), with a twelve-month earnings-vs-expenses-vs-investments chart, **Earned / Spent / Invested** totals, a *saved* line (earned − spent), income-source and category and type breakdowns, and per-month averages that divide by *elapsed* months so a year in progress isn't understated. Tap any month to open it in History.
 - **Recurring items** that auto-post on their due date — expenses (rent, EMIs, subscriptions), earnings (salary, interest payouts) and investments (SIPs, RDs, auto-debits). Missed periods catch up in one sweep. Cascade delete of past auto-entries is optional per item.
 - **Split a prepaid bill across the months it covers** — a year of health insurance or two years of hosting is paid once but *used* monthly. Enter the total, the length (6 months to 3 years) and the date you paid it, and an equal share posts to History every month in the category you picked. Months that have already gone by appear immediately; the item stops itself after the last one. The dialog previews the exact monthly share before you save. **Editable afterwards** — got the total or the start date wrong? Reopen it, restate the plan, and every share already posted to History is recalculated and re-posted to match.
-- **Share a ledger with your family** — the owner generates an invite link that works **once** and dies after 30 minutes. Whoever opens it signs in with Google, joins the ledger, and keeps their own private one too; from then on sign-in offers a picker. Up to 10 people per ledger.
+- **Share a ledger with your family** — the owner generates an invite link that works **once** and dies after 30 minutes. Whoever opens it signs in with Google, joins the ledger, and keeps their own private one too; from then on sign-in offers a picker. Up to 10 people per ledger. Ledgers are named after their owner (“Priya”, not a third row called “Personal”), and the header always shows which one you're in — a wallet for your own, two figures for one shared with you.
 - **Everyone sees everything, everyone owns their own entries** — every member reads the whole ledger, but can only edit or delete what they added. The ledger owner can edit anything. The controls are hidden where they wouldn't work, so the rule is visible rather than discovered by being refused.
-- **Filter by person** — one "who?" dropdown on History, Earn, Invest and the yearly summary. Every total, bar and breakdown on the page follows it, and it survives month and year navigation.
+- **Filter by person** — All / Priya / Arjun pills on History, Earn, Invest and the yearly summary. Every total, bar and breakdown on the page follows the pick, and it survives month and year navigation. Only appears once a ledger is actually shared.
 - **Editable everything** — every list row opens an inline edit modal. Rename categories and investment types anywhere and it reflects app-wide.
 - **Public landing page at `/`** for signed-out visitors — what the app is, drawn with inline SVG illustrations built from the design tokens. It loads no third-party script at all: Google Identity Services is pulled only on `/login`, so someone who never signs in never touches Google.
 - **`/robots.txt` and `/sitemap.xml`** generated from the request host, so they're correct on any deployment with nothing to configure. The sitemap lists the landing page only — every app route redirects a crawler to `/login`, which is `noindex`.
@@ -69,7 +69,8 @@
   </tr>
   <tr>
     <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring — repeats and split bills</b></sub></td>
-    <td align="center" colspan="2"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — currency, types, members</b></sub></td>
+    <td align="center"><img src="docs/screenshots/ledgers.png" alt="Ledgers and sharing" width="240"><br><sub><b>Ledgers &amp; sharing — invite, people, names</b></sub></td>
+    <td align="center"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — navigation and lists</b></sub></td>
   </tr>
 </table>
 

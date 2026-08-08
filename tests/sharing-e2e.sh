@@ -50,7 +50,8 @@ echo
 echo "== bob starts with his own ledger only =="
 is "bob owns exactly one ledger"     "$(q "SELECT COUNT(*) FROM household_users WHERE user_id = $BOB")" "1"
 is "and it is not alice's"           "$(q "SELECT COUNT(*) FROM household_users WHERE user_id = $BOB AND household_id = 1")" "0"
-is "his ledger is called Personal"   "$(q "SELECT name FROM households WHERE id = $BOBHH")" "Personal"
+# Named after its owner, so a picker never shows two rows both reading "Personal".
+is "his ledger is named after him" "$(q "SELECT name FROM households WHERE id = $BOBHH")" "Bob"
 is "he owns it"                      "$(q "SELECT role FROM household_users WHERE user_id = $BOB")" "owner"
 is "his member label carries his name" "$(q "SELECT name FROM members WHERE household_id = $BOBHH")" "Bob"
 

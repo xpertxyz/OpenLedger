@@ -196,7 +196,11 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
     $ledgerTag  = '';
     if ($ledgerName !== '') {
         $others = array_values(array_filter($ledgers, fn($l) => (int)$l['id'] !== (int)$user['household_id']));
-        $label  = h($ledgerName);
+        // Whose ledger is this — not whether it is shared. Once you both own one and belong to
+        // someone else's, "shared" is true of both and tells you nothing; "mine or theirs" is
+        // the fact that changes what you can edit and whose books you are adding to.
+        $owned = ($user['role'] ?? ROLE_MEMBER) === ROLE_OWNER;
+        $label = icon($owned ? 'wallet' : 'users', 13) . '<span>' . h($ledgerName) . '</span>';
         if (count($ledgers) === 2 && $others) {
             // display:contents so the form itself does not become a flex item and knock the
             // header's spacing about — the button stays a direct child for layout purposes.
@@ -221,7 +225,7 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
                     . '<button type="submit" class="card elev-sm row"' . ($on ? ' autofocus' : '')
                     . ' style="width:100%; margin:0 0 8px; text-align:left; border:none; cursor:pointer;'
                     . ($on ? ' outline:2px solid var(--color-accent); outline-offset:-2px;' : '') . '">'
-                    . '<span class="row-icon">' . icon($on ? 'check' : 'wallet', 18) . '</span>'
+                    . '<span class="row-icon">' . icon($on ? 'check' : ($l['role'] === ROLE_OWNER ? 'wallet' : 'users'), 18) . '</span>'
                     . '<span class="row-main"><span class="title" style="display:block;">' . h((string)$l['name']) . '</span>'
                     . '<span class="sub" style="display:block;">'
                     . ($l['role'] === ROLE_OWNER ? 'You own this' : 'Shared with you') . '</span></span>'
@@ -233,7 +237,8 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
                 . '<button type="button" class="btn btn-secondary" onclick="document.getElementById(\'ledger-dlg\').close()">Cancel</button>'
                 . '<a class="btn" href="/ledgers">Manage</a></div></dialog>';
         } else {
-            $ledgerTag = '<a class="hdr-ledger" href="/ledgers" title="' . $label . '">' . $label . '</a>';
+            $ledgerTag = '<a class="hdr-ledger" href="/ledgers" title="' . h($ledgerName)
+                . ($owned ? ' — your ledger' : ' — shared with you') . '">' . $label . '</a>';
         }
     }
 
@@ -263,11 +268,15 @@ $meta
   /* max-width in vw, not px: the brand is fixed-width, so the ledger name is the only thing
      that can give, and it must give before the avatar is pushed off a 320px screen. */
   .hdr-ledger {
-    max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:5px; max-width:34vw;
     font-size:12px; padding:4px 10px; border-radius:999px; text-decoration:none;
     color:var(--color-text); background:var(--color-surface);
     border:1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
   }
+  /* Only the name gives when the header runs out of room — the icon must not be squashed
+     out of existence, since it is the whole point of the distinction. */
+  .hdr-ledger span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hdr-ledger svg { flex:none; opacity:.75; }
   .hdr-ledger:active { transform:scale(0.97); }
   .hdr-actions form, .hdr-actions a { display:inline-flex; margin:0; }
   .avatar { width:34px; height:34px; border-radius:999px; background:var(--color-accent-100); color:var(--color-accent-700); border:none; cursor:pointer; font-family:var(--font-heading); font-size:13px; }
@@ -679,9 +688,6 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <hr>
 
-
-        <hr>
-
         <details>
           <summary><h4>Investment types</h4></summary>
           <div class="details-body">
@@ -796,9 +802,6 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             </form>
           </div>
         </details>
-
-        <hr>
-
 
         <div style="flex:1;"></div>
 
@@ -984,9 +987,9 @@ function renderLanding(): void {
   <section class="hero">
     <div style="display:flex;flex-direction:column;gap:var(--space-4);align-items:flex-start;">
       <h1>Where the money in a house actually goes.</h1>
-      <p class="lede">A free, open-source ledger for one household. Log a spend in three
-        taps, let the rent post itself, and let the year explain itself. Built for a
-        phone, priced at nothing, yours to self-host.</p>
+      <p class="lede">A free, open-source ledger for the whole house. Log a spend in three
+        taps, invite your family with one link, let the rent post itself, and let the
+        year explain itself. Built for a phone, priced at nothing, yours to self-host.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="/login">Sign in with Google</a>
         <a class="btn btn-secondary" href="<?= h($repo) ?>">Read the source</a>
@@ -1146,6 +1149,31 @@ function renderLanding(): void {
     </div>
   </section>
 
+  <section class="feat flip">
+    <div>
+      <h2>One book, everyone's handwriting.</h2>
+      <p>Send one link — it works once and dies in thirty minutes. Whoever opens it
+        signs in and is in your ledger, and still keeps their own. Everyone reads
+        everything; each person edits what they added; the owner can fix anything.
+        A filter shows who's spending what.</p>
+    </div>
+    <div class="art">
+      <svg viewBox="0 0 160 120" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <!-- two people, one open book between them, a one-shot link arriving -->
+        <circle cx="34" cy="38" r="9" stroke="var(--color-accent)"/>
+        <path d="M20 66 a14 14 0 0 1 28 0"/>
+        <circle cx="126" cy="38" r="9" stroke="var(--color-accent-2)"/>
+        <path d="M112 66 a14 14 0 0 1 28 0"/>
+        <path d="M52 86 h24 a10 10 0 0 1 10 10 a10 10 0 0 1 10-10 h24 v18 a8 8 0 0 0-8-8 H94 a8 8 0 0 0-8 8 a8 8 0 0 0-8-8 H60 a8 8 0 0 0-8 8 Z"/>
+        <path d="M60 94 h14 M60 100 h9 M100 94 h14 M100 100 h9" stroke-width="1.4"/>
+        <path d="M52 38 h20 m8 0 h20" stroke-dasharray="3 5" stroke="var(--color-accent)"/>
+        <circle cx="80" cy="38" r="7" stroke="var(--color-accent)"/>
+        <path d="M80 34.5 v3.5 l2.5 2" stroke="var(--color-accent)"/>
+      </svg>
+    </div>
+  </section>
+
   <h2 style="padding-top:var(--space-6);">Also in the book</h2>
   <div class="grid">
     <div class="card">
@@ -1162,9 +1190,10 @@ function renderLanding(): void {
     </div>
     <div class="card">
       <?= icon('home', 22) ?>
-      <div class="card-title">One ledger, everyone in it</div>
-      <p class="card-body">Add each member once, then attribute any expense to whoever
-        spent it. No invites to approve, no per-seat anything.</p>
+      <div class="card-title">Everyone's, but yours</div>
+      <p class="card-body">Up to ten people per ledger, and you keep a personal one
+        too. Filter any tab by who spent it; names for kids and shared cards need
+        no login at all.</p>
     </div>
     <div class="card">
       <?= icon('moon', 22) ?>
@@ -1214,8 +1243,14 @@ function renderLanding(): void {
     </details>
     <details class="faq">
       <summary>Does it do currencies other than rupees?</summary>
-      <p>The currency symbol is free text, per person. The lakh-crore grouping is
-        what it was built for.</p>
+      <p>Each ledger has its own symbol, set by its owner — and its own digit
+        grouping, ₹10,00,000 or ₹1,000,000. Lakh-crore is what it was built for.</p>
+    </details>
+    <details class="faq">
+      <summary>Can my family see my personal ledger?</summary>
+      <p>No. Each ledger is its own book with its own people. Sharing one of yours
+        means sending a link that works once and expires in thirty minutes — nobody
+        gets in any other way.</p>
     </details>
     <details class="faq">
       <summary>What isn't in it?</summary>
@@ -1334,12 +1369,10 @@ $sprite
     $devBlock
     $flashHtml
   </div>
-  <div style="text-align:center; margin-top:14px; font-size:12px; color:var(--color-neutral-800);">
+  <div style="display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; margin-top:14px; font-size:12px; color:var(--color-neutral-800);">
     <a href="/" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">What is Open Ledger?</a>
-    &nbsp;·&nbsp;
     <a href="/terms" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
-    &nbsp;·&nbsp;
-    Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700); text-decoration:none;">XpertXYZ</a>
+    <span>Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700); text-decoration:none;">XpertXYZ</a></span>
   </div>
 </div>
 </body></html>
@@ -3506,7 +3539,7 @@ function renderLedgers(PDO $db, array $user): void {
           <button type="submit" name="back" value="/ledgers" class="card elev-sm row"
                   aria-current="<?= $on ? 'true' : 'false' ?>"
                   style="flex:1; margin:0; text-align:left; border:none; cursor:pointer;<?= $on ? ' outline:2px solid var(--color-accent); outline-offset:-2px;' : '' ?>">
-            <span class="row-icon"><?= icon($on ? 'check' : 'wallet', 18) ?></span>
+            <span class="row-icon"><?= icon($on ? 'check' : ($l['role'] === ROLE_OWNER ? 'wallet' : 'users'), 18) ?></span>
             <span class="row-main">
               <span class="title" style="display:block;"><?= h($l['name']) ?></span>
               <span class="sub" style="display:block;">

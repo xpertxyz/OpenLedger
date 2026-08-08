@@ -196,6 +196,15 @@ if (PHP_SAPI === 'cli') {
         // An unknown or missing style falls back to Indian rather than to an ungrouped number.
         assert(groupNumber(1000000, 0, 'nonsense') === '10,00,000');
 
+        // A ledger is named after its owner so a picker never shows two identical rows.
+        assert(ledgerNameFor('Praveen Kumar Boddupalli') === 'Praveen');
+        assert(ledgerNameFor('Meera')                    === 'Meera');
+        assert(ledgerNameFor('  Anita  Rao ')            === 'Anita');   // collapses whitespace
+        assert(ledgerNameFor('Jean-Luc Picard')          === 'Jean-Luc'); // a hyphen is not a break
+        assert(ledgerNameFor('')                         === 'Personal'); // nothing usable
+        assert(ledgerNameFor('   ')                      === 'Personal');
+        assert(mb_strlen(ledgerNameFor(str_repeat('a', 200))) === 80);    // fits households.name
+
         // One symbol, and one means one character — not one byte, and not "up to eight".
         assert(parseCurrency('₹')   === '₹');
         assert(parseCurrency('$')   === '$');

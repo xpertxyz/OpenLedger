@@ -88,7 +88,8 @@ Automated checks can't tell you whether the app *feels* right to a real user. Hi
 - [ ] **Landing page renders at `/`** — illustrations draw, theme button flips light/dark and survives a reload, all CTAs land on `/login`
 - [ ] **`/robots.txt` and `/sitemap.xml`** — both 200, and the URLs inside start `https://` with the real domain (not `http://`, not localhost)
 - [ ] **Sign-in card renders at `/login`** — Google button visible (real client id in prod), Terms link works even when signed out
-- [ ] **Sign in with Google** — first-time users get a ledger called "Personal" + 13 categories + 6 investment types + a member label carrying their own name
+- [ ] **Sign in with Google** — first-time users get a ledger named after them (first word of their Google name) + 13 categories + 6 investment types + a member label carrying their own name
+- [ ] **Ledger name in the header** — the chip beside the theme icon shows a people icon on a shared ledger and a wallet on one only you can open
 - [ ] **Invite someone** — Ledgers & sharing → Create invite link, send it to a second Google account on another device. They sign in, land in your ledger, and still have their own "Personal" one. Signing out and back in now shows them the ledger picker
 - [ ] **The link really is one-shot** — open the same invite URL a second time: it must refuse. Leave one unopened for 31 minutes and it must refuse too (preflight proves the window; only a real wait proves the wall clock)
 - [ ] **A member sees but cannot edit** — as the invited person, every row is visible and the totals match, but pencil and trash only appear on rows they added. Add one and confirm both appear on it

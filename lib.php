@@ -243,7 +243,7 @@ const MIGRATIONS = [
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v16';
+const SCHEMA_SENTINEL = '.schema-ok-v17';
 
 // A ledger is a household; these are the only two roles it has. The owner is whoever created
 // it — they can edit every entry, invite people and remove them. Everyone else edits their own.
@@ -318,6 +318,20 @@ function makeDb(array $cfg): PDO {
                   WHERE e.recurring_id = r.id),
                  r.next_date)
              WHERE r.end_date IS NOT NULL AND r.start_date IS NULL"
+        );
+        // v17 backfill — ledgers still carrying a name nobody typed. Both of these were
+        // defaults, so renaming them takes away no one's choice, and leaving them means two
+        // people who share a ledger see two identical rows in the picker. A household that was
+        // deliberately renamed is untouched, because its name is not in this list.
+        $db->exec(
+            "UPDATE households h
+             JOIN (SELECT hu.household_id, MIN(hu.user_id) uid FROM household_users hu
+                   WHERE hu.role = '" . ROLE_OWNER . "' GROUP BY hu.household_id) o
+               ON o.household_id = h.id
+             JOIN users u ON u.id = o.uid
+             SET h.name = SUBSTRING_INDEX(TRIM(u.name), ' ', 1)
+             WHERE h.name IN ('My Household', 'Personal')
+               AND TRIM(u.name) <> '' AND SUBSTRING_INDEX(TRIM(u.name), ' ', 1) <> ''"
         );
         // v16 backfill — the owner's symbol becomes the ledger's, so the person who set it up
         // sees exactly what they saw before the upgrade. Guarded on the default so a ledger
@@ -708,6 +722,15 @@ function mayEdit(array $row, array $user): bool {
     );
 }
 
+// The default name for somebody's own ledger: the first word of what Google calls them.
+// Falls back to "Personal" for a name that is empty or has no word characters in it, which
+// is rare but not impossible — a display name can be an emoji.
+function ledgerNameFor(string $userName): string {
+    $first = preg_split('/\s+/', trim($userName))[0] ?? '';
+    $first = trim($first);
+    return $first === '' ? 'Personal' : mb_substr($first, 0, 80);
+}
+
 // Mint a join link. Minting supersedes any unused predecessor, so a link the owner shared
 // and then thought better of stops working the moment they generate a fresh one.
 function mintInvite(PDO $db, int $hid, int $uid): string {
@@ -1003,9 +1026,10 @@ function sweepRecurring(PDO $db, int $hid): void {
 function bootstrapHousehold(PDO $db, string $name, string $email, string $googleSub): int {
     $db->beginTransaction();
     try {
-        // "Personal" rather than "My Household": once a person can hold several ledgers this
-        // string is what tells them apart in the picker, and everyone's first one is their own.
-        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute(['Personal']);
+        // Named after its owner, because this string is what tells ledgers apart in the
+        // picker — and a fixed default cannot. Everyone's first ledger used to be called
+        // "Personal", so the moment two people shared one they saw two rows reading "Personal".
+        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute([ledgerNameFor($name)]);
         $hid = (int)$db->lastInsertId();
         $db->prepare("INSERT INTO users (household_id, google_sub, email, name) VALUES (?, ?, ?, ?)")
            ->execute([$hid, $googleSub, $email, $name]);
