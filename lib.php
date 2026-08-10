@@ -683,15 +683,24 @@ function requireEditable(PDO $db, string $table, int $hid, int $id, int $uid, st
     return $row;
 }
 
-// Whose name an entry may be filed under. You may name yourself, or anyone who does not sign
-// in — a child, a parent, a shared card. You may not file an entry under another person's
-// name: they have a login, and putting words in their ledger is theirs to do, not yours.
+// Whose name an entry may be filed under. The owner may name themselves or anyone who does
+// not sign in — a child, a parent, a shared card. Everyone else files as themselves, always:
+// whatever member_id their form posts, the entry lands under their own linked row. Nobody
+// may file under another person's login — putting words in their ledger is theirs to do.
 //
 // $current is the value the row already holds. An edit that leaves it alone is always allowed,
-// so an owner correcting the amount on someone else's entry cannot silently re-attribute it.
-function attributableMember(PDO $db, int $hid, int $uid, int $memberId, ?int $current = null): ?int {
-    if ($memberId <= 0) return null;
+// so correcting the amount on an entry cannot silently re-attribute it.
+function attributableMember(PDO $db, int $hid, int $uid, string $role, int $memberId, ?int $current = null): ?int {
     if ($current !== null && $memberId === $current) return $memberId;
+    if ($role !== ROLE_OWNER) {
+        // linkMember first: it is idempotent, and it heals anyone who joined before linked
+        // rows existed — without it their entries would silently fall to "no member".
+        linkMember($db, $hid, $uid);
+        $s = $db->prepare("SELECT id FROM members WHERE household_id = ? AND user_id = ?");
+        $s->execute([$hid, $uid]);
+        return ($mid = (int)$s->fetchColumn()) > 0 ? $mid : null;
+    }
+    if ($memberId <= 0) return null;
     $s = $db->prepare("SELECT name, user_id FROM members WHERE id = ? AND household_id = ?");
     $s->execute([$memberId, $hid]);
     $row = $s->fetch();
@@ -700,12 +709,16 @@ function attributableMember(PDO $db, int $hid, int $uid, int $memberId, ?int $cu
     throw new UserErr('Only ' . $row['name'] . ' can file an entry under their own name.');
 }
 
-// The same rule, for building a picker: the ids you may choose. Everything else still renders,
-// disabled, so an entry already filed under someone else keeps its name when you edit it.
-function attributableIds(array $mems, int $uid): array {
+// The same rule, for building a picker: the ids you may choose. For the owner, everything
+// else still renders disabled, so an entry already filed under someone else keeps its name
+// when they edit it. For everyone else this is at most their own row — the pickers see a
+// single choice and collapse to nothing, which is the point: members just file as "me".
+function attributableIds(array $mems, int $uid, string $role): array {
     $out = [];
     foreach ($mems as $m) {
-        if (!isset($m['user_id']) || $m['user_id'] === null || (int)$m['user_id'] === $uid) {
+        $linked = isset($m['user_id']) && $m['user_id'] !== null;
+        $own    = $linked && (int)$m['user_id'] === $uid;
+        if ($role === ROLE_OWNER ? (!$linked || $own) : $own) {
             $out[] = (int)$m['id'];
         }
     }

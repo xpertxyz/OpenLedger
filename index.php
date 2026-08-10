@@ -164,6 +164,16 @@ if (PHP_SAPI === 'cli') {
         assert(mayEdit([],                     ['id' => 7, 'role' => ROLE_OWNER])  === true);
         assert(mayEdit(['created_by' => 8],    ['id' => 7])                        === false); // role absent = member
 
+        // Who a fresh entry may be filed under. The owner picks themselves or any name that
+        // does not sign in; everyone else files as themselves, full stop — the picker never
+        // renders for them and attributableMember enforces the same rule server-side.
+        $mm = [['id' => 1, 'user_id' => 7], ['id' => 2, 'user_id' => null], ['id' => 3, 'user_id' => 9]];
+        assert(attributableIds($mm, 7, ROLE_OWNER)  === [1, 2]);
+        assert(attributableIds($mm, 9, ROLE_OWNER)  === [2, 3]);  // a second owner-role user, same rule
+        assert(attributableIds($mm, 7, ROLE_MEMBER) === [1]);     // own linked row only
+        assert(attributableIds($mm, 9, ROLE_MEMBER) === [3]);
+        assert(attributableIds($mm, 5, ROLE_MEMBER) === []);      // not linked yet — nothing to pick
+
         // monthsSpan is the inverse of splitPlan's end date, and editing a split depends on it
         // round-tripping: the dialog re-derives "how many months" from the dates it stored.
         foreach ([2, 6, 12, 18, 24, 36, 120] as $n) {
@@ -805,8 +815,9 @@ if (PHP_SAPI === 'cli') {
             // User id -1 can own no row, so this is the strictest possible member.
             $guest = ['id' => -1, 'household_id' => $hid0, 'name' => 'Guest',
                       'email' => 'guest@local', 'is_dark' => 0, 'role' => ROLE_MEMBER];
-            $leaked = [];
+            $leaked = $pickers = [];
             foreach ([
+                'add'       => ['renderAdd',       [$db, $guest]],
                 'history'   => ['renderHistory',   [$db, $guest, 0]],
                 'earn'      => ['renderEarn',      [$db, $guest, true]],
                 'invest'    => ['renderInvest',    [$db, $guest, true, 'active']],
@@ -820,9 +831,16 @@ if (PHP_SAPI === 'cli') {
                     // The edit dialogs define openEdit* as a function; a row *calls* it.
                     if (preg_match("~onclick='openEdit~", $html)) $leaked[] = $name;
                 }
+                // A member files every entry as themselves, so no page may offer them a "who?"
+                // choice — neither the select the dialogs use nor the Add tab's chip row. The
+                // hidden member_id inputs are fine: those carry, they don't ask.
+                if (preg_match('~<select[^>]*name="member_id"~', $html)
+                    || strpos($html, 'id="mem-input"') !== false) $pickers[] = $name;
             }
             $leaked ? $line('FAIL', 'a member who created nothing is still offered edit controls on: ' . implode(', ', $leaked))
                     : $line('OK',   'a member sees no edit or delete control on rows they did not create');
+            $pickers ? $line('FAIL', 'a member is still offered the who-picker on: ' . implode(', ', $pickers))
+                     : $line('OK',   'a member is never asked who an entry is for — it is always their own');
         } catch (Throwable $e) { @ob_end_clean(); $line('FAIL', 'render: ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine()); }
 
         if ($pages) {
@@ -1264,7 +1282,7 @@ if ($method === 'POST') {
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
                 $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
@@ -1293,7 +1311,7 @@ if ($method === 'POST') {
                 $date  = requireDate((string)($_POST['date'] ?? today()), 'Date');
                 $note  = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
                 $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0),
                                           $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
                     "UPDATE expenses SET amount = ?, category_id = ?, member_id = ?, note = ?, date = ?
@@ -1307,7 +1325,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM investments WHERE household_id = ?",
@@ -1336,7 +1354,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $type = validInvestmentType($db, $hid, (string)($_POST['type'] ?? ''));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0),
                                           $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
                     "UPDATE investments SET name = ?, amount = ?, type = ?, member_id = ?, date = ?
@@ -1350,7 +1368,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM earnings WHERE household_id = ?",
@@ -1379,7 +1397,7 @@ if ($method === 'POST') {
                 $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
                 $cat  = ownedId($db, 'earning_categories', $hid, (int)($_POST['category_id'] ?? 0));
                 $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0),
                                           $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
                     "UPDATE earnings SET name = ?, amount = ?, category_id = ?, member_id = ?, date = ?
@@ -1450,7 +1468,7 @@ if ($method === 'POST') {
                     $L['recurring_total_max'],
                     'Recurring items'
                 );
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
                 $db->prepare(
                     "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, member_id, frequency, next_date, created_by)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -1474,7 +1492,7 @@ if ($method === 'POST') {
                     $L['recurring_total_max'],
                     'Recurring items'
                 );
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0));
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
                 $db->prepare(
                     "INSERT INTO recurring (household_id, name, amount, kind, category_id, type, member_id, frequency, next_date, start_date, end_date, total_amount, created_by)
                      VALUES (?, ?, ?, 'expense', ?, NULL, ?, 'monthly', ?, ?, ?, ?, ?)"
@@ -1499,7 +1517,7 @@ if ($method === 'POST') {
                 $mths  = (int)($_POST['months'] ?? 0);
                 [$per, $end] = splitPlan($total, $mths, $start);
                 $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0),
                                           $prev['member_id'] === null ? null : (int)$prev['member_id']);
                 $db->beginTransaction();
                 try {
@@ -1569,7 +1587,7 @@ if ($method === 'POST') {
                     $catTable = $kind === 'earning' ? 'earning_categories' : 'categories';
                     $catId = ownedId($db, $catTable, $hid, (int)($_POST['category_id'] ?? 0));
                 }
-                $memId = attributableMember($db, $hid, $uid, (int)($_POST['member_id'] ?? 0),
+                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0),
                                           $row['member_id'] === null ? null : (int)$row['member_id']);
                 $db->prepare(
                     "UPDATE recurring SET name = ?, amount = ?, kind = ?, category_id = ?, type = ?, member_id = ?, frequency = ?, next_date = ?

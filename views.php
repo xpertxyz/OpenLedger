@@ -1395,7 +1395,7 @@ function renderAdd(PDO $db, array $user): void {
     // Default to your own name. It used to be whichever member sorted first, which in a
     // shared ledger meant the Add screen opened pre-filled with somebody else's name.
     $uid     = (int)$user['id'];
-    $mineIds = attributableIds($mems, $uid);
+    $mineIds = attributableIds($mems, $uid, $user['role'] ?? ROLE_MEMBER);
     $ownMem  = 0;
     foreach ($mems as $m) if (isset($m['user_id']) && (int)$m['user_id'] === $uid) $ownMem = (int)$m['id'];
     $selectedMem = (int)($_GET['mem'] ?? ($ownMem ?: ($mineIds[0] ?? 0)));
@@ -1793,15 +1793,17 @@ function renderHistory(PDO $db, array $user, int $offset): void {
           <?php endforeach; ?>
         </select>
 
-        <?php if (count($memList) > 1): ?>
+        <?php if (count($memList) > 1 && ($user['role'] ?? ROLE_MEMBER) === ROLE_OWNER): ?>
           <select class="select" name="member_id" id="ed-member">
             <option value="">— No member —</option>
-            <?php $mine = attributableIds($memList, $uid); ?>
+            <?php $mine = attributableIds($memList, $uid, ROLE_OWNER); ?>
             <?php foreach ($memList as $m): $off = !in_array((int)$m['id'], $mine, true); ?>
               <option value="<?= (int)$m['id'] ?>"<?= $off ? ' disabled' : '' ?>><?= h($m['name']) ?><?= $off ? ' — signs in' : '' ?></option>
             <?php endforeach; ?>
           </select>
         <?php elseif ($memList): ?>
+          <?php /* One name (or no say in the matter) — send it silently. The dialog JS writes
+                   the row's current member over this, so an edit keeps the attribution. */ ?>
           <input type="hidden" name="member_id" id="ed-member" value="<?= (int)$memList[0]['id'] ?>">
         <?php endif; ?>
 
@@ -1978,7 +1980,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
           </div>
           <div class="field-row">
             <input class="input" name="date" type="date" value="<?= h(today()) ?>">
-            <?= memberSelect($mems, $uid) ?>
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER) ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-inv-dlg').close()">Cancel</button>
@@ -2083,7 +2085,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
           </div>
           <div class="field-row">
             <input class="input" name="date" id="ei-date" type="date" required>
-            <?= memberSelect($mems, $uid, 'ei-member') ?>
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER, 'ei-member') ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-investment-dlg').close()">Cancel</button>
@@ -2288,7 +2290,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
           </div>
           <div class="field-row">
             <input class="input" name="date" type="date" value="<?= h(today()) ?>">
-            <?= memberSelect($mems, $uid) ?>
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER) ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-ern-dlg').close()">Cancel</button>
@@ -2391,7 +2393,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
           </div>
           <div class="field-row">
             <input class="input" name="date" id="ee-date" type="date" required>
-            <?= memberSelect($mems, $uid, 'ee-member') ?>
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER, 'ee-member') ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-earning-dlg').close()">Cancel</button>
@@ -2795,7 +2797,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
             <option value="yearly">Yearly</option>
           </select>
           <input class="input" name="next_date" type="date" value="<?= h(today()) ?>">
-          <?= memberSelect($mems, $uid) ?>
+          <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER) ?>
         </div>
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-rec-dlg').close()">Cancel</button>
@@ -2853,7 +2855,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
           <input class="input" name="start_date" id="sp-date" type="date" value="<?= h(today()) ?>"
                  onchange="splitPreview()">
         </div>
-        <?php if ($ms = memberSelect($mems, $uid, 'sp-member')): ?><div class="field-row"><?= $ms ?></div><?php endif; ?>
+        <?php if ($ms = memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER, 'sp-member')): ?><div class="field-row"><?= $ms ?></div><?php endif; ?>
         <div class="muted" id="sp-preview" style="margin-top:10px;"></div>
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('split-dlg').close()">Cancel</button>
@@ -3068,7 +3070,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
               <option value="yearly">Yearly</option>
             </select>
             <input class="input" name="next_date" id="er-next" type="date" required>
-            <?= memberSelect($mems, $uid, 'er-member') ?>
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER, 'er-member') ?>
           </div>
           <div class="dlg-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-recurring-dlg').close()">Cancel</button>
@@ -3425,13 +3427,22 @@ function renderOrganise(PDO $db, array $user): void {
 // The "who?" select, shared by every add and edit dialog outside the Add tab (which has its
 // own chips). A ledger with one member has nothing to choose, so this emits nothing at all
 // and the entry simply carries no member — same as before sharing existed.
-// $uid decides which options are pickable. Another person's name renders but is disabled —
-// present so an entry already filed under them keeps its name when someone edits the amount,
-// unpickable so nobody files a fresh entry in their name. A disabled option can still be
-// selected programmatically and still submits, which is exactly what that needs.
-function memberSelect(array $mems, int $uid, string $id = '', ?int $selected = null): string {
+// Only the owner gets a select: they may file under themselves or any name that does not
+// sign in, and those options render pickable while other people's logins render disabled —
+// present so an entry already filed under them keeps its name when the owner edits the
+// amount, unpickable so a fresh entry cannot land in their name. Everyone else files as
+// themselves, so they get a hidden field instead of a choice. It keeps the id because the
+// edit dialogs' JS writes the row's current member into it — an unchanged value is always
+// accepted, so a member editing an amount cannot silently re-attribute the entry.
+function memberSelect(array $mems, int $uid, string $role, string $id = '', ?int $selected = null): string {
     if (count($mems) < 2) return '';
-    $mine = attributableIds($mems, $uid);
+    if ($role !== ROLE_OWNER) {
+        $own = 0;
+        foreach ($mems as $m) if ((int)($m['user_id'] ?? 0) === $uid) $own = (int)$m['id'];
+        return '<input type="hidden" name="member_id"' . ($id !== '' ? ' id="' . h($id) . '"' : '')
+             . ' value="' . $own . '">';
+    }
+    $mine = attributableIds($mems, $uid, $role);
     $out = '<select class="select" name="member_id"' . ($id !== '' ? ' id="' . h($id) . '"' : '') . '>'
          . '<option value="0">Anyone</option>';
     foreach ($mems as $m) {
