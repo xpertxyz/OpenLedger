@@ -7,7 +7,10 @@ const THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text
   . '--color-neutral-100:#2c2822;--color-neutral-200:#363028;--color-neutral-300:#453d31;--color-neutral-400:#5a5040;--color-neutral-500:#786c56;--color-neutral-600:#9c8f76;--color-neutral-700:#bfb29a;--color-neutral-800:#dcd0ba;--color-neutral-900:#f3e9d8;'
   . '--color-accent:#e0864c;--color-accent-100:#3a2a1c;--color-accent-200:#4d3320;--color-accent-300:#6b4324;--color-accent-400:#95592c;--color-accent-500:#c06f35;--color-accent-600:#d97f42;--color-accent-700:#e79968;--color-accent-800:#f0b78c;--color-accent-900:#f8d7b8;'
   . '--color-accent-2:#93a86e;--color-accent-2-100:#2a301f;--color-accent-2-200:#333b26;--color-accent-2-300:#414c2f;--color-accent-2-400:#57643d;--color-accent-2-500:#71804f;--color-accent-2-600:#8a9863;--color-accent-2-700:#a8b884;--color-accent-2-800:#c4d1a8;--color-accent-2-900:#e2e8d0;'
-  . '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);';
+  . '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);'
+  // Not a token: tells the browser to draw native widgets (date-picker calendar
+  // icon, select arrows, scrollbars) in dark, instead of light-on-dark-invisible.
+  . 'color-scheme:dark;';
 
 // Lucide sprite (stroke-width 2.75).
 const SVG_SPRITE = <<<SVG
@@ -64,6 +67,32 @@ function icon(string $name, int $size = 20): string {
 // Horizontal swipe navigation for pages with exactly two neighbours (previous month/year,
 // next month/year). Either destination may be null when there is nowhere to go.
 // Content follows the finger: drag right for $older, left for $newer.
+// Bar click → smooth-scroll to the group header, and flash it only once the scroll
+// has settled (no scroll events for 120ms), so the feedback isn't over before arrival.
+// Shared by every screen with a .day-strip chart over a grouped list.
+function stripNavScript(): string {
+    return <<<'JS'
+    <script>
+    document.querySelectorAll('.day-strip a').forEach(a => a.addEventListener('click', e => {
+      const el = document.getElementById(a.getAttribute('href').slice(1));
+      if (!el) return;
+      e.preventDefault();
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      let t;
+      const settle = () => { clearTimeout(t); t = setTimeout(done, 120); };
+      const done = () => {
+        removeEventListener('scroll', settle);
+        el.classList.remove('flash');
+        void el.offsetWidth;            // restart the animation on a repeat click
+        el.classList.add('flash');
+      };
+      addEventListener('scroll', settle, { passive: true });
+      settle();                          // already in view → no scroll events → flash anyway
+    }));
+    </script>
+    JS;
+}
+
 function swipeNavScript(?string $older, ?string $newer): string {
     $o = json_encode($older, JSON_UNESCAPED_SLASHES);
     $n = json_encode($newer, JSON_UNESCAPED_SLASHES);
@@ -341,8 +370,9 @@ $meta
   .total-card .day-strip .z { opacity:.18; }
   .total-card .day-axis { display:flex; gap:2px; margin-top:3px; font-size:8px; line-height:1; opacity:.7; }
   .total-card .day-axis span { flex:1; text-align:center; }
-  /* 31 two-digit labels don't fit a phone: show every other one there. */
-  @media (max-width: 480px) { .total-card .day-axis span:nth-child(even) { visibility:hidden; } }
+  /* 31 two-digit labels don't fit a phone: show every other one there.
+     Scoped to .dense so the 12-label month axis keeps all of its labels. */
+  @media (max-width: 480px) { .total-card .day-axis.dense span:nth-child(even) { visibility:hidden; } }
   html { scroll-behavior:smooth; }
   /* Landing feedback: the jumped-to day (header + its rows) fades in, holds, fades out
      once the scroll has settled. A class (not :target) so the script can start it on
@@ -1451,12 +1481,34 @@ function renderAdd(PDO $db, array $user): void {
 
     $currency = $_SESSION['currency'] ?? '₹';
 
+    // Remaining budget this month — household budget minus this month's spend.
+    $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ? AND parent_id IS NULL");
+    $budStmt->execute([$hid]);
+    $budgetTotal = (float)$budStmt->fetchColumn();
+    $budgetLeft  = 0.0;
+    if ($budgetTotal > 0) {
+        $spentStmt = $db->prepare("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?");
+        $spentStmt->execute([$hid, date('Y-m-01'), (new DateTimeImmutable('first day of next month'))->format('Y-m-d')]);
+        $budgetLeft = $budgetTotal - (float)$spentStmt->fetchColumn();
+    }
+
     ob_start();
     ?>
     <form method="post" action="/expenses" class="stack">
       <?= csrfInput() ?>
       <div class="card elev-sm amount-card">
-        <div class="amount-q">How much did you spend?</div>
+        <div class="amount-q" style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+          <span>How much did you spend?</span>
+          <?php if ($budgetTotal > 0): ?>
+            <span style="font-size:12px; font-weight:400; color:var(--color-neutral-800); white-space:nowrap;">
+              <?php if ($budgetLeft >= 0): ?>
+                <?= h(fmt($budgetLeft)) ?> left
+              <?php else: ?>
+                <strong style="color:#c0392b;"><?= h(fmt(-$budgetLeft)) ?> over</strong>
+              <?php endif; ?>
+            </span>
+          <?php endif; ?>
+        </div>
         <div class="amount-row">
           <span class="amount-sym"><?= h($currency) ?></span>
           <input class="amount-input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="0" autofocus
@@ -1694,11 +1746,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         <div class="big"><?= h(fmt($total)) ?></div>
         <div class="sub">
           <?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?><?php if ($budgetTotal > 0): ?> ·
-            <?php if ($total > $budgetTotal): ?>
-              <strong><?= h(fmt($total)) ?></strong> / <?= h(fmt($budgetTotal)) ?> budgeted
-            <?php else: ?>
-              <?= h(fmt($total)) ?> / <?= h(fmt($budgetTotal)) ?> budgeted
-            <?php endif; ?>
+            <strong><?= h(fmt($budgetTotal)) ?></strong> budgeted
           <?php endif; ?>
         </div>
         <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t'); ?>
@@ -1712,7 +1760,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
               $cls ? ' class="' . $cls . '"' : '' ?> href="#d<?= $d ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
             else: ?><i class="z"></i><?php endif; ?><?php endfor; ?>
           </div>
-          <div class="day-axis" aria-hidden="true">
+          <div class="day-axis dense" aria-hidden="true">
             <?php for ($d = 1; $d <= $daysInMonth; $d++): ?><span><?= $d ?></span><?php endfor; ?>
           </div>
         <?php endif; ?>
@@ -1877,26 +1925,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     }
 
     </script>
-    <script>
-    // Bar click → smooth-scroll to the date header, and flash it only once the scroll
-    // has settled (no scroll events for 120ms), so the feedback isn't over before arrival.
-    document.querySelectorAll('.day-strip a').forEach(a => a.addEventListener('click', e => {
-      const el = document.getElementById(a.getAttribute('href').slice(1));
-      if (!el) return;
-      e.preventDefault();
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      let t;
-      const settle = () => { clearTimeout(t); t = setTimeout(done, 120); };
-      const done = () => {
-        removeEventListener('scroll', settle);
-        el.classList.remove('flash');
-        void el.offsetWidth;            // restart the animation on a repeat click
-        el.classList.add('flash');
-      };
-      addEventListener('scroll', settle, { passive: true });
-      settle();                          // already in view → no scroll events → flash anyway
-    }));
-    </script>
+    <?= stripNavScript() ?>
     <?= swipeNavScript("/history?m=" . ($offset + 1) . $whoQ, $offset > 0 ? "/history?m=" . ($offset - 1) . $whoQ : null) ?>
     <?php
     $content = ob_get_clean();
@@ -1960,6 +1989,16 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     );
     $rows->execute(array_merge([$hid], $clauseParams, $whoBind)); $invs = $rows->fetchAll();
 
+    // Month-wise sums for this year's strip chart in the top card, same filters as the list.
+    $stripYear = (int)date('Y');
+    $mStmt = $db->prepare(
+        "SELECT MONTH(`date`) AS m, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql GROUP BY MONTH(`date`)"
+    );
+    $mStmt->execute(array_merge([$hid, "$stripYear-01-01", ($stripYear + 1) . "-01-01"], $clauseParams, $whoBind));
+    $stripMonths = array_column($mStmt->fetchAll(), 'amt', 'm');
+    $stripMax    = $stripMonths ? max(array_map('floatval', $stripMonths)) : 0.0;
+
     // Archived types stay in the edit dialog (so existing entries remain editable) but drop
     // out of the add form — you don't log new money into a scheme that has ended.
     $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
@@ -1973,22 +2012,42 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     ob_start();
     ?>
     <?php if ($grandCount > 0): ?>
-      <div class="card total-card sage split-card">
-        <div>
-          <div class="k">Active</div>
-          <div class="v"><?= h(fmtShort($sum['active']['amt'])) ?></div>
-          <div class="n"><?= $sum['active']['n'] ?> <?= $sum['active']['n'] === 1 ? 'entry' : 'entries' ?></div>
+      <div class="card total-card sage yearcard">
+        <div class="split-card">
+          <div>
+            <div class="k">Active</div>
+            <div class="v"><?= h(fmtShort($sum['active']['amt'])) ?></div>
+            <div class="n"><?= $sum['active']['n'] ?> <?= $sum['active']['n'] === 1 ? 'entry' : 'entries' ?></div>
+          </div>
+          <div>
+            <div class="k">Archived</div>
+            <div class="v"><?= h(fmtShort($sum['archived']['amt'])) ?></div>
+            <div class="n"><?= $sum['archived']['n'] ?> <?= $sum['archived']['n'] === 1 ? 'entry' : 'entries' ?></div>
+          </div>
+          <div>
+            <div class="k">Total</div>
+            <div class="v"><?= h(fmtShort($sum['all']['amt'])) ?></div>
+            <div class="n"><?= $sum['all']['n'] ?> <?= $sum['all']['n'] === 1 ? 'entry' : 'entries' ?></div>
+          </div>
         </div>
-        <div>
-          <div class="k">Archived</div>
-          <div class="v"><?= h(fmtShort($sum['archived']['amt'])) ?></div>
-          <div class="n"><?= $sum['archived']['n'] ?> <?= $sum['archived']['n'] === 1 ? 'entry' : 'entries' ?></div>
-        </div>
-        <div>
-          <div class="k">Total</div>
-          <div class="v"><?= h(fmtShort($sum['all']['amt'])) ?></div>
-          <div class="n"><?= $sum['all']['n'] ?> <?= $sum['all']['n'] === 1 ? 'entry' : 'entries' ?></div>
-        </div>
+        <?php if ($stripMax > 0): ?>
+          <div style="padding: 0 var(--space-3) var(--space-3);">
+            <div class="day-strip">
+              <?php for ($m = 1; $m <= 12; $m++):
+                $amt  = (float)($stripMonths[$m] ?? 0);
+                $hPct = $amt > 0 ? max(6, ($amt / $stripMax) * 100) : 0;
+                $cls  = $amt <= 0 ? 'z' : ($amt >= $stripMax ? 'peak' : '');
+                $mon  = date('M', mktime(0, 0, 0, $m, 1, $stripYear));
+                $tip  = $mon . ' ' . $stripYear . ' — ' . h(fmt($amt));
+              ?><?php if ($amt > 0): ?><a<?=
+                $cls ? ' class="' . $cls . '"' : '' ?> href="#m<?= sprintf('%d-%02d', $stripYear, $m) ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
+              else: ?><i class="z"></i><?php endif; ?><?php endfor; ?>
+            </div>
+            <div class="day-axis" aria-hidden="true">
+              <?php for ($m = 1; $m <= 12; $m++): ?><span><?= date('M', mktime(0, 0, 0, $m, 1, $stripYear)) ?></span><?php endfor; ?>
+            </div>
+          </div>
+        <?php endif; ?>
       </div>
 
     <?php endif; ?>
@@ -2075,6 +2134,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         $monthLabel = (new DateTimeImmutable($ym . '-01'))->format('F Y');
         $monthTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
       ?>
+      <div class="day-group" id="m<?= h($ym) ?>">
       <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
         <span><?= h($monthLabel) ?></span>
         <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($monthTotal)) ?></span>
@@ -2116,6 +2176,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
             <?php endif; ?>
           </div>
         <?php endforeach; ?>
+      </div>
       </div>
       <?php endforeach; ?>
 
@@ -2175,6 +2236,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       }
       </script>
     <?php endif; ?>
+    <?= stripNavScript() ?>
     <?php
     $content = ob_get_clean();
     layout($db, $user, 'invest', $content, '/invest?f=' . $filter . ($who > 0 ? '&who=' . $who : ''));

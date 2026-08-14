@@ -2,6 +2,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Caprasimo:wght@400&family=Figtree:wght@400;600;700&display=swap');
 
 :root {
+  /* Native widgets (date-picker icon, select arrows, scrollbars) follow the app
+     theme, not the OS. The dark override lives with THEME_DARK_VARS in views.php. */
+  color-scheme: light;
   --color-bg: #f5ead8;
   --color-surface: #ebddc5;
   --color-text: #201e1d;
