@@ -331,6 +331,12 @@ $meta
   .total-card.ink { background:var(--color-neutral-700); color:var(--color-bg); }
   .total-card .big { font-family:var(--font-heading); font-size:32px; }
   .total-card .sub { font-size:13px; opacity:.85; }
+  /* Day-wise spend strip. Bars are bg-on-accent, scaled to the month's peak day;
+     zero days keep a 2px stub so the strip always reads as the whole month. */
+  .total-card .day-strip { display:flex; align-items:flex-end; gap:2px; height:44px; margin-top:10px; }
+  .total-card .day-strip i { flex:1; min-height:2px; border-radius:2px 2px 0 0; background:var(--color-bg); opacity:.5; }
+  .total-card .day-strip i.peak { opacity:1; }
+  .total-card .day-strip i.z { opacity:.18; }
   .cat-bar { padding: 10px 14px; }
   .cat-bar .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .cat-bar .name { display:flex; align-items:center; gap:8px; font-size:14px; }
@@ -1621,6 +1627,16 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $budStmt->execute([$hid]);
     $budgetTotal = (float)$budStmt->fetchColumn();
 
+    // Day-wise spend for the strip chart in the total card — one indexed GROUP BY.
+    $dayStmt = $db->prepare(
+        "SELECT DAY(`date`) AS d, SUM(amount) AS amt
+         FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql
+         GROUP BY DAY(`date`)"
+    );
+    $dayStmt->execute([$hid, $monthStart, $monthEnd, ...$whoBind]);
+    $byDay  = array_column($dayStmt->fetchAll(), 'amt', 'd');
+    $dayMax = $byDay ? max(array_map('floatval', $byDay)) : 0.0;
+
     // Paginated transaction list — LIMIT + OFFSET on the (household_id, date) index.
     $rows = $db->prepare(
         "SELECT e.*, c.name AS cat_name, c.icon AS cat_icon, m.name AS mem_name
@@ -1659,14 +1675,23 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <div class="card total-card accent">
         <div class="big"><?= h(fmt($total)) ?></div>
         <div class="sub"><?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?></div>
-        <?php if ($budgetTotal > 0): $left = $budgetTotal - $total; ?>
+        <?php if ($budgetTotal > 0): ?>
           <div class="sub" style="margin-top:4px;">
-            <?= h(fmt($budgetTotal)) ?> budgeted ·
-            <?php if ($left >= 0): ?>
-              <?= h(fmt($left)) ?> left
+            <?php if ($total > $budgetTotal): ?>
+              <strong><?= h(fmt($total)) ?></strong> / <?= h(fmt($budgetTotal)) ?> budgeted
             <?php else: ?>
-              <strong><?= h(fmt(-$left)) ?> over</strong>
+              <?= h(fmt($total)) ?> / <?= h(fmt($budgetTotal)) ?> budgeted
             <?php endif; ?>
+          </div>
+        <?php endif; ?>
+        <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t'); ?>
+          <div class="day-strip">
+            <?php for ($d = 1; $d <= $daysInMonth; $d++):
+              $amt  = (float)($byDay[$d] ?? 0);
+              $hPct = $amt > 0 ? max(6, ($amt / $dayMax) * 100) : 0;
+              $cls  = $amt <= 0 ? 'z' : ($amt >= $dayMax ? 'peak' : '');
+            ?><i<?= $cls ? ' class="' . $cls . '"' : '' ?> style="height:<?= number_format($hPct, 1) ?>%"<?=
+              $amt > 0 ? ' title="' . $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt)) . '"' : '' ?>></i><?php endfor; ?>
           </div>
         <?php endif; ?>
       </div>
