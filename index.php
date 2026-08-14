@@ -1033,13 +1033,15 @@ if ($method === 'GET' && ($path === '/sitemap.xml' || $path === '/robots.txt')) 
 // Session hardening — before session_start(), so cookie flags land.
 // ────────────────────────────────────────────────────────────────────
 session_name($config['session_name']);
+$sessionLife = 60 * 60 * 24 * 30;   // stay signed in for 30 days, even after the browser closes
 session_set_cookie_params([
-    'lifetime' => 0,
+    'lifetime' => $sessionLife,
     'path'     => '/',
     'httponly' => true,
     'samesite' => 'Lax',
     'secure'   => isHttps(),
 ]);
+ini_set('session.gc_maxlifetime', (string)$sessionLife);
 ini_set('session.use_only_cookies', '1');
 ini_set('session.use_strict_mode',  '1');
 session_start();
