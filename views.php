@@ -332,11 +332,28 @@ $meta
   .total-card .big { font-family:var(--font-heading); font-size:32px; }
   .total-card .sub { font-size:13px; opacity:.85; }
   /* Day-wise spend strip. Bars are bg-on-accent, scaled to the month's peak day;
-     zero days keep a 2px stub so the strip always reads as the whole month. */
+     zero days keep a 2px stub so the strip always reads as the whole month.
+     Spend days are anchors that jump to that date's section in the list below. */
   .total-card .day-strip { display:flex; align-items:flex-end; gap:2px; height:44px; margin-top:10px; }
-  .total-card .day-strip i { flex:1; min-height:2px; border-radius:2px 2px 0 0; background:var(--color-bg); opacity:.5; }
-  .total-card .day-strip i.peak { opacity:1; }
-  .total-card .day-strip i.z { opacity:.18; }
+  .total-card .day-strip i, .total-card .day-strip a { flex:1; min-height:2px; border-radius:2px 2px 0 0; background:var(--color-bg); opacity:.5; }
+  .total-card .day-strip a:hover { opacity:.8; }
+  .total-card .day-strip .peak { opacity:1; }
+  .total-card .day-strip .z { opacity:.18; }
+  .total-card .day-axis { display:flex; gap:2px; margin-top:3px; font-size:8px; line-height:1; opacity:.7; }
+  .total-card .day-axis span { flex:1; text-align:center; }
+  /* 31 two-digit labels don't fit a phone: show every other one there. */
+  @media (max-width: 480px) { .total-card .day-axis span:nth-child(even) { visibility:hidden; } }
+  html { scroll-behavior:smooth; }
+  /* Landing feedback: the jumped-to day (header + its rows) fades in, holds, fades out
+     once the scroll has settled. A class (not :target) so the script can start it on
+     arrival and restart on re-click. */
+  .day-group { scroll-margin-top: 8px; }
+  /* 2.5s total: fade in 500ms (20%), hold 1s (20→60%), fade out 1s (60→100%). */
+  .day-group.flash { animation: hl-flash 2.5s linear; border-radius: var(--radius-md); }
+  @keyframes hl-flash {
+    0%, 100% { background: transparent; }
+    20%, 60% { background: var(--color-accent-300); }
+  }
   .cat-bar { padding: 10px 14px; }
   .cat-bar .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .cat-bar .name { display:flex; align-items:center; gap:8px; font-size:14px; }
@@ -1634,8 +1651,9 @@ function renderHistory(PDO $db, array $user, int $offset): void {
          GROUP BY DAY(`date`)"
     );
     $dayStmt->execute([$hid, $monthStart, $monthEnd, ...$whoBind]);
-    $byDay  = array_column($dayStmt->fetchAll(), 'amt', 'd');
-    $dayMax = $byDay ? max(array_map('floatval', $byDay)) : 0.0;
+    // Not named $byDay — the transaction list below reuses that name for its own grouping.
+    $stripDays = array_column($dayStmt->fetchAll(), 'amt', 'd');
+    $dayMax    = $stripDays ? max(array_map('floatval', $stripDays)) : 0.0;
 
     // Paginated transaction list — LIMIT + OFFSET on the (household_id, date) index.
     $rows = $db->prepare(
@@ -1674,24 +1692,28 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     <?php else: ?>
       <div class="card total-card accent">
         <div class="big"><?= h(fmt($total)) ?></div>
-        <div class="sub"><?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?></div>
-        <?php if ($budgetTotal > 0): ?>
-          <div class="sub" style="margin-top:4px;">
+        <div class="sub">
+          <?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?><?php if ($budgetTotal > 0): ?> ·
             <?php if ($total > $budgetTotal): ?>
               <strong><?= h(fmt($total)) ?></strong> / <?= h(fmt($budgetTotal)) ?> budgeted
             <?php else: ?>
               <?= h(fmt($total)) ?> / <?= h(fmt($budgetTotal)) ?> budgeted
             <?php endif; ?>
-          </div>
-        <?php endif; ?>
+          <?php endif; ?>
+        </div>
         <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t'); ?>
           <div class="day-strip">
             <?php for ($d = 1; $d <= $daysInMonth; $d++):
-              $amt  = (float)($byDay[$d] ?? 0);
+              $amt  = (float)($stripDays[$d] ?? 0);
               $hPct = $amt > 0 ? max(6, ($amt / $dayMax) * 100) : 0;
               $cls  = $amt <= 0 ? 'z' : ($amt >= $dayMax ? 'peak' : '');
-            ?><i<?= $cls ? ' class="' . $cls . '"' : '' ?> style="height:<?= number_format($hPct, 1) ?>%"<?=
-              $amt > 0 ? ' title="' . $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt)) . '"' : '' ?>></i><?php endfor; ?>
+              $tip  = $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt));
+            ?><?php if ($amt > 0): // a bar with spend jumps to that date in the list ?><a<?=
+              $cls ? ' class="' . $cls . '"' : '' ?> href="#d<?= $d ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
+            else: ?><i class="z"></i><?php endif; ?><?php endfor; ?>
+          </div>
+          <div class="day-axis" aria-hidden="true">
+            <?php for ($d = 1; $d <= $daysInMonth; $d++): ?><span><?= $d ?></span><?php endfor; ?>
           </div>
         <?php endif; ?>
       </div>
@@ -1738,6 +1760,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         $dayLabel = (new DateTimeImmutable($day))->format('D, M j');
         $dayTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
       ?>
+        <div class="day-group" id="d<?= (int)substr($day, 8, 2) ?>">
         <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
           <span><?= h($dayLabel) ?></span>
           <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($dayTotal)) ?></span>
@@ -1778,6 +1801,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
               <?php endif; ?>
             </div>
           <?php endforeach; ?>
+        </div>
         </div>
       <?php endforeach; ?>
 
@@ -1852,6 +1876,26 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       document.getElementById('edit-expense-dlg').showModal();
     }
 
+    </script>
+    <script>
+    // Bar click → smooth-scroll to the date header, and flash it only once the scroll
+    // has settled (no scroll events for 120ms), so the feedback isn't over before arrival.
+    document.querySelectorAll('.day-strip a').forEach(a => a.addEventListener('click', e => {
+      const el = document.getElementById(a.getAttribute('href').slice(1));
+      if (!el) return;
+      e.preventDefault();
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      let t;
+      const settle = () => { clearTimeout(t); t = setTimeout(done, 120); };
+      const done = () => {
+        removeEventListener('scroll', settle);
+        el.classList.remove('flash');
+        void el.offsetWidth;            // restart the animation on a repeat click
+        el.classList.add('flash');
+      };
+      addEventListener('scroll', settle, { passive: true });
+      settle();                          // already in view → no scroll events → flash anyway
+    }));
     </script>
     <?= swipeNavScript("/history?m=" . ($offset + 1) . $whoQ, $offset > 0 ? "/history?m=" . ($offset - 1) . $whoQ : null) ?>
     <?php
