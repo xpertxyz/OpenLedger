@@ -478,10 +478,19 @@ $meta
   .ychart { padding: var(--space-3) var(--space-3) var(--space-2); }
   .ylegend { display:flex; gap:14px; font-size:11.5px; color:var(--color-neutral-800); margin-bottom:10px; }
   .ylegend span { display:inline-flex; align-items:center; gap:5px; }
-  .ylegend .sw { width:9px; height:9px; border-radius:3px; display:inline-block; }
-  .ylegend .sw.exp { background:var(--color-accent); }
-  .ylegend .sw.inv { background:var(--color-accent-2); }
-  .ylegend .sw.ern { background:var(--color-neutral-700); }
+  .sw { width:9px; height:9px; border-radius:3px; display:inline-block; flex:none; }
+  .sw.exp { background:var(--color-accent); }
+  .sw.inv { background:var(--color-accent-2); }
+  .sw.ern { background:var(--color-neutral-700); }
+  /* Share-of-total pie under the 12-month bars. Slices are one conic-gradient — no SVG, no library. */
+  .pieblock { display:flex; align-items:center; gap:14px; margin-top:10px; padding-top:12px;
+              border-top:1px solid var(--color-neutral-300); }
+  .pie { width:92px; height:92px; border-radius:50%; flex:none; }
+  .pielist { flex:1; display:flex; flex-direction:column; gap:7px; font-size:12px; }
+  .pielist .r { display:flex; align-items:center; gap:6px; }
+  .pielist .nm { color:var(--color-neutral-800); }
+  .pielist .amt { margin-left:auto; font-weight:600; font-variant-numeric:tabular-nums; }
+  .pielist .pct { width:46px; text-align:right; color:var(--color-neutral-800); font-variant-numeric:tabular-nums; }
   .ygrid { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; height:132px; align-items:end; }
   .ycol { display:flex; flex-direction:column; height:100%; justify-content:flex-end; gap:5px;
           text-decoration:none; color:inherit; border-radius:var(--radius-sm); }
@@ -588,7 +597,7 @@ HTML;
 
     $tabs = [
         ['add',       '/',          'plus',         'Add'],
-        ['history',   '/history',   'list',         'History'],
+        ['history',   '/history',   'list',         'Expense'],
         ['earn',      '/earn',      'wallet',       'Earn'],
         ['invest',    '/invest',    'trending-up',  'Invest'],
         ['recurring', '/recurring', 'repeat',       'Recurring'],
@@ -1197,7 +1206,7 @@ function renderLanding(): void {
       <h2>Earned, spent, invested — on one page.</h2>
       <p>A yearly summary in calendar year or the Indian financial year, with twelve
         months of earned against spent against invested and the saved line between
-        them. Tap a month to open it in History. Amounts read ₹10,00,000, the way
+        them. Tap a month to open it in Expense. Amounts read ₹10,00,000, the way
         you'd say it.</p>
     </div>
   </section>
@@ -1231,7 +1240,7 @@ function renderLanding(): void {
   <div class="grid">
     <div class="card">
       <?= icon('list', 22) ?>
-      <div class="card-title">History that adds up</div>
+      <div class="card-title">Expenses that add up</div>
       <p class="card-body">Grouped by day with per-day totals, then a category
         breakdown for the month. Swipe left or right to change month.</p>
     </div>
@@ -2011,6 +2020,8 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     ob_start();
     ?>
+    <!-- Person filter first: every figure, bar and row below is scoped to $who. -->
+    <?= whoFilterRow($db, $hid, $mems, $who) ?>
     <?php if ($grandCount > 0): ?>
       <div class="card total-card sage yearcard">
         <div class="split-card">
@@ -2063,7 +2074,6 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       <button type="button" class="pill-btn act" style="margin-left:auto;"
               onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
     </div>
-    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <?php if ($grandCount > 0): ?>
       <div class="stack">
@@ -2322,6 +2332,12 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
 
     ob_start();
     ?>
+    <!-- Person filter sits above everything: every figure, bar and row below is already scoped
+         to $who, so the control belongs where its effect starts, not at the bottom. The add
+         action hangs off the end of the same row. -->
+    <?= whoFilterRow($db, $hid, $mems, $who,
+          '<button type="button" class="pill-btn act" style="margin-left:auto;"'
+        . ' onclick="document.getElementById(\'add-ern-dlg\').showModal()">' . icon('plus', 13) . ' Add</button>') ?>
     <?php if ($entryCount > 0): ?>
       <div class="card total-card ink split-card">
         <div>
@@ -2342,13 +2358,22 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
       </div>
     <?php endif; ?>
 
-    <?php if ($peak > 0): ?>
+    <?php if ($peak > 0):
+      // Share of the same 12-month window the bars cover, so the two halves of the card always agree.
+      $winTot = $winEarn + $winSpent + $winInv;
+      $slices = [
+        ['ern', 'Earned',   $winEarn],
+        ['exp', 'Spent',    $winSpent],
+        ['inv', 'Invested', $winInv],
+      ];
+      $stops = []; $at = 0.0;
+      foreach ($slices as [$k, , $amt]) {
+        $at += $winTot > 0 ? ($amt / $winTot) * 100 : 0;
+        $var = $k === 'exp' ? 'var(--color-accent)' : ($k === 'inv' ? 'var(--color-accent-2)' : 'var(--color-neutral-700)');
+        $stops[] = "$var 0 " . number_format($at, 2) . '%';
+      }
+    ?>
       <div class="card ychart">
-        <div class="ylegend">
-          <span><i class="sw ern"></i>Earned</span>
-          <span><i class="sw exp"></i>Spent</span>
-          <span><i class="sw inv"></i>Invested</span>
-        </div>
         <div class="ygrid">
           <?php foreach ($winKeys as $ym):
             $e  = $series['ern'][$ym] ?? 0.0;
@@ -2367,10 +2392,22 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
             </div>
           <?php endforeach; ?>
         </div>
-        <div class="muted" style="margin-top:8px; font-size:11.5px;">
-          Last 12 months · earned <?= h(fmtShort($winEarn)) ?> ·
-          spent <?= h(fmtShort($winSpent)) ?> ·
-          invested <?= h(fmtShort($winInv)) ?>
+        <div class="muted" style="margin-top:8px; font-size:11.5px;">Last 12 months</div>
+        <div class="pieblock">
+          <div class="pie" role="img"
+               aria-label="Share of the last 12 months: <?= h(implode(', ', array_map(
+                   fn($s) => $s[1] . ' ' . number_format($winTot > 0 ? ($s[2] / $winTot) * 100 : 0, 1) . '%', $slices))) ?>"
+               style="background: conic-gradient(<?= h(implode(', ', $stops)) ?>);"></div>
+          <div class="pielist">
+            <?php foreach ($slices as [$k, $label, $amt]): ?>
+              <div class="r">
+                <i class="sw <?= $k ?>"></i>
+                <span class="nm"><?= h($label) ?></span>
+                <span class="amt"><?= h(fmt($amt)) ?></span>
+                <span class="pct"><?= number_format($winTot > 0 ? ($amt / $winTot) * 100 : 0, 1) ?>%</span>
+              </div>
+            <?php endforeach; ?>
+          </div>
         </div>
       </div>
     <?php endif; ?>
@@ -2388,14 +2425,6 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         <?php endforeach; ?>
       </div>
     <?php endif; ?>
-
-    <!-- No filters to share the row with here, but the add action keeps the same shape and
-         end-of-row position it has on Invest. -->
-    <div class="pill-row">
-      <button type="button" class="pill-btn act" style="margin-left:auto;"
-              onclick="document.getElementById('add-ern-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
-    </div>
-    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <dialog id="add-ern-dlg" class="confirm" style="max-width:360px;">
       <?php if (!$catList): ?>
@@ -2698,6 +2727,8 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
 
     ob_start();
     ?>
+    <!-- Person filter first: every figure, bar and row below is scoped to $who. -->
+    <?= whoFilterRow($db, $hid, $mems, $who) ?>
     <!-- Plain links, not radios+onchange: a change handler can fire from scroll/state
          restoration and navigate unintentionally. Links only move when tapped. -->
     <div class="seg year-seg" role="group" aria-label="Year type">
@@ -2706,7 +2737,6 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
       <a class="seg-opt<?= $mode === 'fy' ? ' on' : '' ?>" href="/year?mode=fy&amp;inv=<?= h($invFilter) ?><?= $whoQ ?>"
          <?= $mode === 'fy' ? 'aria-current="page"' : '' ?>>Financial year</a>
     </div>
-    <?= whoFilterRow($db, $hid, $mems, $who) ?>
 
     <div class="month-switch">
       <?php if ($hasPrev): ?>
@@ -2791,7 +2821,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
             </<?= $tag ?>>
           <?php endforeach; ?>
         </div>
-        <div class="muted" style="margin-top:8px; font-size:11.5px;">Tap a month to open it in History.</div>
+        <div class="muted" style="margin-top:8px; font-size:11.5px;">Tap a month to open it in Expense.</div>
       </div>
 
       <?php if ($byErn): ?>
@@ -2894,7 +2924,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
         <?= csrfInput() ?>
         <div class="dlg-title">Add recurring item</div>
         <select class="select" name="kind" id="rec-kind" onchange="toggleRecKind()">
-          <option value="expense">Expense — auto-post to History</option>
+          <option value="expense">Expense — auto-post to the Expense tab</option>
           <option value="earning">Earning — auto-post to Earn</option>
           <option value="investment">Investment — auto-post to Invest</option>
         </select>
@@ -2962,7 +2992,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
         <div class="dlg-title" id="sp-title">Split a prepaid bill</div>
         <div class="muted" style="margin-bottom:10px;" id="sp-blurb">
           Paid once, used over months — insurance, domains, hosting. An equal share posts to
-          History every month, and months already past appear straight away.
+          Expense every month, and months already past appear straight away.
         </div>
         <input class="input" name="name" id="sp-name" placeholder="e.g. Health insurance"
                required maxlength="80" oninput="splitPreview()">
@@ -3031,7 +3061,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
       document.getElementById('sp-title').textContent = 'Split a prepaid bill';
       document.getElementById('sp-blurb').textContent =
         'Paid once, used over months \u2014 insurance, domains, hosting. An equal share posts to '
-        + 'History every month, and months already past appear straight away.';
+        + 'Expense every month, and months already past appear straight away.';
       document.getElementById('sp-name').value = '';
       document.getElementById('sp-amt').value  = '';
       document.getElementById('sp-months').value = '12';
@@ -3050,7 +3080,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
       idf.value = d.id;
       document.getElementById('sp-title').textContent = 'Edit split bill';
       document.getElementById('sp-blurb').textContent =
-        'Changing any of this recalculates every share and re-posts them to History. '
+        'Changing any of this recalculates every share and re-posts them to Expense. '
         + 'Anything you edited by hand on those posted entries is replaced.';
       document.getElementById('sp-name').value = d.name;
       document.getElementById('sp-amt').value  = d.total;
@@ -3593,11 +3623,16 @@ function memberSelect(array $mems, int $uid, string $role, string $id = '', ?int
 // Two conditions, both required. There must be more than one name to choose between, and the
 // ledger must actually be shared — on a ledger only one person can open, "who spent it?" is a
 // question nobody is asking, and the row is just clutter above every list.
-function whoFilterRow(PDO $db, int $hid, array $mems, int $who): string {
-    if (count($mems) < 2) return '';
+//
+// $tail rides along at the end of the same row (the Add button on Earn). It renders even when
+// the pills don't, so a solo ledger still gets its action — hence the guards return the tail
+// rather than an empty string, and role/aria only apply when there is a filter to describe.
+function whoFilterRow(PDO $db, int $hid, array $mems, int $who, string $tail = ''): string {
+    $bare = fn() => $tail === '' ? '' : '<div class="pill-row">' . $tail . '</div>';
+    if (count($mems) < 2) return $bare();
     $n = $db->prepare("SELECT COUNT(*) FROM household_users WHERE household_id = ?");
     $n->execute([$hid]);
-    if ((int)$n->fetchColumn() < 2) return '';
+    if ((int)$n->fetchColumn() < 2) return $bare();
 
     $pills = '<button type="button" class="pill-btn' . ($who === 0 ? ' on' : '')
            . '" onclick="setWho(0)">All</button>';
@@ -3606,7 +3641,7 @@ function whoFilterRow(PDO $db, int $hid, array $mems, int $who): string {
         $pills .= '<button type="button" class="pill-btn' . ($id === $who ? ' on' : '')
                 . '" onclick="setWho(' . $id . ')">' . h($m['name']) . '</button>';
     }
-    return '<div class="pill-row" role="group" aria-label="Filter by person">' . $pills . '</div>';
+    return '<div class="pill-row" role="group" aria-label="Filter by person">' . $pills . $tail . '</div>';
 }
 
 function renderLedgers(PDO $db, array $user): void {
