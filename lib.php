@@ -22,6 +22,7 @@ const SCHEMA_STATEMENTS = [
         email VARCHAR(190) NOT NULL,
         name VARCHAR(80) NOT NULL,
         is_dark TINYINT(1) NOT NULL DEFAULT 0,
+        theme VARCHAR(16) NOT NULL DEFAULT 'organic',
         currency VARCHAR(8) NOT NULL DEFAULT '₹',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uk_google_sub (google_sub),
@@ -238,12 +239,16 @@ const MIGRATIONS = [
     // previous release still finds the column it expects.
     "ALTER TABLE households ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT '₹'",
     "ALTER TABLE households ADD COLUMN number_format VARCHAR(12) NOT NULL DEFAULT 'indian'",
+    // v18 — which palette a person reads the ledger in. Their own, not the household's:
+    // is_dark already worked that way, and the pair together is the whole choice. An
+    // unknown value renders as 'organic', so this can never leave a page unstyled.
+    "ALTER TABLE users ADD COLUMN theme VARCHAR(16) NOT NULL DEFAULT 'organic'",
 ];
 
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v17';
+const SCHEMA_SENTINEL = '.schema-ok-v18';
 
 // A ledger is a household; these are the only two roles it has. The owner is whoever created
 // it — they can edit every entry, invite people and remove them. Everyone else edits their own.

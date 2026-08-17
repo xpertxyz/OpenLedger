@@ -587,12 +587,13 @@ if (PHP_SAPI === 'cli') {
         // bare 404 with nothing logged, so it reads as a dead button rather than an error.
         preg_match_all('~(?:^\s*case |\$path === )\'(/[^\']*)\'~m', $src, $m);
         $routes = array_unique($m[1]);
-        // Three ways a view names a route: a literal attribute, an askConfirm payload, and a
-        // form whose action JS repoints — the split dialog serves both add and edit that way,
-        // and without the third pattern its edit route reads as unreachable.
-        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)|\.action\s*=\s*\'(/[^\']*)~', $vsrc, $u);
+        // Four ways a view names a route: a literal attribute, an askConfirm payload, a form
+        // whose action JS repoints — the split dialog serves both add and edit that way, and
+        // without that pattern its edit route reads as unreachable — and a bare fetch(), which
+        // is how the theme picker records a choice without reloading the page.
+        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)|\.action\s*=\s*\'(/[^\']*)|fetch\(\s*\'(/[^\']*)~', $vsrc, $u);
         // is_file, not file_exists: href="/" would otherwise match the project directory.
-        $linked = array_filter(array_unique(array_merge($u[1], $u[2], $u[3])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
+        $linked = array_filter(array_unique(array_merge($u[1], $u[2], $u[3], $u[4])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
         $orphan = array_diff($linked, $routes);
         $orphan ? $line('FAIL', 'a view links or posts to a path with no route: ' . implode(', ', $orphan))
                 : $line('OK',   count($linked) . ' linked paths all resolve to a route');
@@ -916,6 +917,35 @@ if (PHP_SAPI === 'cli') {
             ? $line('FAIL', 'CSS uses a token nothing defines: ' . implode(', ', $ghostVars))
             : $line('OK',   count(array_unique($used[1])) . ' CSS tokens used, all defined');
 
+        // Palettes must define the SAME set of variables, all of them. A palette that omits one
+        // does not fall back to anything sensible — the previous palette's value stays on the
+        // page, so switching from Plum to Harbor would leave one stray berry-coloured thing.
+        // Organic light is the reference and is exempt from carrying it: its values are the
+        // stylesheet's :root, which is what makes it the default with no attribute at all.
+        $varNames = function (string $block): array {
+            preg_match_all('~(--[a-z0-9-]+)\s*:~i', $block, $m);
+            $n = array_unique($m[1]); sort($n); return $n;
+        };
+        $ref = $varNames(THEMES['organic']['dark']['vars']);
+        $short = [];
+        foreach (THEMES as $key => $t) {
+            foreach (['light', 'dark'] as $m) {
+                $have = $key === 'organic' && $m === 'light'
+                    ? array_merge($varNames($t[$m]['vars']), $varNames($css))   // :root does the rest
+                    : $varNames($t[$m]['vars']);
+                if ($miss = array_diff($ref, $have)) $short[] = "$key $m (" . implode(' ', $miss) . ')';
+            }
+        }
+        $short ? $line('FAIL', 'palette misses variables another palette sets: ' . implode(', ', $short))
+               : $line('OK',   count(THEMES) . ' palettes x light/dark all define the same ' . count($ref) . ' variables');
+        // The picker and the stylesheet have to name the same palettes: a card whose key has no
+        // CSS block is a tap that does nothing, and a block no card offers is dead weight.
+        $shell   = $pages['add'] ?? '';
+        $unwired = array_values(array_filter(array_keys(THEMES), fn($k) =>
+            !str_contains($shell, 'data-pick="' . $k . '"') || !str_contains($shell, '[data-palette="' . $k . '"]')));
+        $unwired ? $line('FAIL', 'palette offered without CSS, or styled without a card: ' . implode(', ', $unwired))
+                 : $line('OK',   'every palette has both a card in the drawer and a block in the page CSS');
+
         !str_contains($css, '-webkit-tap-highlight-color')
             ? $line('OK',   'the shared stylesheet owns no tap-highlight rule')
             : $line('FAIL', 'design-tokens/styles.css sets -webkit-tap-highlight-color — that lands on every page; scope it to layout() or renderLanding()');
@@ -1195,8 +1225,19 @@ if ($method === 'POST') {
                 redirect('/login');
 
             case '/theme':
-                $db->prepare("UPDATE users SET is_dark = 1 - is_dark WHERE id = ?")->execute([$user['id']]);
-                redirect($_POST['back'] ?? '/');
+                // The page that posts this has already repainted itself — every palette ships
+                // in its CSS, so switching is two attributes on <html>. All that is left is to
+                // remember the choice for the next page, which is why the reply is an empty
+                // 204 nobody reads. Absent or unknown values keep what the user already had,
+                // so a half-filled post can never silently flip somebody to light Organic.
+                $key  = isset(THEMES[(string)($_POST['palette'] ?? '')])
+                        ? (string)$_POST['palette'] : themeKey($user);
+                $dark = match ($_POST['mode'] ?? '') { 'dark' => 1, 'light' => 0, default => (int)$user['is_dark'] };
+                $db->prepare("UPDATE users SET theme = ?, is_dark = ? WHERE id = ?")
+                   ->execute([$key, $dark, $user['id']]);
+                if (isset($_POST['back'])) redirect((string)$_POST['back']);
+                http_response_code(204);
+                exit;
 
             case '/number-format':
                 // The allow-list is the same constant the view builds its buttons from, so a

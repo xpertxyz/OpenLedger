@@ -12,6 +12,86 @@ const THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text
   // icon, select arrows, scrollbars) in dark, instead of light-on-dark-invisible.
   . 'color-scheme:dark;';
 
+// The three palettes, each in both modes. Organic is the one the design system ships, so its
+// light values ARE design-tokens/styles.css :root — nothing to repeat here but the status-bar
+// colour. Harbor and Plum are generated in OKLCH on the SAME lightness scale as Organic
+// (light 0.969→0.290, dark 0.290→0.930) and the same chroma arc, only the hues move. That is
+// what keeps every component working unchanged: a rule that reads --color-accent-700 gets the
+// same visual weight whichever palette is on. Retune a hue here, never a single step.
+//
+//   'sw' is what the picker draws — the four colours a palette is recognised by, and the
+//   first of them is also the mobile status-bar colour.
+const THEMES = [
+    'organic' => [
+        'name' => 'Organic', 'note' => 'Terracotta and sage on cream',
+        'light' => [
+            'vars' => '--theme-color:#f5ead8;',
+            'sw' => ['bg' => '#f5ead8', 'surface' => '#ebddc5', 'accent' => '#c67139', 'accent2' => '#7a8a5e'],
+        ],
+        'dark' => [
+            'vars' => THEME_DARK_VARS . '--theme-color:#201e1d;',
+            'sw' => ['bg' => '#201e1d', 'surface' => '#2b2721', 'accent' => '#e0864c', 'accent2' => '#93a86e'],
+        ],
+    ],
+    'harbor' => [
+        'name' => 'Harbor', 'note' => 'Deep azure and teal on cool paper',
+        'light' => [
+            'vars' => '--color-bg:oklch(0.972 0.006 250);--color-surface:oklch(0.938 0.011 250);--color-text:oklch(0.250 0.022 258);--color-accent:oklch(0.560 0.155 258);--color-accent-2:oklch(0.600 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 250);--color-neutral-200:oklch(0.930 0.010 250);--color-neutral-300:oklch(0.870 0.013 250);--color-neutral-400:oklch(0.780 0.014 250);--color-neutral-500:oklch(0.680 0.015 250);--color-neutral-600:oklch(0.580 0.014 250);--color-neutral-700:oklch(0.479 0.012 250);--color-neutral-800:oklch(0.381 0.010 250);--color-neutral-900:oklch(0.290 0.006 250);--color-accent-100:oklch(0.969 0.015 258);--color-accent-200:oklch(0.930 0.033 258);--color-accent-300:oklch(0.870 0.063 258);--color-accent-400:oklch(0.780 0.111 258);--color-accent-500:oklch(0.680 0.155 258);--color-accent-600:oklch(0.580 0.148 258);--color-accent-700:oklch(0.479 0.130 258);--color-accent-800:oklch(0.381 0.100 258);--color-accent-900:oklch(0.290 0.065 258);--color-accent-2-100:oklch(0.969 0.044 196);--color-accent-2-200:oklch(0.930 0.061 196);--color-accent-2-300:oklch(0.870 0.074 196);--color-accent-2-400:oklch(0.780 0.083 196);--color-accent-2-500:oklch(0.680 0.086 196);--color-accent-2-600:oklch(0.580 0.083 196);--color-accent-2-700:oklch(0.479 0.074 196);--color-accent-2-800:oklch(0.381 0.061 196);--color-accent-2-900:oklch(0.290 0.044 196);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f3f6fa;color-scheme:light;',
+            'sw' => ['bg' => '#f3f6fa', 'surface' => '#e5ebf2', 'accent' => '#3372cd', 'accent2' => '#209293'],
+        ],
+        'dark' => [
+            'vars' => '--color-bg:oklch(0.235 0.016 255);--color-surface:oklch(0.278 0.021 255);--color-text:oklch(0.935 0.013 250);--color-accent:oklch(0.720 0.135 258);--color-accent-2:oklch(0.740 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.007 250);--color-neutral-200:oklch(0.340 0.010 250);--color-neutral-300:oklch(0.400 0.014 250);--color-neutral-400:oklch(0.480 0.017 250);--color-neutral-500:oklch(0.570 0.022 250);--color-neutral-600:oklch(0.660 0.023 250);--color-neutral-700:oklch(0.760 0.022 250);--color-neutral-800:oklch(0.850 0.020 250);--color-neutral-900:oklch(0.930 0.015 250);--color-accent-100:oklch(0.290 0.039 258);--color-accent-200:oklch(0.340 0.055 258);--color-accent-300:oklch(0.400 0.082 258);--color-accent-400:oklch(0.480 0.114 258);--color-accent-500:oklch(0.570 0.144 258);--color-accent-600:oklch(0.660 0.155 258);--color-accent-700:oklch(0.760 0.122 258);--color-accent-800:oklch(0.850 0.074 258);--color-accent-900:oklch(0.930 0.033 258);--color-accent-2-100:oklch(0.290 0.037 196);--color-accent-2-200:oklch(0.340 0.046 196);--color-accent-2-300:oklch(0.400 0.060 196);--color-accent-2-400:oklch(0.480 0.076 196);--color-accent-2-500:oklch(0.570 0.091 196);--color-accent-2-600:oklch(0.660 0.095 196);--color-accent-2-700:oklch(0.760 0.091 196);--color-accent-2-800:oklch(0.850 0.071 196);--color-accent-2-900:oklch(0.930 0.041 196);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#191f26;color-scheme:dark;',
+            'sw' => ['bg' => '#191f26', 'surface' => '#212933', 'accent' => '#6da5f8', 'accent2' => '#57bebe'],
+        ],
+    ],
+    'plum' => [
+        'name' => 'Plum', 'note' => 'Berry and emerald on blush',
+        'light' => [
+            'vars' => '--color-bg:oklch(0.970 0.008 340);--color-surface:oklch(0.935 0.014 340);--color-text:oklch(0.245 0.024 335);--color-accent:oklch(0.560 0.175 348);--color-accent-2:oklch(0.600 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 340);--color-neutral-200:oklch(0.930 0.010 340);--color-neutral-300:oklch(0.870 0.013 340);--color-neutral-400:oklch(0.780 0.014 340);--color-neutral-500:oklch(0.680 0.015 340);--color-neutral-600:oklch(0.580 0.014 340);--color-neutral-700:oklch(0.479 0.012 340);--color-neutral-800:oklch(0.381 0.010 340);--color-neutral-900:oklch(0.290 0.006 340);--color-accent-100:oklch(0.969 0.018 348);--color-accent-200:oklch(0.930 0.042 348);--color-accent-300:oklch(0.870 0.083 348);--color-accent-400:oklch(0.780 0.155 348);--color-accent-500:oklch(0.680 0.161 348);--color-accent-600:oklch(0.580 0.154 348);--color-accent-700:oklch(0.479 0.135 348);--color-accent-800:oklch(0.381 0.104 348);--color-accent-900:oklch(0.290 0.068 348);--color-accent-2-100:oklch(0.969 0.041 160);--color-accent-2-200:oklch(0.930 0.056 160);--color-accent-2-300:oklch(0.870 0.068 160);--color-accent-2-400:oklch(0.780 0.077 160);--color-accent-2-500:oklch(0.680 0.079 160);--color-accent-2-600:oklch(0.580 0.077 160);--color-accent-2-700:oklch(0.479 0.068 160);--color-accent-2-800:oklch(0.381 0.056 160);--color-accent-2-900:oklch(0.290 0.041 160);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f9f3f7;color-scheme:light;',
+            'sw' => ['bg' => '#f9f3f7', 'surface' => '#f0e6ec', 'accent' => '#b93e86', 'accent2' => '#3d936a'],
+        ],
+        'dark' => [
+            'vars' => '--color-bg:oklch(0.232 0.019 330);--color-surface:oklch(0.275 0.025 330);--color-text:oklch(0.935 0.013 340);--color-accent:oklch(0.725 0.145 350);--color-accent-2:oklch(0.735 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.008 335);--color-neutral-200:oklch(0.340 0.010 335);--color-neutral-300:oklch(0.400 0.015 335);--color-neutral-400:oklch(0.480 0.018 335);--color-neutral-500:oklch(0.570 0.023 335);--color-neutral-600:oklch(0.660 0.025 335);--color-neutral-700:oklch(0.760 0.023 335);--color-neutral-800:oklch(0.850 0.021 335);--color-neutral-900:oklch(0.930 0.016 335);--color-accent-100:oklch(0.290 0.041 348);--color-accent-200:oklch(0.340 0.058 348);--color-accent-300:oklch(0.400 0.085 348);--color-accent-400:oklch(0.480 0.119 348);--color-accent-500:oklch(0.570 0.150 348);--color-accent-600:oklch(0.660 0.162 348);--color-accent-700:oklch(0.760 0.137 348);--color-accent-800:oklch(0.850 0.098 348);--color-accent-900:oklch(0.930 0.042 348);--color-accent-2-100:oklch(0.290 0.034 160);--color-accent-2-200:oklch(0.340 0.043 160);--color-accent-2-300:oklch(0.400 0.055 160);--color-accent-2-400:oklch(0.480 0.070 160);--color-accent-2-500:oklch(0.570 0.084 160);--color-accent-2-600:oklch(0.660 0.087 160);--color-accent-2-700:oklch(0.760 0.084 160);--color-accent-2-800:oklch(0.850 0.066 160);--color-accent-2-900:oklch(0.930 0.038 160);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#231a22;color-scheme:dark;',
+            'sw' => ['bg' => '#231a22', 'surface' => '#2f232e', 'accent' => '#e87db3', 'accent2' => '#69be92'],
+        ],
+    ],
+];
+
+// Selector list for one palette. Organic doubles as the default: a page that carries no
+// data-palette at all already renders it, because the stylesheet's :root IS organic light.
+function paletteSel(string $key, string $suffix): string {
+    $bases = $key === 'organic'
+        ? [':root:not([data-palette])', ':root[data-palette="organic"]']
+        : [':root[data-palette="' . $key . '"]'];
+    return implode(',', array_map(fn(string $b): string => $b . $suffix, $bases));
+}
+
+// Every palette, both modes, as one stylesheet. Shipping all six up front is what makes the
+// picker instant: switching is two attributes on <html>, with nothing left to fetch or reload.
+// $followOs adds the prefers-color-scheme fallback the signed-out pages need — inside the app
+// the server always knows the mode and writes data-theme, so those blocks would be dead weight.
+function themeCss(bool $followOs = true): string {
+    $out = '';
+    foreach (THEMES as $key => $t) {
+        $out .= paletteSel($key, '') . '{' . $t['light']['vars'] . '}';
+        // :not([data-theme]) is what lets an explicit light choice win on a dark OS — without
+        // it the media query would outrank the stored preference.
+        if ($followOs) {
+            $out .= '@media (prefers-color-scheme: dark){'
+                  . paletteSel($key, ':not([data-theme])') . '{' . $t['dark']['vars'] . '}}';
+        }
+        $out .= paletteSel($key, '[data-theme="dark"]') . '{' . $t['dark']['vars'] . '}';
+    }
+    return $out;
+}
+
+// Which palette this user is on. An unknown or missing value is the shipped one, so a row
+// written by a newer release (or none at all) still renders something.
+function themeKey(array $user): string {
+    $k = (string)($user['theme'] ?? '');
+    return isset(THEMES[$k]) ? $k : 'organic';
+}
+
 // Lucide sprite (stroke-width 2.75).
 const SVG_SPRITE = <<<SVG
 <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
@@ -167,25 +247,30 @@ META;
 // which is where the theme-color meta it repaints comes from, and before any
 // visible markup so an explicit choice never flashes the other theme.
 //
-// Signed-out visitors have no users.is_dark row, so the choice lives in
+// Signed-out visitors have no users row to read, so the choice lives in
 // localStorage. Absent means "follow the OS" — that path needs no JS at all,
 // the prefers-color-scheme block handles it. paintStatusBar() exists because
 // the meta is a fixed attribute: CSS can't reach it, so the mobile status bar
 // stays on the old colour unless JS rewrites it.
+//
+// Must be emitted AFTER themeCss(), which is where --theme-color comes from:
+// getComputedStyle can only see stylesheets the parser has already reached.
 function themeBootScript(): string {
-    // Same two colours layout() picks from for a signed-in user.
+    // Every palette declares its own --theme-color, so this stays one line whatever
+    // the user picked — including the OS-driven case, where no attribute is set at all.
     return <<<'JS'
 <script>
-  try { var t = localStorage.getItem('ol-theme');
-        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+  try { var r = document.documentElement,
+            t = localStorage.getItem('ol-theme'), p = localStorage.getItem('ol-palette');
+        // Only fills gaps: inside the app the server has already written both attributes from
+        // the user's row, and that row outranks whatever this browser last stored.
+        if (!r.dataset.theme && (t === 'dark' || t === 'light')) r.dataset.theme = t;
+        if (!r.dataset.palette && p && /^[a-z]+$/.test(p)) r.dataset.palette = p; } catch (e) {}
   function paintStatusBar() {
     var m = document.querySelector('meta[name="theme-color"]');
     if (!m) return;
-    var r = document.documentElement;
-    var dark = r.dataset.theme
-      ? r.dataset.theme === 'dark'
-      : window.matchMedia('(prefers-color-scheme: dark)').matches;
-    m.setAttribute('content', dark ? '#201e1d' : '#f5ead8');
+    var c = getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim();
+    if (c) m.setAttribute('content', c);
   }
   paintStatusBar();
   // While no explicit choice is stored the page tracks the OS, so the status
@@ -197,18 +282,29 @@ JS;
 
 // Shared page frame: header, content, bottom tabnav, toasts, right-side profile drawer.
 function layout(PDO $db, array $user, string $tab, string $content, string $requestUri = '/'): void {
-    $darkAttr  = $user['is_dark'] ? ' style="' . h(THEME_DARK_VARS) . '"' : '';
-    $themeIcon = $user['is_dark'] ? 'sun' : 'moon';
+    // The theme is two attributes on <html>, both server-rendered: no flash, and switching
+    // later is the same two attributes rewritten in place.
+    $palette   = themeKey($user);
+    $mode      = $user['is_dark'] ? 'dark' : 'light';
+    $themeVars = themeCss(false);
+    $boot      = themeBootScript();
+    $moonBtn   = icon('moon', 18);
+    $sunBtn    = icon('sun', 18);
     $initial   = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
     $sprite    = SVG_SPRITE;
     $backUri   = h($requestUri);
-    $themeBtn  = icon($themeIcon, 18);
     $csrf      = csrfInput();
     $csrfTok   = csrfJs();
 
     $origin = originUrl();
-    $themeColor = $user['is_dark'] ? '#201e1d' : '#f5ead8';
-    $meta = metaHead($origin, $themeColor);
+    $meta = metaHead($origin, THEMES[$palette][$mode]['sw']['bg']);
+    // Which card reads as chosen is decided by the attributes on <html>, not by anything
+    // rendered here — that is what lets a pick light up without a reload.
+    $pickCss = '';
+    foreach (THEMES as $key => $t) {
+        $pickCss .= paletteSel($key, ' .th-card[data-pick="' . $key . '"]')
+                  . '{border-color:var(--color-accent);background:var(--color-accent-100);}';
+    }
     $cssV = cssVersion();
     // Which ledger am I looking at? Once a person can hold several, every screen needs to say
     // so — a shared ledger and a personal one look identical otherwise. Truncated rather than
@@ -273,13 +369,15 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
 
     echo <<<HTML
 <!doctype html>
-<html lang="en">
+<html lang="en" data-palette="$palette" data-theme="$mode">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Open Ledger</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
+$boot
 <style>
   body { margin:0; background:var(--color-bg); -webkit-tap-highlight-color: transparent; }
   a, button, [role="button"], .row, .cat-chip, .pill-btn { -webkit-tap-highlight-color: transparent; }
@@ -573,16 +671,34 @@ $meta
   dialog.confirm .dlg-body  { font-size:14px; color:var(--color-neutral-800); }
   dialog.confirm .dlg-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
   .btn-danger { background:#c0392b; color:#fff; border:none; }
+
+  /* Theme picker — three palettes over a light/dark pair. Both previews are rendered and
+     CSS shows the one matching the mode you are in, so the whole panel restyles itself from
+     the two attributes on <html> and nothing here needs re-rendering to stay truthful. */
+  .th-mode { display:flex; gap:6px; }
+  .th-mode .pill-btn { flex:1; justify-content:center; gap:5px; }
+  :root[data-theme="dark"] .th-mode .dk,
+  :root:not([data-theme="dark"]) .th-mode .lt { background:var(--color-accent); color:var(--color-bg); border-color:transparent; }
+  .th-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .th-card { gap:7px; padding:8px 5px; }
+  .th-prev { width:100%; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:5px; border:1px solid color-mix(in srgb, var(--color-text) 14%, transparent); }
+  .th-prev i { width:9px; height:9px; border-radius:999px; display:block; }
+  :root[data-theme="dark"] .th-prev.l, :root:not([data-theme="dark"]) .th-prev.d { display:none; }
+  $pickCss
+  /* The header button shows the theme you'd switch *to*: moon while light, sun while dark. */
+  .tt .sun { display:none; }
+  :root[data-theme="dark"] .tt .sun { display:block; }
+  :root[data-theme="dark"] .tt .moon { display:none; }
 </style>
 </head>
-<body{$darkAttr}>
+<body>
 $sprite
 <div class="col">
   <div class="hdr">
     <div class="brand">Open Ledger</div>
     <div class="hdr-actions">
       $ledgerTag
-      <form method="post" action="/theme">$csrf<input type="hidden" name="back" value="{$backUri}"><button class="btn btn-icon" type="submit" aria-label="Toggle theme" style="color:var(--color-text);">$themeBtn</button></form>
+      <button class="btn btn-icon tt" type="button" onclick="toggleTheme()" aria-label="Switch between light and dark" title="Switch theme" style="color:var(--color-text);"><span class="moon">$moonBtn</span><span class="sun">$sunBtn</span></button>
       <button class="avatar" type="button" aria-label="Profile" onclick="openProfile()">$initial</button>
     </div>
   </div>
@@ -636,6 +752,7 @@ HTML;
   </form>
 </dialog>
 <script>
+var CSRF = "$csrfTok";
 function askConfirm(opts) {
   var f = document.getElementById('confirm-form');
   f.action = opts.action;
@@ -666,6 +783,31 @@ function setWho(v) {
   if (v && v !== '0') u.searchParams.set('who', v); else u.searchParams.delete('who');
   u.searchParams.delete('o');
   location.href = u.toString();
+}
+// Theme changes are applied by rewriting the two attributes on <html>: every palette in both
+// modes is already in the page's CSS, so the repaint is immediate and nothing reloads. The
+// POST only records the choice for the next page — its 204 is never read, and a failed one
+// costs the user a preference, not the page they were on.
+function setTheme(p, m) {
+  var r = document.documentElement;
+  if (p) r.dataset.palette = p;
+  if (m) r.dataset.theme = m;
+  try {
+    localStorage.setItem('ol-palette', r.dataset.palette);
+    localStorage.setItem('ol-theme', r.dataset.theme);
+  } catch (e) {}
+  paintStatusBar();
+  fetch('/theme', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: '_csrf=' + encodeURIComponent(CSRF)
+        + '&palette=' + encodeURIComponent(r.dataset.palette)
+        + '&mode=' + encodeURIComponent(r.dataset.theme),
+    keepalive: true
+  });
+}
+function toggleTheme() {
+  setTheme(null, document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 }
 function openProfile() {
   document.getElementById('drawer-backdrop').classList.add('open');
@@ -746,6 +888,35 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <span>Ledgers &amp; sharing</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
+        </section>
+
+        <hr>
+
+        <?php /* Not a <details> like the sections below it: the point of a theme picker is
+                 that you see it apply, and the drawer itself repaints under your thumb the
+                 moment you tap. Hiding it behind a disclosure would cost the demonstration.
+                 Every card carries both previews; CSS shows whichever matches the mode. */ ?>
+        <section>
+          <h4>Theme</h4>
+          <div class="th-mode" role="group" aria-label="Light or dark">
+            <button type="button" class="pill-btn lt" onclick="setTheme(null,'light')"><?= icon('sun', 14) ?> Light</button>
+            <button type="button" class="pill-btn dk" onclick="setTheme(null,'dark')"><?= icon('moon', 14) ?> Dark</button>
+          </div>
+          <div class="th-grid" style="margin-top:8px;">
+            <?php foreach (THEMES as $key => $t): ?>
+              <button type="button" class="cat-chip th-card" data-pick="<?= h($key) ?>"
+                      onclick="setTheme('<?= h($key) ?>',null)" title="<?= h($t['note']) ?>">
+                <?php foreach (['light' => 'l', 'dark' => 'd'] as $m => $cls): $sw = $t[$m]['sw']; ?>
+                  <span class="th-prev <?= $cls ?>" style="background:<?= h($sw['bg']) ?>;">
+                    <i style="background:<?= h($sw['accent']) ?>"></i>
+                    <i style="background:<?= h($sw['accent2']) ?>"></i>
+                    <i style="background:<?= h($sw['surface']) ?>"></i>
+                  </span>
+                <?php endforeach; ?>
+                <?= h($t['name']) ?>
+              </button>
+            <?php endforeach; ?>
+          </div>
         </section>
 
         <hr>
@@ -911,14 +1082,9 @@ function renderLanding(): void {
 <?= metaHead($origin) ?>
 <link rel="canonical" href="<?= h($origin) ?>/">
 <link rel="stylesheet" href="/design-tokens/styles.css?v=<?= h(cssVersion()) ?>">
+<style><?= themeCss() ?></style>
 <?= themeBootScript() ?>
 <style>
-  /* :not([data-theme]) is what makes "system" the default and still lets an
-     explicit light choice win on a dark OS — without it the media query would
-     outrank the stored preference. */
-  @media (prefers-color-scheme: dark) { :root:not([data-theme]) { <?= THEME_DARK_VARS ?> } }
-  :root[data-theme="dark"] { <?= THEME_DARK_VARS ?> }
-
   /* The button shows the theme you'd switch *to*: moon while light, sun while dark. */
   .tt .sun { display:none; }
   @media (prefers-color-scheme: dark) {
@@ -1083,7 +1249,7 @@ function renderLanding(): void {
     <span class="tag tag-neutral">No tracking</span>
     <span class="tag tag-accent-2">₹10,00,000, not ₹1,000,000</span>
     <span class="tag tag-neutral">PHP + MySQL, no build step</span>
-    <span class="tag tag-neutral">Light &amp; dark</span>
+    <span class="tag tag-neutral">3 themes, light &amp; dark</span>
   </div>
 
   <section class="feat">
@@ -1370,7 +1536,7 @@ DEV
     : '';
     $origin = originUrl();
     $meta = metaHead($origin);
-    $dark = THEME_DARK_VARS;
+    $themeVars = themeCss();
     $boot = themeBootScript();
     $cssV = cssVersion();
 
@@ -1383,15 +1549,13 @@ DEV
 <title>Open Ledger — Sign in</title>
 $meta
 <link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
 $boot
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
-  /* Signed-out visitor has no is_dark row to read, so follow the OS — unless
-     they overrode it with the toggle on the landing page, which the inline
-     script above replays from localStorage. Same constant the authed layout
-     injects inline. */
-  @media (prefers-color-scheme: dark) { :root:not([data-theme]) { $dark } }
-  :root[data-theme="dark"] { $dark }
+  /* Signed-out visitor has no users row to read, so follow the OS — unless they picked a
+     theme while signed in or used the landing page toggle, which the inline script above
+     replays from localStorage. Same six palette blocks the authed layout emits. */
   body { margin:0; background:var(--color-bg); min-height:100vh; display:flex; align-items:center; justify-content:center; }
   .toast { padding:8px 14px; border-radius:999px; background:var(--color-accent-700); color:var(--color-bg); font-size:13px; }
 </style>
