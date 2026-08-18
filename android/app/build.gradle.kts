@@ -1,6 +1,5 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.android.application)
 }
 
 android {
@@ -63,7 +62,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 
     packaging {
         // The PHP interpreter must stay uncompressed and be extracted at install time, or it
@@ -151,18 +149,19 @@ androidComponents {
 }
 
 dependencies {
-    implementation("androidx.activity:activity:1.13.0")
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.fragment.ktx)
     // The app lock. Also what pulls in androidx.fragment, which BiometricPrompt needs a
     // FragmentActivity for — hence MainActivity's base class.
-    implementation("androidx.biometric:biometric:1.1.0")
+    implementation(libs.androidx.biometric)
     // No appcompat: the activity is a ComponentActivity and the theme extends the platform's
     // Material, so it only ever contributed dex and ~80 translated app-name strings.
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation(libs.androidx.work.runtime.ktx)
     // Drive backup, appDataFolder scope only — see ANDROID.md for why not full `drive`.
-    implementation("com.google.android.gms:play-services-auth:21.6.0")
-    implementation("com.google.api-client:google-api-client-android:2.9.0")
-    implementation("com.google.apis:google-api-services-drive:v3-rev20240914-2.0.0")
+    implementation(libs.play.services.auth)
+    implementation(libs.google.api.client.android)
+    implementation(libs.google.api.services.drive)
 
-    androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
