@@ -1,4 +1,4 @@
-package xyz.openledger.app
+package com.xpertxyz.ledger
 
 import android.content.Context
 import androidx.work.*
@@ -49,7 +49,7 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
         try {
             val drive = DriveAuth.drive(ctx) ?: return fail(prefs, "No Google account connected")
 
-            if (!PhpServer(ctx).backupTo(snapshot)) return fail(prefs, "Could not read the ledger")
+            PhpServer(ctx).backupTo(snapshot)?.let { return fail(prefs, it) }
 
             // A ledger is repetitive text and compresses to a fraction of its size, which
             // matters on mobile data. Compress BEFORE encrypting — ciphertext does not
@@ -183,9 +183,11 @@ object BackupScheduler {
         val request = PeriodicWorkRequestBuilder<DriveBackupWorker>(days, TimeUnit.DAYS)
             .setConstraints(
                 Constraints.Builder()
-                    // Backups are not urgent enough to spend someone's mobile data or the last
-                    // of their battery on.
-                    .setRequiredNetworkType(NetworkType.UNMETERED)
+                    // CONNECTED, not UNMETERED. A gzipped ledger is tens of kilobytes — a
+                    // rounding error against one photo — and waiting for Wi-Fi on a phone that
+                    // rarely sees any turns "daily" into "never", silently, which is the worst
+                    // possible way for a backup to fail. Battery-not-low still applies.
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
                     .setRequiresBatteryNotLow(true)
                     .build()
             )

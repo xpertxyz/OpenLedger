@@ -1,4 +1,4 @@
-package xyz.openledger.app
+package com.xpertxyz.ledger
 
 import android.content.Context
 import android.security.keystore.KeyProperties

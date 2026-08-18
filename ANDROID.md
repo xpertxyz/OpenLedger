@@ -187,6 +187,46 @@ reporting success.
 
 ---
 
+## The app lock
+
+The ledger is one file on the phone with no account behind it, so the phone's own lock is the
+only thing between it and whoever is holding the device. `MainActivity` asks for it in `onStart`
+and re-arms in `onStop`: every launch, and every return from the background, the way a payments
+app does. Fingerprint or face, falling back to the PIN/pattern/password — `BIOMETRIC_STRONG or
+DEVICE_CREDENTIAL` on API 30+, `setDeviceCredentialAllowed(true)` below that, where the combined
+form throws.
+
+Three details that are easy to get wrong:
+
+- **Ask `BiometricManager.canAuthenticate()` first.** A phone with no lock set has nothing to
+  check against; opening anyway is right, because refusing would leave the ledger unreachable
+  rather than protected. Do not infer this from `onAuthenticationError` — the codes that mean
+  "nothing enrolled" overlap with ones that mean an ordinary failed attempt, so treating them
+  alike either locks the user out permanently or lets a failure through. The terms page says
+  plainly what a phone with no lock means.
+- **`onStop` must not re-arm while the prompt is up.** Confirming a PIN on API 30+ is a separate
+  system activity, so `onStop` fires mid-authentication; without the `prompting` guard a second
+  prompt queues behind the one being answered.
+- **The lock gates the view, not the data.** No key hangs off it. The database is protected by
+  app-private storage, the same thing that protects it from other apps. If a stolen-and-rooted
+  phone is in the threat model, the answer is a passphrase-derived key on the database itself.
+
+Connecting a Drive account leaves the app, so returning from the account chooser asks for the
+lock again. That is correct, and it is what a payments app does too.
+
+Testing it on an emulator, which ships with no lock at all:
+
+```bash
+adb shell locksettings set-pin 1234     # now the prompt appears on launch
+adb shell input text 1234 && adb shell input keyevent 66
+adb shell locksettings clear --old 1234 # back to the no-lock path
+```
+
+`adb exec-out screencap` renders the prompt as a black frame — it is a secure window. Check
+`adb shell dumpsys window | grep mCurrentFocus` instead; it reads `Window{… BiometricPrompt}`.
+
+---
+
 ## Google Drive backup
 
 Use the **`drive.appdata` scope only**. `drive` and `drive.readonly` are Google *restricted*
@@ -197,6 +237,60 @@ app created.
 One rolling `openledger-backup.db.gz` is kept, replaced on each run. Not a dated history:
 keeping N copies of a financial database in someone else's cloud is a bigger promise than this
 app should make, and Drive keeps its own revisions of a replaced file anyway.
+
+### Setting up the OAuth client id
+
+Backup stays switched off, cleanly, until `DriveAuth.WEB_CLIENT_ID` is filled in — the panel
+says "not set up in this build" and nothing throws. To turn it on:
+
+1. **Get the signing fingerprints you will register.** Debug first, so it works while developing:
+
+   ```bash
+   keytool -list -v -keystore ~/.android/debug.keystore \
+           -alias androiddebugkey -storepass android -keypass android | grep SHA1
+   ```
+
+   And the release key you will actually ship with — for a Play App Signing upload, the SHA-1
+   that matters is the **app signing certificate** Google shows under Play Console → Test and
+   release → App integrity, not your upload key. Register both or Drive fails only in production.
+
+2. **Google Cloud Console → new project** (or an existing one) **→ APIs & Services → Library →
+   Google Drive API → Enable.**
+
+3. **OAuth consent screen.** User type *External*. App name, support email, developer email.
+   Under *Scopes → Add or remove scopes*, add `.../auth/drive.appdata` — it is listed as
+   non-sensitive, so there is no verification queue and no CASA assessment. Do **not** add
+   `drive` or `drive.readonly`; either one is restricted and costs an annual third-party
+   security audit. While the app is in *Testing*, add your own Google account under
+   *Test users* or sign-in returns `access_denied`.
+
+4. **Credentials → Create credentials → OAuth client ID → Android.**
+
+   - Package name: `com.xpertxyz.ledger` — must equal `applicationId` exactly.
+   - SHA-1: from step 1. Create one entry per fingerprint (debug and release).
+
+   You never paste this id anywhere. Google matches the app by package name plus signing
+   fingerprint; the entry only has to exist.
+
+5. **Credentials → Create credentials → OAuth client ID → Web application.** Name it anything;
+   it needs no redirect URIs. Copy **this** client id.
+
+6. Paste it into `DriveAuth.WEB_CLIENT_ID`:
+
+   ```kotlin
+   const val WEB_CLIENT_ID = "1234567890-abcdefg.apps.googleusercontent.com"
+   ```
+
+7. Rebuild, open the drawer, **Connect Google Drive**.
+
+**The one mistake everyone makes:** putting the *Android* client id into `WEB_CLIENT_ID`. The
+SDK wants the **web** one — the Android entry exists only so Google can recognise the caller.
+Get it backwards and you get `APIException: 10 (DEVELOPER_ERROR)` with no further explanation.
+Same error if the SHA-1 registered does not match the build you are running, which is why the
+debug fingerprint has to be registered too.
+
+The id is not a secret: it is a public identifier, and an attacker holding it still cannot
+impersonate the app without the signing key. It is fine in the repository.
 
 ### Passphrase encryption
 

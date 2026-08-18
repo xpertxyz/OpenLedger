@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Open Ledger</string>
+    <string name="unlock_title">Unlock Open Ledger</string>
+    <string name="unlock_subtitle">Your ledger is on this phone. Confirm it is you.</string>
 </resources>

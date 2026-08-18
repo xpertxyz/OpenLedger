@@ -23,8 +23,10 @@
 
 # The WebView calls these directly from JavaScript, so nothing in the app "uses" them and R8
 # would otherwise rename or remove every one. Losing them means the backup panel's buttons
-# quietly do nothing in release and work perfectly in debug.
--keepclassmembers class xyz.openledger.app.BackupBridge {
+# quietly do nothing in release and work perfectly in debug, and the status bar keeps whatever
+# colour it launched with. Written for the package, not one class, so a bridge added later is
+# covered without anyone remembering this file exists.
+-keepclassmembers class com.xpertxyz.ledger.** {
   @android.webkit.JavascriptInterface <methods>;
 }
 

@@ -267,10 +267,13 @@ function themeBootScript(): string {
         if (!r.dataset.theme && (t === 'dark' || t === 'light')) r.dataset.theme = t;
         if (!r.dataset.palette && p && /^[a-z]+$/.test(p)) r.dataset.palette = p; } catch (e) {}
   function paintStatusBar() {
-    var m = document.querySelector('meta[name="theme-color"]');
-    if (!m) return;
     var c = getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim();
-    if (c) m.setAttribute('content', c);
+    if (!c) return;
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', c);
+    // A WebView ignores that meta, so the Android shell is told the same colour and paints
+    // the bars itself. Absent everywhere else, which is why this is the last thing here.
+    if (window.HLTheme) { try { HLTheme.paint(c); } catch (e) {} }
   }
   paintStatusBar();
   // While no explicit choice is stored the page tracks the OS, so the status
@@ -672,6 +675,14 @@ $boot
   dialog.confirm .dlg-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
   .btn-danger { background:#c0392b; color:#fff; border:none; }
 
+  /* Backup panel. The account row answers "where is it going and did it work" in one glance,
+     which is the whole reason anyone opens this section. The icon is aligned to the first
+     line rather than centred, so a two-line failure message does not push it off-centre. */
+  .bk-acct { display:flex; gap:10px; align-items:flex-start; padding:10px 12px;
+             background:var(--color-neutral-100); border-radius:var(--radius-md); }
+  .bk-acct > svg { color:var(--color-accent-700); flex:none; margin-top:1px; }
+  .bk-row { padding-top:var(--space-1); }
+
   /* Theme picker — three palettes over a light/dark pair. Both previews are rendered and
      CSS shows the one matching the mode you are in, so the whole panel restyles itself from
      the two attributes on <html> and nothing here needs re-rendering to stay truthful. */
@@ -813,6 +824,11 @@ function openProfile() {
   document.getElementById('drawer-backdrop').classList.add('open');
   document.getElementById('drawer-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
+  // The backup panel paints itself once, when the page loads. The drawer is only shown and
+  // hidden with CSS after that, so a backup finishing later — including every scheduled one,
+  // which by definition runs with nobody watching — left a stale "last backed up" time
+  // sitting there until the next full page load. Defined only in the Android build.
+  if (window.bkRender) window.bkRender();
 }
 function closeProfile() {
   document.getElementById('drawer-backdrop').classList.remove('open');
@@ -1050,6 +1066,35 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <p class="muted" style="margin:0;">Loading…</p>
           </div>
         </section>
+
+        <?php /* This panel's own dialog, and the reason it exists: an Android WebView with no
+                 WebChromeClient does not show window.confirm() or window.prompt() at all — it
+                 returns false and null immediately. Every button behind one silently did
+                 nothing, which is precisely how they were found. A native dialog would have
+                 fixed that and looked like a different app; this is the same <dialog> the rest
+                 of the ledger confirms with, so it works the same on the web too.
+
+                 Separate from #confirm-dlg because that one submits a form to a URL, and every
+                 action here is a JavaScript call into the bridge. */ ?>
+        <dialog id="bk-dlg" class="confirm" aria-labelledby="bk-dlg-title">
+          <form method="dialog">
+            <div class="dlg-title" id="bk-dlg-title"></div>
+            <div class="dlg-body" id="bk-dlg-body"></div>
+            <label class="field" id="bk-f1-wrap" style="display:none;">
+              <span id="bk-f1-label"></span>
+              <input class="input" type="password" id="bk-f1" autocomplete="off" autocapitalize="none" spellcheck="false">
+            </label>
+            <label class="field" id="bk-f2-wrap" style="display:none;">
+              <span id="bk-f2-label"></span>
+              <input class="input" type="password" id="bk-f2" autocomplete="off" autocapitalize="none" spellcheck="false">
+            </label>
+            <div class="dlg-body" id="bk-dlg-err" style="display:none; color:#c0392b;"></div>
+            <div class="dlg-actions">
+              <button type="button" class="btn btn-secondary" id="bk-dlg-cancel">Cancel</button>
+              <button type="button" class="btn" id="bk-dlg-ok"></button>
+            </div>
+          </form>
+        </dialog>
         <script>
         (function () {
           var el = document.getElementById('bk-panel');
@@ -1058,14 +1103,117 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
           function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
             return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
-          function when(ms) {
-            if (!ms) return 'never';
-            var d = new Date(Number(ms));
-            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          /**
+           * Ask, then act. Replaces confirm()/prompt(), which a WebView drops on the floor.
+           *
+           * opts: {title, body, ok, danger, fields:[label,…], validate(values) -> errorOrNull}
+           * done() gets the entered values, or null if the user backed out — including by
+           * pressing Escape, which fires the dialog's own close event and must count as "no"
+           * rather than leaving a half-finished action waiting for a callback that never comes.
+           */
+          function ask(opts, done) {
+            var dlg = document.getElementById('bk-dlg');
+            var fields = opts.fields || [], settled = false;
+            document.getElementById('bk-dlg-title').textContent = opts.title;
+            document.getElementById('bk-dlg-body').textContent = opts.body || '';
+            var okBtn = document.getElementById('bk-dlg-ok');
+            okBtn.textContent = opts.ok || 'Continue';
+            okBtn.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
+            var err = document.getElementById('bk-dlg-err');
+            err.style.display = 'none';
+
+            [1, 2].forEach(function (n) {
+              var wrap = document.getElementById('bk-f' + n + '-wrap');
+              var input = document.getElementById('bk-f' + n);
+              input.value = '';
+              // '' not 'flex': the dialog's form is already a column flex container, so an
+              // unstyled label blockifies and the caption sits above its input. Forcing flex
+              // here laid them side by side and wrapped the longer caption onto two lines.
+              wrap.style.display = fields[n - 1] ? '' : 'none';
+              if (fields[n - 1]) document.getElementById('bk-f' + n + '-label').textContent = fields[n - 1];
+            });
+
+            function settle(v) {
+              if (settled) return;
+              settled = true;
+              dlg.close();
+              done(v);
+            }
+            okBtn.onclick = function () {
+              var values = fields.map(function (_, i) { return document.getElementById('bk-f' + (i + 1)).value; });
+              var problem = opts.validate ? opts.validate(values) : null;
+              // Shown inside the dialog, not as a toast behind it: the mistake and the field
+              // it belongs to have to be on screen together, and the dialog stays open.
+              if (problem) { err.textContent = problem; err.style.display = 'block'; return; }
+              settle(fields.length ? values : true);
+            };
+            document.getElementById('bk-dlg-cancel').onclick = function () { settle(null); };
+            dlg.addEventListener('close', function once() {
+              dlg.removeEventListener('close', once);
+              if (!settled) { settled = true; done(null); }
+            });
+            dlg.showModal();
+            if (fields.length) document.getElementById('bk-f1').focus();
           }
+
+          // "today at 09:04" beats "8/18/2026 09:04 AM". The only thing anyone reads a backup
+          // timestamp for is how stale it is, and a date makes you work that out yourself.
+          function when(ms) {
+            if (!ms) return '';
+            var d = new Date(Number(ms)), now = new Date();
+            var at = ' at ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            var days = Math.round(
+              (new Date(now.getFullYear(), now.getMonth(), now.getDate())
+               - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+            if (days <= 0) return 'today' + at;
+            if (days === 1) return 'yesterday' + at;
+            if (days < 7)  return days + ' days ago';
+            return 'on ' + d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+          }
+
+          // What the panel is currently showing, and whether a backup we started is still in
+          // flight. Held outside render() because render() rewrites the whole panel: keeping
+          // the in-progress state on the button element itself lost it the moment anything
+          // else repainted.
+          var shown = null, busy = false, baseOk = 0, baseErr = '', watcher = null;
+
+          function drawerOpen() {
+            var d = document.getElementById('drawer-panel');
+            return !!(d && d.classList.contains('open'));
+          }
+
+          /**
+           * Repaint when the answer changes underneath us.
+           *
+           * A backup is queued work, not a function call — it finishes whenever WorkManager
+           * gets to it, which on a cold radio can be minutes. The first version of this waited
+           * a fixed 45 seconds and then stopped looking, so a slower run landed after the last
+           * repaint and the panel sat there showing the previous time until the drawer was
+           * closed and opened again. This keeps looking for as long as it matters, and stops
+           * on its own once nothing is in flight and nobody is looking.
+           */
+          function tick() {
+            if (!busy && !drawerOpen()) { clearInterval(watcher); watcher = null; return; }
+            var s2 = JSON.parse(HLBackup.status());
+            if (busy) {
+              var done = s2.lastOk !== baseOk;
+              var failed = s2.lastError && s2.lastError !== baseErr;
+              if (!done && !failed) return;
+              busy = false;
+              toast(done ? 'Backed up to Drive.' : 'Backup failed.');
+              render();
+              return;
+            }
+            // Not our backup: a scheduled one finished, or the account changed. Same repaint.
+            if (!shown || s2.lastOk !== shown.lastOk || s2.lastError !== shown.lastError
+                || s2.account !== shown.account) render();
+          }
+
+          function watch() { if (!watcher) watcher = setInterval(tick, 2000); }
 
           function render() {
             var s = JSON.parse(HLBackup.status());
+            shown = s;
             if (!s.configured) {
               el.innerHTML = '<p class="muted" style="margin:0;">Drive backup is not set up in this build.</p>';
               return;
@@ -1079,66 +1227,160 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             }
             var opts = ['off', 'daily', 'weekly'].map(function (f) {
               return '<option value="' + f + '"' + (s.frequency === f ? ' selected' : '') + '>'
-                + (f === 'off' ? 'Manual only' : f.charAt(0).toUpperCase() + f.slice(1)) + '</option>';
+                + (f === 'off' ? 'Only when I ask' : f.charAt(0).toUpperCase() + f.slice(1)) + '</option>';
             }).join('');
-            el.innerHTML =
-                '<p class="muted" style="margin:0;">Backing up to <strong>' + esc(s.account) + '</strong></p>'
-              + '<label class="field"><span>How often</span><select class="input" id="bk-freq">' + opts + '</select></label>'
-              + '<p class="muted" style="margin:0;">Last backup: ' + when(s.lastOk) + '</p>'
-              // #c0392b, not a token: the design system has no danger ramp, and this is the
-              // same literal .btn-danger already uses. One colour for "something went wrong".
-              + (s.lastError ? '<p style="margin:0;color:#c0392b;">' + esc(s.lastError) + '</p>' : '')
-              + '<p class="muted" style="margin:6px 0 0;">' + (s.encrypted
-                  ? 'Encrypted with your passphrase. Google cannot read it.'
-                  : 'Not encrypted — Google can read this backup.') + '</p>'
-              + '<button class="btn btn-block" id="bk-pass">'
-                + (s.encrypted ? 'Change or remove passphrase' : 'Encrypt with a passphrase') + '</button>'
-              + '<button class="btn btn-block" id="bk-now">Back up now</button>'
-              + '<button class="btn btn-block" id="bk-restore">Restore from Drive</button>'
-              + '<button class="btn btn-danger btn-block" id="bk-off">Disconnect</button>';
 
-            document.getElementById('bk-freq').onchange = function () { HLBackup.setFrequency(this.value); };
+            // One status line that answers the only question anyone opens this panel with:
+            // is my ledger actually backed up? An error outranks a stale success — a panel
+            // reading "Last backup: 3 days ago" in calm grey while every run since has failed
+            // is worse than no panel. #c0392b matches .btn-danger; the design system has no
+            // danger ramp, and this is the one colour for "something went wrong".
+            var status = s.lastError
+              ? '<p style="margin:0;color:#c0392b;font-size:13px;"><strong>Backup failed.</strong> '
+                  + esc(s.lastError) + '</p>'
+              : s.lastOk
+                ? '<p class="muted" style="margin:0;">Last backed up ' + when(s.lastOk) + '</p>'
+                : '<p class="muted" style="margin:0;">Not backed up yet.</p>';
+
+            el.innerHTML =
+                '<div class="bk-acct">'
+              +   '<svg width="20" height="20" aria-hidden="true"><use href="#icon-archive"></use></svg>'
+              +   '<div style="min-width:0;">'
+              +     '<div style="font-size:14px; overflow:hidden; text-overflow:ellipsis;">' + esc(s.account) + '</div>'
+              +     status
+              +   '</div>'
+              + '</div>'
+              + '<button class="btn btn-primary btn-block" id="bk-now"' + (busy ? ' disabled' : '') + '>'
+              +   (busy ? 'Backing up…' : 'Back up now') + '</button>'
+              + '<label class="field"><span>Automatically</span>'
+              +   '<select class="input" id="bk-freq">' + opts + '</select></label>'
+              + '<div class="bk-row">'
+              +   '<p class="muted" style="margin:0;">' + (s.encrypted
+                    ? 'Encrypted with your passphrase — Google cannot read it.'
+                    : 'Not encrypted — Google can read this backup.') + '</p>'
+              +   '<button class="btn btn-secondary btn-block" id="bk-pass" style="margin-top:8px;">'
+              +     (s.encrypted ? 'Change or remove passphrase' : 'Encrypt with a passphrase') + '</button>'
+              + '</div>'
+              // Restore and disconnect both throw something away, so they sit below the line
+              // rather than in the row of everyday actions, and neither is the loudest thing
+              // on the screen. "Back up now" is what this panel is for.
+              + '<hr style="margin:4px 0;">'
+              + '<button class="btn btn-secondary btn-block" id="bk-restore">Restore from Drive</button>'
+              + '<button class="btn btn-ghost" id="bk-off" style="color:#c0392b; align-self:flex-start;">'
+              +   'Disconnect this account</button>';
+
+            document.getElementById('bk-freq').onchange = function () {
+              HLBackup.setFrequency(this.value);
+              toast(this.value === 'off' ? 'Automatic backup off.'
+                                         : 'Backing up ' + this.options[this.selectedIndex].text.toLowerCase() + '.');
+            };
+            // Queue it, then let the watcher report what happened. The button's in-progress
+            // state comes from `busy` via render(), so it survives any repaint in between.
             document.getElementById('bk-now').onclick = function () {
-              HLBackup.backupNow(); toast('Backup started.'); };
+              busy = true; baseOk = s.lastOk; baseErr = s.lastError;
+              HLBackup.backupNow();
+              render();
+              watch();
+            };
             document.getElementById('bk-off').onclick = function () {
-              HLBackup.disconnect(); render(); };
+              ask({
+                title: 'Disconnect this account?',
+                body: 'Automatic backups stop and ' + s.account + ' is signed out. The copy '
+                    + 'already in Drive is left alone — you can reconnect and restore from it.',
+                ok: 'Disconnect', danger: true,
+              }, function (yes) {
+                if (!yes) return;
+                HLBackup.disconnect();
+                toast('Drive disconnected.');
+                render();
+              });
+            };
 
             document.getElementById('bk-pass').onclick = function () {
-              if (s.encrypted && confirm('Stop encrypting future backups?\n\n'
-                    + 'The copy already in Drive stays encrypted, and without the passphrase '
-                    + 'it can never be opened again.')) {
-                HLBackup.clearPassphrase(); render(); return;
+              if (s.encrypted) {
+                ask({
+                  title: 'Stop encrypting backups?',
+                  body: 'Future backups will be readable by Google. The copy already in Drive '
+                      + 'stays encrypted, and without its passphrase it can never be opened again.',
+                  ok: 'Stop encrypting', danger: true,
+                }, function (yes) {
+                  if (!yes) return;
+                  HLBackup.clearPassphrase();
+                  toast('Future backups will not be encrypted.');
+                  render();
+                });
+                return;
               }
-              // Said plainly and before the fact: there is no recovery path, because there is
-              // no one holding a second copy of the key. That is the point of the feature.
-              var p = prompt('Choose a passphrase for your backups.\n\n'
-                + 'It is never sent anywhere, so nobody — including us — can recover it. '
-                + 'If you forget it, the backup in Drive is lost for good.');
-              if (!p) return;
-              if (p !== prompt('Type it once more to confirm.')) { toast('Those did not match.'); return; }
-              var err = HLBackup.setPassphrase(p);
-              if (err) { toast(err); return; }
-              toast('Backups will be encrypted from now on.');
-              render();
+              // Said plainly and before the fact: there is no recovery path, because nobody
+              // else holds the key. That is the feature, not a gap — so it is stated where the
+              // decision is made, not in a help page.
+              ask({
+                title: 'Encrypt your backups',
+                body: 'Your passphrase is never sent anywhere, so nobody — including us — can '
+                    + 'recover it. Forget it and the backup in Drive is lost for good.',
+                ok: 'Encrypt backups',
+                fields: ['Passphrase', 'Type it again'],
+                validate: function (v) {
+                  if (v[0].length < 8) return 'Use at least 8 characters.';
+                  if (v[0] !== v[1]) return 'Those two do not match.';
+                  return null;
+                },
+              }, function (v) {
+                if (!v) return;
+                var err = HLBackup.setPassphrase(v[0]);
+                if (err) { toast(err); return; }
+                toast('Backups will be encrypted from now on.');
+                render();
+              });
             };
 
             document.getElementById('bk-restore').onclick = function () {
+              var btn = this;
               // Restoring overwrites every entry on this phone, so it asks first — and says
-              // what it will cost, not just "are you sure".
-              if (!confirm('Replace everything on this phone with the copy in Drive?\n\n'
-                + 'Entries added since that backup will be lost.')) return;
-              var err = HLBackup.restore('');
-              // The blob says whether it is encrypted, not this phone's settings — restoring
-              // onto a device that has never seen this backup is the case that matters.
-              if (err === 'PASSPHRASE_REQUIRED') {
-                var p = prompt('This backup is encrypted. Enter its passphrase:');
-                if (!p) return;
-                err = HLBackup.restore(p);
+              // what it costs, not just "are you sure".
+              ask({
+                title: 'Restore from Drive?',
+                body: 'Everything on this phone is replaced with the copy in Drive'
+                    + (s.lastOk ? ', backed up ' + when(s.lastOk) : '')
+                    + '. Anything added since then is lost.',
+                ok: 'Replace my ledger', danger: true,
+              }, function (yes) {
+                if (!yes) return;
+                run('');
+              });
+
+              // The bridge call blocks — it stops the interpreter, swaps the database and
+              // starts it again — so the button has to be repainted before it is made, not
+              // after. Hence the timeout: without it the "Restoring…" state never renders and
+              // the app just appears frozen for several seconds.
+              function run(passphrase) {
+                btn.disabled = true; btn.textContent = 'Restoring…';
+                setTimeout(function () {
+                  var err = HLBackup.restore(passphrase);
+                  btn.disabled = false; btn.textContent = 'Restore from Drive';
+                  // The blob says whether it is encrypted, not this phone's settings —
+                  // restoring onto a device that has never seen this backup is the case
+                  // that matters.
+                  if (err === 'PASSPHRASE_REQUIRED') {
+                    ask({
+                      title: 'This backup is encrypted',
+                      body: 'Enter the passphrase it was sealed with.',
+                      ok: 'Restore', danger: true,
+                      fields: ['Passphrase'],
+                      validate: function (v) { return v[0] ? null : 'Enter the passphrase.'; },
+                    }, function (v) { if (v) run(v[0]); });
+                    return;
+                  }
+                  if (err) { toast('Restore failed: ' + err); return; }
+                  location.href = '/';
+                }, 50);
               }
-              if (err) { toast('Restore failed: ' + err); return; }
-              location.href = '/';
             };
           }
+          // Re-read on every drawer open, not just on page load — see openProfile(). Opening
+          // also starts the watcher, so a scheduled backup finishing while the panel is on
+          // screen updates it there and then.
+          window.bkRender = function () { render(); watch(); };
           render();
         })();
         </script>
@@ -4226,6 +4468,12 @@ function termsBody(): string {
           Inspect it, contribute, or self-host to keep full control of your data.</p>
       </div>
 
+      <?php /* The same page describes two different apps, so it reads the flags that make them
+               different rather than keeping a second copy of the file. On the phone there is no
+               account, no server and nothing to sign in to: FEATURE_SIGNIN off IS the local
+               build. Saying "stored in a MySQL database" there would be a lie about where a
+               household's money lives, which is the one thing this page exists to get right. */ ?>
+      <?php if (FEATURE_SIGNIN): ?>
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Who can use it</h3>
         <p style="margin:0; font-size:14px;">Anyone with a Google account can sign in. Authentication uses Google
@@ -4246,6 +4494,45 @@ function termsBody(): string {
           No analytics tracker, no advertising, no third-party integrations receive your data. The only outbound
           request is Google's sign-in endpoint (for verifying your ID token at login).</p>
       </div>
+      <?php else: ?>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">We have no access to your data</h3>
+        <p style="margin:0; font-size:14px;">There is no account to create and no server behind this app.
+          <strong>Everything you enter stays on this phone</strong>, in a single database file that only this app can
+          open. We cannot read it, we never receive a copy of it, and there is nothing for us to hand over or lose.</p>
+      </div>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Your phone's lock is the lock</h3>
+        <p style="margin:0; font-size:14px;">The app asks for your fingerprint, face or screen lock every time you
+          open it, and again whenever you come back to it. That is Android's own check — the app never sees your PIN
+          or your fingerprint, only whether the phone accepted it.</p>
+      </div>
+
+      <?php if (FEATURE_BACKUP): ?>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Backups go to your Drive, not ours</h3>
+        <p style="margin:0; font-size:14px;">If you turn on backup, the app copies that one database file into
+          <strong>your own Google Drive</strong>, into a private folder only this app can see. It does not pass
+          through us. Set a passphrase and the file is encrypted on this phone before it leaves, so not even Google
+          can read it — but if you forget that passphrase, nobody can recover the backup, including us.</p>
+      </div>
+      <?php endif; ?>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">What leaves the phone</h3>
+        <p style="margin:0; font-size:14px;">Nothing, unless you ask for it. No analytics, no advertising, no crash
+          reporting, no third-party integrations. The <?= FEATURE_BACKUP ? 'only network request the app ever makes is
+          the backup upload to your own Drive, if you switch it on' : 'app makes no network requests at all' ?>.</p>
+      </div>
+
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">If you lose the phone</h3>
+        <p style="margin:0; font-size:14px;">The ledger goes with it. Uninstalling the app deletes the database, and a
+          factory reset deletes it too. A backup is the only copy that survives, so if these entries matter, turn one
+          on.</p>
+      </div>
+      <?php endif; ?>
 
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">No warranty</h3>

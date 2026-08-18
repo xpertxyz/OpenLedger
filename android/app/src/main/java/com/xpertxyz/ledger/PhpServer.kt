@@ -1,9 +1,10 @@
-package xyz.openledger.app
+package com.xpertxyz.ledger
 
 import android.content.Context
 import java.io.File
 import java.net.ServerSocket
 import java.security.SecureRandom
+import java.util.concurrent.TimeUnit
 
 /**
  * The PHP process that serves the ledger to the WebView.
@@ -42,11 +43,27 @@ class PhpServer(private val ctx: Context) {
         }.start()
     }
 
-    /** Blocking. Call from a background thread — see [startAsync]. */
+    /**
+     * Blocking. Call from a background thread — see [startAsync].
+     *
+     * Synchronized, and the alive-check is inside the lock, because two starts really do race:
+     * `onCreate` and `onResume` both call serve() on a cold launch, and each spawns its own
+     * thread. Both used to get past this check and start an interpreter. That went unnoticed
+     * only because each start also picked its own port, so both succeeded and the app quietly
+     * ran two PHP processes on the household's database, one of them orphaned. Holding the
+     * port steady turned that silent duplication into a visible "Address already in use",
+     * which is how it was finally found.
+     */
+    @Synchronized
     fun start() {
         if (process?.isAlive == true) return
         syncAppCode()
-        port = freePort()
+        // Chosen once and kept for the life of this object, NOT per start. The interpreter is
+        // stopped and started again on every background/resume, and after a restore — and the
+        // WebView is still showing a page served from the previous port. Handing it a new one
+        // each time left every link in that page pointing at a socket nobody is listening on:
+        // the app looked fine until the first tap, which failed with a connection error.
+        if (port == 0) port = freePort()
 
         // The interpreter is shipped as libphp.so so it lands in nativeLibraryDir, which is the
         // only place Android 10+ still permits executing a binary from. See build-php.sh.
@@ -94,15 +111,30 @@ class PhpServer(private val ctx: Context) {
         waitUntilListening()
     }
 
+    @Synchronized
     fun stop() {
-        process?.destroy()
+        val p = process ?: return
         process = null
+        p.destroy()
+        // Wait for it to actually go. destroy() only sends the signal, and the next start()
+        // follows immediately on resume — binding the same port while the previous interpreter
+        // still holds it fails with "Address already in use", and the readiness probe is then
+        // answered by the dying process, so the app believes it started and talks to a socket
+        // that is about to close.
+        if (!p.waitFor(2, TimeUnit.SECONDS)) p.destroyForcibly()
     }
 
     /** A consistent snapshot for Drive backup. See index.php --backup for why VACUUM INTO. */
-    fun backupTo(dest: File): Boolean {
+    /**
+     * Null on success, or what went wrong. Returning a bare false here cost an afternoon: the
+     * panel said "Could not read the ledger" and the actual reason — printed on the CLI's own
+     * stderr — was thrown away by the caller.
+     */
+    fun backupTo(dest: File): String? {
         dest.delete()
-        return cli("--backup", dest.absolutePath).first == 0 && dest.exists()
+        val (code, output) = cli("--backup", dest.absolutePath)
+        if (code == 0 && dest.exists()) return null
+        return output.trim().ifEmpty { "backup failed (exit $code)" }
     }
 
     /**

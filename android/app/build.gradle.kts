@@ -1,4 +1,5 @@
 import java.util.Properties
+import javax.inject.Inject
 
 plugins {
     id("com.android.application")
@@ -6,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "xyz.openledger.app"
+    namespace = "com.xpertxyz.ledger"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "xyz.openledger.app"
+        applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -98,25 +99,65 @@ val phpAppFiles = listOf(
 )
 val phpAppDirs = listOf("design-tokens", "assets")
 
-val syncPhpApp by tasks.registering(Copy::class) {
-    val repoRoot = rootProject.projectDir.parentFile
-    into(layout.buildDirectory.dir("php-assets/app"))
-    phpAppFiles.forEach { from(File(repoRoot, it)) }
-    phpAppDirs.forEach { from(File(repoRoot, it)) { into(it) } }
-    // .env is a server-side file holding MySQL credentials. It must never reach a phone —
-    // the Android build is configured entirely through the process environment instead.
-    exclude(".env", ".env.example", "data/**")
+/**
+ * A task rather than a bare Copy so that its output is a DirectoryProperty, which is the only
+ * thing AGP's asset API will accept.
+ *
+ * That matters more than it sounds. This was a Copy whose output directory was handed to
+ * `sourceSets.assets.srcDir(files(...).builtBy(task))`, and AGP does not carry a task
+ * dependency through that: mergeAssets ran, this never did, and the APK shipped whatever PHP
+ * happened to be left in build/php-assets from an earlier build. Editing views.php and
+ * reinstalling produced an app running the old page, silently — the exact drift this whole
+ * copy-from-the-repo arrangement exists to prevent.
+ */
+abstract class SyncPhpApp : DefaultTask() {
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val appFiles: ConfigurableFileCollection
+
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val appDirs: ConfigurableFileCollection
+
+    /** Set by AGP, not by us: it decides where a variant's generated assets live. */
+    @get:OutputDirectory
+    abstract val outDir: DirectoryProperty
+
+    @get:Inject abstract val fs: FileSystemOperations
+
+    @TaskAction
+    fun sync() {
+        val dirs = appDirs.files
+        val files = appFiles.files
+        fs.sync {
+            into(outDir.dir("app"))
+            from(files)
+            dirs.forEach { d -> from(d) { into(d.name) } }
+            // .env is a server-side file holding MySQL credentials. It must never reach a
+            // phone — the Android build is configured entirely through the process
+            // environment instead.
+            exclude(".env", ".env.example", "data/**")
+        }
+    }
 }
 
-// builtBy, not a dependsOn on mergeAssets: lint and the bundle tasks read this directory too,
-// and wiring only the one consumer makes Gradle fail the release build complaining about an
-// implicit dependency. Declaring it on the file collection covers every consumer at once.
-android.sourceSets["main"].assets.srcDir(
-    files(layout.buildDirectory.dir("php-assets")).builtBy(syncPhpApp)
-)
+val syncPhpApp by tasks.registering(SyncPhpApp::class) {
+    val repoRoot = rootProject.projectDir.parentFile
+    appFiles.from(phpAppFiles.map { File(repoRoot, it) })
+    appDirs.from(phpAppDirs.map { File(repoRoot, it) })
+}
+
+// The AGP way to contribute generated assets. Unlike srcDir(), this wires the task into every
+// consumer — merge, lint, bundle — so none of them can read the directory before it is written.
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(syncPhpApp, SyncPhpApp::outDir)
+    }
+}
 
 dependencies {
     implementation("androidx.activity:activity:1.9.3")
+    // The app lock. Also what pulls in androidx.fragment, which BiometricPrompt needs a
+    // FragmentActivity for — hence MainActivity's base class.
+    implementation("androidx.biometric:biometric:1.1.0")
     // No appcompat: the activity is a ComponentActivity and the theme extends the platform's
     // Material, so it only ever contributed dex and ~80 translated app-name strings.
     implementation("androidx.work:work-runtime-ktx:2.9.1")

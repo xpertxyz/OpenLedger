@@ -1,4 +1,4 @@
-package xyz.openledger.app
+package com.xpertxyz.ledger
 
 import android.content.Context
 import android.content.Intent
@@ -31,7 +31,7 @@ import com.google.api.services.drive.DriveScopes
  *     Do not request `drive` or `drive.readonly` — those are restricted, and shipping
  *     either one means an annual third-party security audit at your own expense.
  *  3. Credentials → Create OAuth client ID → **Android**:
- *        Package name: xyz.openledger.app        (must match applicationId exactly)
+ *        Package name: com.xpertxyz.ledger        (must match applicationId exactly)
  *        SHA-1:        keytool -list -v -keystore <your.keystore> -alias <alias>
  *     Register the debug certificate too if you want this to work from a debug build:
  *        keytool -list -v -keystore ~/.android/debug.keystore \
@@ -47,7 +47,7 @@ import com.google.api.services.drive.DriveScopes
 object DriveAuth {
 
     /** Replace with the **Web application** OAuth client id. See the notes above. */
-    const val WEB_CLIENT_ID = "REPLACE_ME.apps.googleusercontent.com"
+    const val WEB_CLIENT_ID = "476911098690-vpmm92mij1k48f50pmc6u2utjdms5lnu.apps.googleusercontent.com"
 
     val isConfigured: Boolean get() = !WEB_CLIENT_ID.startsWith("REPLACE_ME")
 
