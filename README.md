@@ -223,6 +223,42 @@ mysql -u root -e "DROP DATABASE homeledger; CREATE DATABASE homeledger CHARACTER
 
 > **`data/` must be writable.** The schema bootstrap writes the `SCHEMA_SENTINEL` file there once, then skips itself on every later request. If the directory isn't writable the sentinel never lands and **every request re-runs the full `CREATE TABLE` + `ALTER TABLE` set** — slow, and it floods the error log. `--preflight` fails loudly on this.
 
+### Running it on SQLite
+
+The app runs on MySQL *or* SQLite from the same source — SQLite is what the Android build uses
+(see [ANDROID.md](ANDROID.md)). To run it that way locally, no MySQL required:
+
+```bash
+DB_DRIVER=sqlite DB_PATH=/tmp/ledger.db php -S 127.0.0.1:8152 router.php
+```
+
+A fresh SQLite file is created and brought up to the current schema on first request. Both
+drivers must stay green before shipping:
+
+```bash
+php index.php --preflight                                        # MySQL
+DB_DRIVER=sqlite DB_PATH=/tmp/t.db php index.php --preflight     # SQLite
+
+# and the two must agree, byte for byte:
+DB_DRIVER=sqlite DB_PATH=/tmp/t.db php tests/dual-driver.php > /tmp/a.txt
+php tests/dual-driver.php > /tmp/b.txt
+diff /tmp/a.txt /tmp/b.txt
+```
+
+`tests/dual-driver.php` exercises money totals, the date helpers, the rate-limit upsert, invite
+expiry and the recurring catch-up sweep, all inside a transaction it always rolls back — safe to
+point at a real database.
+
+Take a consistent backup of a SQLite ledger (never copy the file — it has a live WAL):
+
+```bash
+DB_DRIVER=sqlite DB_PATH=/tmp/ledger.db php index.php --backup /tmp/snapshot.db
+```
+
+> **`APP_TZ` matters.** Every date is now computed by PHP, not by the database. It defaults to
+> `Asia/Kolkata`; before, PHP ran in UTC and an expense added between midnight and 05:29 IST
+> filed under the previous day.
+
 ---
 
 ## Architecture

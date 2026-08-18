@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The WebView paints the entire UI, including the status-bar colour via the app's own
+         theme-color meta tag. The native theme only needs to not flash a light background
+         before the first paint. -->
+    <style name="Theme.OpenLedger" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

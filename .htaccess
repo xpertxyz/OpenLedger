@@ -1,6 +1,23 @@
 # Hostinger / Apache / LiteSpeed front-controller
 RewriteEngine On
 
+# Directories that ship in this repo but must never be served. This has to come BEFORE the
+# "serve real files" rule below, which ends with [L] and would otherwise hand them straight out.
+#
+# Deployment is `git pull` onto the web root, so everything committed lands here whether the
+# website wants it or not:
+#
+#   android/  the phone app. It lives in this repo deliberately — its Gradle build copies
+#             index.php/lib.php/views.php out of this directory, which is what stops the phone
+#             and the website from drifting apart — but nothing in it belongs on the web.
+#   tests/    dual-driver.php is a CLI harness. Served over HTTP it would EXECUTE: connect to
+#             the database, write rows inside a transaction, and print the driver and schema
+#             to an unauthenticated caller. Rolled back, but not anyone's business.
+#
+# docs/ is deliberately NOT in this list. It is the handoff and deploy documentation for an
+# open-source app and is meant to be readable by anyone, on the site as well as in the repo.
+RewriteRule ^(android|tests)/ - [F,L]
+
 # Serve real files (styles.css, favicon, etc.) as-is.
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d

@@ -883,9 +883,12 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                    every request whether or not anyone opens it, and the invite link, the people
                    list and the ledger switcher would have cost three more queries per page for
                    a panel that starts closed. */ ?>
+          <?php /* The page still earns its place with sharing off — renaming the ledger and
+                   seeing its currency live there — but promising "sharing" to a build that
+                   has none is a link that lies about where it goes. */ ?>
           <a class="drawer-nav" href="/ledgers">
             <span class="ico"><?= icon('users', 18) ?></span>
-            <span>Ledgers &amp; sharing</span>
+            <span><?= FEATURE_SHARING ? 'Ledgers &amp; sharing' : 'Ledger settings' ?></span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
         </section>
@@ -1035,6 +1038,111 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             </form>
           </div>
         </details>
+
+        <?php if (FEATURE_BACKUP): ?>
+        <?php /* Android only. The buttons drive the native Drive client through the HLBackup
+                 bridge — see BackupBridge.kt. Rendered here rather than as a native screen so
+                 there is one set of controls in one design system. */ ?>
+        <hr>
+        <section>
+          <h4 style="margin:0 0 8px;">Backup</h4>
+          <div id="bk-panel" class="stack" style="gap:8px;">
+            <p class="muted" style="margin:0;">Loading…</p>
+          </div>
+        </section>
+        <script>
+        (function () {
+          var el = document.getElementById('bk-panel');
+          if (!el || !window.HLBackup) { if (el) el.innerHTML = '<p class="muted">Unavailable.</p>'; return; }
+
+          function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+          function when(ms) {
+            if (!ms) return 'never';
+            var d = new Date(Number(ms));
+            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
+
+          function render() {
+            var s = JSON.parse(HLBackup.status());
+            if (!s.configured) {
+              el.innerHTML = '<p class="muted" style="margin:0;">Drive backup is not set up in this build.</p>';
+              return;
+            }
+            if (!s.account) {
+              el.innerHTML = '<p class="muted" style="margin:0 0 8px;">Your ledger stays on this phone. '
+                + 'Connect Google Drive to keep an encrypted-at-rest copy in your own account.</p>'
+                + '<button class="btn btn-primary btn-block" id="bk-connect">Connect Google Drive</button>';
+              document.getElementById('bk-connect').onclick = function () { HLBackup.connect(); };
+              return;
+            }
+            var opts = ['off', 'daily', 'weekly'].map(function (f) {
+              return '<option value="' + f + '"' + (s.frequency === f ? ' selected' : '') + '>'
+                + (f === 'off' ? 'Manual only' : f.charAt(0).toUpperCase() + f.slice(1)) + '</option>';
+            }).join('');
+            el.innerHTML =
+                '<p class="muted" style="margin:0;">Backing up to <strong>' + esc(s.account) + '</strong></p>'
+              + '<label class="field"><span>How often</span><select class="input" id="bk-freq">' + opts + '</select></label>'
+              + '<p class="muted" style="margin:0;">Last backup: ' + when(s.lastOk) + '</p>'
+              // #c0392b, not a token: the design system has no danger ramp, and this is the
+              // same literal .btn-danger already uses. One colour for "something went wrong".
+              + (s.lastError ? '<p style="margin:0;color:#c0392b;">' + esc(s.lastError) + '</p>' : '')
+              + '<p class="muted" style="margin:6px 0 0;">' + (s.encrypted
+                  ? 'Encrypted with your passphrase. Google cannot read it.'
+                  : 'Not encrypted — Google can read this backup.') + '</p>'
+              + '<button class="btn btn-block" id="bk-pass">'
+                + (s.encrypted ? 'Change or remove passphrase' : 'Encrypt with a passphrase') + '</button>'
+              + '<button class="btn btn-block" id="bk-now">Back up now</button>'
+              + '<button class="btn btn-block" id="bk-restore">Restore from Drive</button>'
+              + '<button class="btn btn-danger btn-block" id="bk-off">Disconnect</button>';
+
+            document.getElementById('bk-freq').onchange = function () { HLBackup.setFrequency(this.value); };
+            document.getElementById('bk-now').onclick = function () {
+              HLBackup.backupNow(); toast('Backup started.'); };
+            document.getElementById('bk-off').onclick = function () {
+              HLBackup.disconnect(); render(); };
+
+            document.getElementById('bk-pass').onclick = function () {
+              if (s.encrypted && confirm('Stop encrypting future backups?\n\n'
+                    + 'The copy already in Drive stays encrypted, and without the passphrase '
+                    + 'it can never be opened again.')) {
+                HLBackup.clearPassphrase(); render(); return;
+              }
+              // Said plainly and before the fact: there is no recovery path, because there is
+              // no one holding a second copy of the key. That is the point of the feature.
+              var p = prompt('Choose a passphrase for your backups.\n\n'
+                + 'It is never sent anywhere, so nobody — including us — can recover it. '
+                + 'If you forget it, the backup in Drive is lost for good.');
+              if (!p) return;
+              if (p !== prompt('Type it once more to confirm.')) { toast('Those did not match.'); return; }
+              var err = HLBackup.setPassphrase(p);
+              if (err) { toast(err); return; }
+              toast('Backups will be encrypted from now on.');
+              render();
+            };
+
+            document.getElementById('bk-restore').onclick = function () {
+              // Restoring overwrites every entry on this phone, so it asks first — and says
+              // what it will cost, not just "are you sure".
+              if (!confirm('Replace everything on this phone with the copy in Drive?\n\n'
+                + 'Entries added since that backup will be lost.')) return;
+              var err = HLBackup.restore('');
+              // The blob says whether it is encrypted, not this phone's settings — restoring
+              // onto a device that has never seen this backup is the case that matters.
+              if (err === 'PASSPHRASE_REQUIRED') {
+                var p = prompt('This backup is encrypted. Enter its passphrase:');
+                if (!p) return;
+                err = HLBackup.restore(p);
+              }
+              if (err) { toast('Restore failed: ' + err); return; }
+              location.href = '/';
+            };
+          }
+          render();
+        })();
+        </script>
+        <?php endif; ?>
 
         <div style="flex:1;"></div>
 
@@ -1870,10 +1978,11 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     $budgetTotal = (float)$budStmt->fetchColumn();
 
     // Day-wise spend for the strip chart in the total card — one indexed GROUP BY.
+    $dayExpr = sqlDay($db, '`date`');
     $dayStmt = $db->prepare(
-        "SELECT DAY(`date`) AS d, SUM(amount) AS amt
+        "SELECT $dayExpr AS d, SUM(amount) AS amt
          FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql
-         GROUP BY DAY(`date`)"
+         GROUP BY $dayExpr"
     );
     $dayStmt->execute([$hid, $monthStart, $monthEnd, ...$whoBind]);
     // Not named $byDay — the transaction list below reuses that name for its own grouping.
@@ -2164,9 +2273,10 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     // Month-wise sums for this year's strip chart in the top card, same filters as the list.
     $stripYear = (int)date('Y');
+    $monExpr = sqlMonth($db, '`date`');
     $mStmt = $db->prepare(
-        "SELECT MONTH(`date`) AS m, SUM(amount) AS amt FROM investments
-         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql GROUP BY MONTH(`date`)"
+        "SELECT $monExpr AS m, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql GROUP BY $monExpr"
     );
     $mStmt->execute(array_merge([$hid, "$stripYear-01-01", ($stripYear + 1) . "-01-01"], $clauseParams, $whoBind));
     $stripMonths = array_column($mStmt->fetchAll(), 'amt', 'm');
@@ -2453,7 +2563,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
     $series = ['ern' => [], 'exp' => [], 'inv' => []];
     foreach (['ern' => 'earnings', 'exp' => 'expenses', 'inv' => 'investments'] as $k => $table) {
         $q = $db->prepare(
-            "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt FROM $table
+            "SELECT " . sqlYm($db, '`date`') . " AS ym, SUM(amount) AS amt FROM $table
              WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql GROUP BY ym"
         );
         $q->execute([$hid, $winStart, $winEnd, ...$whoBind]);
@@ -2802,9 +2912,9 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     [$invClause, $invParams] = investmentFilterSql($invFilter, $archived);
 
     // Per-month totals for both ledgers. Indexed range scan + GROUP BY, no row fetching.
-    // Built by concatenation, not sprintf — MySQL's '%Y-%m' would be eaten as a format spec.
+    // Built by concatenation, not sprintf — the '%Y-%m' would be eaten as a format spec.
     $monthly = [];
-    $selectYm = "SELECT DATE_FORMAT(`date`, '%Y-%m') AS ym, SUM(amount) AS amt, COUNT(*) AS n FROM ";
+    $selectYm = "SELECT " . sqlYm($db, '`date`') . " AS ym, SUM(amount) AS amt, COUNT(*) AS n FROM ";
     $whereYm  = " WHERE household_id = ? AND `date` >= ? AND `date` < ?";
 
     $s = $db->prepare($selectYm . "expenses" . $whereYm . $whoSql . " GROUP BY ym");
@@ -3836,18 +3946,23 @@ function renderLedgers(PDO $db, array $user): void {
     $labels = $labels->fetchAll();
     $memberCount = (int)$db->query("SELECT COUNT(*) FROM members WHERE household_id = " . (int)$hid)->fetchColumn();
 
-    // Only the owner can mint one, so only the owner pays for the lookup.
+    // Only the owner can mint one, so only the owner pays for the lookup. The Android build
+    // turns sharing off entirely, and then there is nothing to mint — index.php 404s the
+    // route, so the panel must not offer a button that leads there.
     $inv = null;
-    if ($isOwner) {
-        // Seconds-left comes from MySQL, not PHP. `expires_at` is written with MySQL's NOW()
-        // and enforced against MySQL's NOW(), and the two clocks sit in different timezones —
-        // doing the subtraction here read 360 minutes for a 30-minute link.
+    if ($isOwner && FEATURE_SHARING) {
+        // Seconds-left is subtracted here, in PHP. It used to be TIMESTAMPDIFF against MySQL's
+        // NOW(), because expires_at was written by MySQL and PHP's clock sat in a different
+        // timezone — the subtraction read 360 minutes for a 30-minute link. mintInvite() now
+        // writes that column from PHP's clock, so both ends finally agree and SQLite, which has
+        // no TIMESTAMPDIFF, needs no special case.
         $s = $db->prepare(
-            "SELECT token, TIMESTAMPDIFF(SECOND, NOW(), expires_at) AS secs_left FROM invites
-             WHERE household_id = ? AND used_at IS NULL AND expires_at > NOW() LIMIT 1"
+            "SELECT token, expires_at FROM invites
+             WHERE household_id = ? AND used_at IS NULL AND expires_at > ? LIMIT 1"
         );
-        $s->execute([$hid]);
+        $s->execute([$hid, nowSql()]);
         $inv = $s->fetch() ?: null;
+        if ($inv) $inv['secs_left'] = max(0, strtotime((string)$inv['expires_at']) - time());
     }
     $full = count($people) >= HOUSEHOLD_USERS_MAX;
     $link = $inv ? originUrl() . '/join?t=' . $inv['token'] : '';
@@ -3858,7 +3973,7 @@ function renderLedgers(PDO $db, array $user): void {
     ?>
     <div class="month-switch">
       <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
-      <div class="label" style="font-size:16px;">Ledgers &amp; sharing</div>
+      <div class="label" style="font-size:16px;"><?= FEATURE_SHARING ? 'Ledgers &amp; sharing' : 'Ledger settings' ?></div>
       <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
     </div>
 
@@ -4011,7 +4126,10 @@ function renderLedgers(PDO $db, array $user): void {
           </form>
     </div>
 
-    <?php if ($isOwner): ?>
+    <?php /* FEATURE_SHARING as well as $isOwner: index.php 404s /invite in the local build, so
+             without this the page would still offer a "Create invite link" button that leads
+             nowhere. There is no second device to hand a link to. */ ?>
+    <?php if ($isOwner && FEATURE_SHARING): ?>
       <div class="card elev-sm" style="padding:14px; margin-top:10px;">
         <h4 style="margin:0 0 8px;">Invite someone</h4>
         <?php if ($full): ?>
@@ -4073,7 +4191,10 @@ function renderLedgers(PDO $db, array $user): void {
           </form>
         <?php endif; ?>
       </div>
-    <?php else: ?>
+    <?php /* elseif, not else: with sharing off the owner is the only person here, and falling
+             through to the branch below would offer them a "Leave this ledger" button for a
+             ledger nobody else can hold. Local builds show neither card. */ ?>
+    <?php elseif (FEATURE_SHARING): ?>
       <div class="card elev-sm" style="padding:14px; margin-top:10px;">
         <button class="btn btn-danger btn-block" type="button"
                 onclick='askConfirm(<?= h(json_encode([

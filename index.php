@@ -6,6 +6,13 @@ require __DIR__ . '/lib.php';
 
 define('CURRENCY',         $config['currency']);
 define('GOOGLE_CLIENT_ID', $config['google_client_id']);
+// Build-time switches, defined here so views.php can read them the same way it reads
+// GOOGLE_CLIENT_ID. Both are on for the web; the Android build sets them off. See ANDROID.md.
+define('FEATURE_SHARING',  $config['features']['sharing']);
+define('FEATURE_SIGNIN',   $config['features']['google_signin']);
+// Only the Android build sets this: the panel it renders drives a native Google Drive client
+// through a WebView bridge that does not exist on the web.
+define('FEATURE_BACKUP',   $config['features']['backup']);
 
 // ────────────────────────────────────────────────────────────────────
 // CLI modes: --selfcheck (smoke tests), --cron (daily maintenance)
@@ -271,7 +278,24 @@ if (PHP_SAPI === 'cli') {
         echo "\nDatabase:\n";
         try {
             $db = makeDb($config);
-            $line('OK', "connected to {$config['db']['host']}/{$config['db']['name']} as {$config['db']['user']}");
+            $sqlite = isSqlite($db);
+            $line('OK', $sqlite
+                ? "connected to sqlite {$config['db']['path']}"
+                : "connected to {$config['db']['host']}/{$config['db']['name']} as {$config['db']['user']}");
+            if ($sqlite) {
+                // The three pragmas makeDb() sets. journal_mode persists in the file itself, the
+                // other two are per-connection and silently revert to OFF/0 if a future edit
+                // drops them — foreign_keys especially, which the schema depends on.
+                $jm = strtolower((string)$db->query('PRAGMA journal_mode')->fetchColumn());
+                $jm === 'wal' ? $line('OK', 'journal_mode=wal')
+                              : $line('FAIL', "journal_mode=$jm — a backup read can block the writer");
+                (int)$db->query('PRAGMA foreign_keys')->fetchColumn() === 1
+                    ? $line('OK',   'foreign_keys=ON')
+                    : $line('FAIL', 'foreign_keys=OFF — SQLite defaults it off and the schema declares them');
+                (int)$db->query('PRAGMA busy_timeout')->fetchColumn() > 0
+                    ? $line('OK',   'busy_timeout set')
+                    : $line('FAIL', 'busy_timeout=0 — a concurrent writer fails instantly instead of waiting');
+            }
             // What the schema *should* look like is read out of lib.php rather than copied here:
             // CREATE TABLE gives the base shape, MIGRATIONS the columns and indexes added since.
             // A hand-kept list only covers the migrations someone remembered to also add to this
@@ -279,10 +303,17 @@ if (PHP_SAPI === 'cli') {
             $want = [];
             foreach (SCHEMA_STATEMENTS as $sql) {
                 if (!preg_match('/CREATE TABLE IF NOT EXISTS (\w+) \((.*)\) ENGINE/s', $sql, $m)) continue;
-                $want[$m[1]] = ['cols' => [], 'idx' => []];
+                $want[$m[1]] = ['cols' => [], 'idx' => [], 'uniq' => []];
                 foreach (preg_split('/,\n/', $m[2]) as $part) {
                     $part = trim($part);
-                    if (preg_match('/^(?:UNIQUE KEY|INDEX|KEY)\s+(\w+)/i', $part, $k))               $want[$m[1]]['idx'][]  = $k[1];
+                    // UNIQUE is tracked by its columns as well as its name: SQLite keeps it as an
+                    // inline table constraint and auto-names the index, so on that driver the name
+                    // is gone and only the columns can prove google_sub is still unique.
+                    if (preg_match('/^UNIQUE KEY\s+(\w+)\s*\((.+)\)/i', $part, $k)) {
+                        $want[$m[1]]['idx'][]  = $k[1];
+                        $want[$m[1]]['uniq'][$k[1]] = array_map('trim', explode(',', $k[2]));
+                    }
+                    elseif (preg_match('/^(?:INDEX|KEY)\s+(\w+)/i', $part, $k))                      $want[$m[1]]['idx'][]  = $k[1];
                     elseif (preg_match('/^(\w+)\s/', $part, $c) && strtoupper($c[1]) !== 'PRIMARY')  $want[$m[1]]['cols'][] = $c[1];
                 }
             }
@@ -295,17 +326,45 @@ if (PHP_SAPI === 'cli') {
                     if (preg_match('/DROP INDEX (\w+)/i', $clause, $i)) $want[$m[1]]['idx'] = array_diff($want[$m[1]]['idx'], [$i[1]]);
                 }
             }
-            $tables  = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+            $tables  = $sqlite
+                ? $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")->fetchAll(PDO::FETCH_COLUMN)
+                : $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
             $missing = array_diff(array_keys($want), $tables);
             $missing ? $line('FAIL', 'missing tables: ' . implode(', ', $missing))
                      : $line('OK',   'all ' . count($want) . ' tables in lib.php exist');
+            $fixHint = $sqlite
+                ? ' — sqliteSync() did not apply it'
+                : ' — a migration did not apply; delete data/' . SCHEMA_SENTINEL . ' to re-run it';
             foreach ($want as $t => $w) {
                 if (in_array($t, $missing, true)) continue;
-                $mc = array_diff(array_unique($w['cols']), $db->query("SHOW COLUMNS FROM `$t`")->fetchAll(PDO::FETCH_COLUMN));
-                $mi = array_diff(array_unique($w['idx']),  $db->query("SHOW INDEX FROM `$t`")->fetchAll(PDO::FETCH_COLUMN, 2));
+                if ($sqlite) {
+                    $have = array_column($db->query("PRAGMA table_info(`$t`)")->fetchAll(), 'name');
+                    // sqliteSchema() prefixes index names with their table, because MySQL scopes
+                    // them per table and SQLite shares one namespace across the database.
+                    $haveIdx = array_column($db->query("PRAGMA index_list(`$t`)")->fetchAll(), 'name');
+                    $mi = [];
+                    foreach (array_unique($w['idx']) as $ix) {
+                        if (isset($w['uniq'][$ix])) continue;             // checked by columns below
+                        if (!in_array("{$t}_{$ix}", $haveIdx, true)) $mi[] = $ix;
+                    }
+                    // A UNIQUE KEY became an unnamed table constraint; find it by its columns.
+                    foreach ($w['uniq'] as $ix => $ucols) {
+                        $found = false;
+                        foreach ($db->query("PRAGMA index_list(`$t`)")->fetchAll() as $row) {
+                            if ((string)$row['origin'] !== 'u' && (string)$row['origin'] !== 'pk') continue;
+                            $on = array_column($db->query("PRAGMA index_info(`{$row['name']}`)")->fetchAll(), 'name');
+                            if (!array_diff($ucols, $on) && !array_diff($on, $ucols)) { $found = true; break; }
+                        }
+                        if (!$found) $mi[] = "$ix (unique on " . implode('+', $ucols) . ')';
+                    }
+                } else {
+                    $have    = $db->query("SHOW COLUMNS FROM `$t`")->fetchAll(PDO::FETCH_COLUMN);
+                    $haveIdx = $db->query("SHOW INDEX FROM `$t`")->fetchAll(PDO::FETCH_COLUMN, 2);
+                    $mi      = array_diff(array_unique($w['idx']), $haveIdx);
+                }
+                $mc = array_diff(array_unique($w['cols']), $have);
                 $mc || $mi
-                    ? $line('FAIL', "$t is missing " . implode(', ', array_merge($mc, $mi))
-                                  . ' — a migration did not apply; delete data/' . SCHEMA_SENTINEL . ' to re-run it')
+                    ? $line('FAIL', "$t is missing " . implode(', ', array_merge($mc, $mi)) . $fixHint)
                     : $line('OK',   "$t: " . count(array_unique($w['cols'])) . ' columns, '
                                   . count(array_unique($w['idx'])) . ' indexes match lib.php');
             }
@@ -404,10 +463,14 @@ if (PHP_SAPI === 'cli') {
 
             // Exactly one owner. Zero means nobody can invite, rename or edit another's entry —
             // the ledger is stuck. More than one is a backfill that ran twice.
+            // Filtered in an outer WHERE rather than a bare HAVING: this groups nothing, and
+            // only MySQL lets HAVING stand in for WHERE on a computed alias.
             $badOwner = $db->query(
-                "SELECT h.id, (SELECT COUNT(*) FROM household_users hu
-                               WHERE hu.household_id = h.id AND hu.role = '" . ROLE_OWNER . "') AS owners
-                 FROM households h HAVING owners <> 1"
+                "SELECT id, owners FROM (
+                     SELECT h.id, (SELECT COUNT(*) FROM household_users hu
+                                   WHERE hu.household_id = h.id AND hu.role = '" . ROLE_OWNER . "') AS owners
+                     FROM households h
+                 ) x WHERE owners <> 1"
             )->fetchAll();
             $badOwner
                 ? $line('FAIL', count($badOwner) . ' ledger(s) do not have exactly one owner: '
@@ -434,18 +497,20 @@ if (PHP_SAPI === 'cli') {
                 ? $line('OK',   'every claimed member belongs to someone in that ledger')
                 : $line('FAIL', "$badLink member label(s) are linked to a user who is not in that ledger");
 
-            // A live invite must not outlive its stated TTL. This is the check that would have
-            // caught the clock bug: MySQL writes expires_at, MySQL enforces it, and anything
-            // that computes it against PHP's clock instead lands in a different timezone.
-            $longLived = (int)$db->query(
-                "SELECT COUNT(*) FROM invites
-                 WHERE used_at IS NULL AND expires_at > DATE_ADD(NOW(), INTERVAL "
-                 . INVITE_TTL_MINUTES . " MINUTE)"
-            )->fetchColumn();
+            // A live invite must not outlive its stated TTL. This is the check that caught the
+            // clock bug when MySQL wrote expires_at and PHP read it: the two sat in different
+            // timezones and a 30-minute link reported 360 minutes left. PHP now owns both
+            // sides, so this check is really asking "is APP_TZ still the zone the rows were
+            // written in" — which is exactly what breaks if someone changes it.
+            $ttlStmt = $db->prepare(
+                "SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND expires_at > ?"
+            );
+            $ttlStmt->execute([date('Y-m-d H:i:s', time() + INVITE_TTL_MINUTES * 60)]);
+            $longLived = (int)$ttlStmt->fetchColumn();
             $longLived === 0
                 ? $line('OK',   'no live invite outlives its ' . INVITE_TTL_MINUTES . '-minute window')
                 : $line('FAIL', "$longLived invite(s) expire later than " . INVITE_TTL_MINUTES
-                    . ' minutes from now — expires_at and NOW() disagree about the clock');
+                    . ' minutes from now — APP_TZ disagrees with the clock they were written in');
 
             // ── Split bills ────────────────────────────────────────────
             // A split is defined by its dates; editing one deletes every share it posted and
@@ -472,8 +537,8 @@ if (PHP_SAPI === 'cli') {
             // More shares than months means a replay added without clearing.
             $overPosted = $db->query(
                 "SELECT r.id, r.name, COUNT(e.id) n,
-                        (YEAR(r.end_date) - YEAR(r.start_date)) * 12
-                        + (MONTH(r.end_date) - MONTH(r.start_date)) + 1 AS months
+                        (" . sqlYear($db, 'r.end_date') . " - " . sqlYear($db, 'r.start_date') . ") * 12
+                        + (" . sqlMonth($db, 'r.end_date') . " - " . sqlMonth($db, 'r.start_date') . ") + 1 AS months
                  FROM recurring r LEFT JOIN expenses e ON e.recurring_id = r.id
                  WHERE r.end_date IS NOT NULL AND r.start_date IS NOT NULL
                  GROUP BY r.id, r.name, r.start_date, r.end_date HAVING n > months"
@@ -487,7 +552,7 @@ if (PHP_SAPI === 'cli') {
             // FAIL: these are legacy rows saved when the rule was "up to eight characters",
             // not corruption, and their owner fixes one by re-saving it.
             $wideCur = $db->query(
-                "SELECT id, name, currency FROM households WHERE CHAR_LENGTH(currency) <> 1"
+                "SELECT id, name, currency FROM households WHERE " . sqlCharLen($db, 'currency') . " <> 1"
             )->fetchAll();
             $wideCur
                 ? $line('WARN', count($wideCur) . ' ledger(s) have a multi-character currency saved: '
@@ -570,6 +635,26 @@ if (PHP_SAPI === 'cli') {
             ? $line('OK', '.htaccess denies dotfiles')
             : $line('WARN', '.htaccess may not deny dotfiles — check .env is web-inaccessible');
         str_contains($ht, 'config\\.php') ? $line('OK', '.htaccess denies raw config.php fetch') : $line('WARN', 'config.php may be web-accessible');
+
+        // Deployment is `git pull` onto the web root, so every committed directory lands where
+        // Apache can serve it. Two of them must not be: android/ is the phone app (it lives
+        // here so its build can copy this app's PHP and the two cannot drift), and tests/
+        // holds a CLI harness that, fetched over HTTP, EXECUTES against the live database.
+        // This check is why that has to be noticed before a deploy rather than after.
+        //
+        // docs/ is absent from this list on purpose — it is public documentation for an
+        // open-source app and is meant to be readable on the site as well as in the repo.
+        $rt = @file_get_contents(__DIR__ . '/router.php') ?: '';
+        foreach (['android', 'tests'] as $dir) {
+            if (!is_dir(__DIR__ . '/' . $dir)) continue;
+            $inHt = (bool)preg_match('~RewriteRule \^\(([a-z|]*\b' . $dir . '\b[a-z|]*)\)/~', $ht);
+            $inRt = str_contains($rt, $dir);
+            $inHt && $inRt
+                ? $line('OK',   "$dir/ is denied by .htaccess and router.php")
+                : $line('FAIL', "$dir/ ships in the repo but "
+                    . (!$inHt ? '.htaccess does not deny it' : 'router.php does not deny it')
+                    . ' — it will be served from the web root after a git pull');
+        }
 
         echo "\nSource invariants (static):\n";
         // Only the request-handling half of this file. The checks below quote the same marker
@@ -1007,14 +1092,92 @@ if (PHP_SAPI === 'cli') {
         // Runs from Hostinger cron. Only touches households that actually have a due
         // recurring item — uses the (household_id, next_date) index.
         $db = makeDb($config);
-        $hids = $db->query(
-            "SELECT DISTINCT household_id FROM recurring WHERE next_date <= CURDATE()"
-        )->fetchAll(PDO::FETCH_COLUMN);
+        $due = $db->prepare("SELECT DISTINCT household_id FROM recurring WHERE next_date <= ?");
+        $due->execute([today()]);
+        $hids = $due->fetchAll(PDO::FETCH_COLUMN);
         foreach ($hids as $hid) sweepRecurring($db, (int)$hid);
-        $db->exec("DELETE FROM rate_limits WHERE window_end < UNIX_TIMESTAMP() - 3600");
+        $stale = $db->prepare("DELETE FROM rate_limits WHERE window_end < ?");
+        $stale->execute([time() - 3600]);
         echo "swept " . count($hids) . " households\n"; exit;
     }
-    fwrite(STDERR, "usage: php index.php --selfcheck | --cron\n"); exit(1);
+    if ($mode === '--backup') {
+        // A consistent snapshot of a SQLite ledger, for the Android build's Google Drive
+        // backup. VACUUM INTO is the whole job: it reads through the WAL and writes one
+        // settled file, which plain-copying the .db cannot do — that captures a torn database
+        // plus a hot -wal and restores as corruption.
+        //
+        // Android calls this and uploads the result to the Drive appDataFolder scope. That
+        // scope is deliberate: full `drive` access is a Google-restricted scope needing an
+        // annual CASA security assessment, and appdata needs none of it.
+        $out = $argv[2] ?? '';
+        if ($out === '')                       { fwrite(STDERR, "usage: php index.php --backup /path/to/out.db\n"); exit(1); }
+        if (($config['db']['driver'] ?? '') !== 'sqlite') { fwrite(STDERR, "--backup is for DB_DRIVER=sqlite only\n"); exit(1); }
+        if (file_exists($out))                 { fwrite(STDERR, "refusing to overwrite $out\n"); exit(1); }
+        $db = makeDb($config);
+        // Bound as a parameter is not possible here — VACUUM INTO takes a literal — so quote
+        // it the way SQLite does, by doubling single quotes.
+        $db->exec("VACUUM INTO '" . str_replace("'", "''", $out) . "'");
+        $check = (new PDO('sqlite:' . $out))->query('PRAGMA integrity_check')->fetchColumn();
+        if ($check !== 'ok') { fwrite(STDERR, "backup failed integrity_check: $check\n"); exit(1); }
+        echo "backed up to $out (" . number_format((int)filesize($out)) . " bytes, integrity ok)\n";
+        exit;
+    }
+    if ($mode === '--restore') {
+        // Put a snapshot back. Run with the server stopped — the Android launcher kills the
+        // PHP process first — because this replaces the file the interpreter has open.
+        //
+        // Takes a plain .db, never a .gz: the Android PHP build has no zlib (--disable-all),
+        // so whoever fetched the archive decompresses it. See DriveBackup.kt.
+        $src = $argv[2] ?? '';
+        if ($src === '')                       { fwrite(STDERR, "usage: php index.php --restore /path/to/snapshot.db\n"); exit(1); }
+        if (($config['db']['driver'] ?? '') !== 'sqlite') { fwrite(STDERR, "--restore is for DB_DRIVER=sqlite only\n"); exit(1); }
+        if (!is_readable($src))                { fwrite(STDERR, "cannot read $src\n"); exit(1); }
+
+        // Validate BEFORE touching the live ledger. Restoring is the one operation that can
+        // destroy every entry the household has, so a corrupt or unrelated file has to be
+        // rejected while the real database is still untouched.
+        try {
+            $in = new PDO('sqlite:' . $src, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            if ($in->query('PRAGMA integrity_check')->fetchColumn() !== 'ok') {
+                fwrite(STDERR, "$src fails integrity_check — refusing to restore it\n"); exit(1);
+            }
+            // A valid SQLite file is not necessarily one of ours. Without this, pointing the
+            // restore at any random .db would wipe the ledger and leave nothing behind.
+            $have = $in->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
+            $need = array_keys(sqliteSchema());
+            if ($missing = array_diff($need, $have)) {
+                fwrite(STDERR, "$src is not an Open Ledger database (missing: "
+                    . implode(', ', $missing) . ")\n"); exit(1);
+            }
+            $entries = (int)$in->query("SELECT COUNT(*) FROM expenses")->fetchColumn()
+                     + (int)$in->query("SELECT COUNT(*) FROM earnings")->fetchColumn()
+                     + (int)$in->query("SELECT COUNT(*) FROM investments")->fetchColumn();
+            $in = null;
+        } catch (PDOException $e) {
+            fwrite(STDERR, "$src is not a readable SQLite database: {$e->getMessage()}\n"); exit(1);
+        }
+
+        $dest = $config['db']['path'];
+        // Keep what is being replaced. If the copy below dies halfway there is still a ledger.
+        if (file_exists($dest) && !@copy($dest, $dest . '.pre-restore')) {
+            fwrite(STDERR, "could not stash the current ledger at $dest.pre-restore\n"); exit(1);
+        }
+        // The -wal and -shm belong to the OLD database. Leave them and SQLite will happily
+        // replay a stale write-ahead log on top of the restored file, which is a corrupt
+        // ledger that passes every check until the missing rows are noticed.
+        foreach (['-wal', '-shm'] as $suffix) @unlink($dest . $suffix);
+        if (!@copy($src, $dest)) { fwrite(STDERR, "copy to $dest failed\n"); exit(1); }
+
+        // Prove the thing now on disk opens, and bring it up to the running code's schema —
+        // a backup taken by an older app version can be a column short.
+        $db = makeDb($config);
+        $n = (int)$db->query("SELECT COUNT(*) FROM expenses")->fetchColumn();
+        echo "restored $dest from $src — $entries entries in the snapshot, $n expenses live\n";
+        echo "previous ledger kept at $dest.pre-restore\n";
+        exit;
+    }
+    fwrite(STDERR, "usage: php index.php --selfcheck | --preflight | --cron"
+        . " | --backup <path> | --restore <path>\n"); exit(1);
 }
 
 // Debug output — surface fatals + warnings in the browser response.
@@ -1027,6 +1190,25 @@ if (!empty($config['debug'])) {
 
 $path   = parse_url((string)$_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
 $method = $_SERVER['REQUEST_METHOD'];
+
+// ────────────────────────────────────────────────────────────────────
+// Loopback guard (Android only — never set on the web, where this is a no-op).
+//
+// The Android build serves this app from 127.0.0.1 on a random port. A loopback socket is
+// NOT private on Android: any other app on the phone can connect to it, and this one answers
+// with the household's whole ledger. So the launcher mints a random token per process, drops
+// it into the WebView as a cookie before the first page load, and PHP refuses anything that
+// cannot present it. Another app cannot read our cookie jar and cannot guess the token.
+//
+// Checked here — before the session starts and before the DB is opened — so an unauthorised
+// caller cannot even make us do work.
+// ────────────────────────────────────────────────────────────────────
+$localToken = (string)(getenv('HL_LOCAL_TOKEN') ?: '');
+if ($localToken !== '' && !hash_equals($localToken, (string)($_COOKIE['hl_local'] ?? ''))) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit("Forbidden.\n");
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Crawler files, answered before the session starts and before the DB is
@@ -1090,6 +1272,28 @@ try {
 require __DIR__ . '/views.php';
 
 $user = currentUser($db);
+
+// ────────────────────────────────────────────────────────────────────
+// Local mode (Android): there is no Google, no account and no second device — the ledger is
+// one SQLite file on one phone. So the first request creates the single local household and
+// signs into it, and /login is never reached.
+//
+// Gated on the feature flag, which the Android launcher sets in the process environment at
+// build time. On the web the flag is on and none of this runs.
+//
+// This is deliberately NOT a "skip auth" switch for the server: it only ever resolves to the
+// one local user, and the loopback guard above is what stands between that user and anything
+// else on the device.
+// ────────────────────────────────────────────────────────────────────
+if (!$user && !$config['features']['google_signin']) {
+    $localSub = 'local-device-user';
+    $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
+    $stmt->execute([$localSub]);
+    $uid = $stmt->fetchColumn()
+        ?: bootstrapHousehold($db, 'Me', 'me@localhost', $localSub);
+    $_SESSION['user_id'] = (int)$uid;
+    $user = currentUser($db);
+}
 
 // Every request gets a light global limiter to blunt scanners; the per-endpoint
 // limits below are the real controls.
@@ -1206,7 +1410,27 @@ $user['ledgers']        = ledgersFor($db, $uid);
 // already fetched them; there is no second query and no per-user copy to fall out of step.
 $_SESSION['currency'] = (string)($active['currency'] ?? '₹');
 $_SESSION['numfmt']   = (string)($active['number_format'] ?? 'indian');
+// Catch-up posting. Runs on every authed request, which on Android means "every time the app
+// is opened" — a phone that was off for a month posts the month's missed periods on launch and
+// then stops. That is why the Android build needs no cron and no WorkManager for this.
 sweepRecurring($db, $hid);
+
+// ────────────────────────────────────────────────────────────────────
+// Sharing off (Android): minting and redeeming a join link is the part that genuinely cannot
+// work on a local-only ledger — there is no second device to hand the link to and no server
+// in the middle. Blocked here rather than only hidden in the markup, so the routes are not
+// reachable by typing the URL.
+//
+// Members are NOT blocked: a spender label is a label, not a login, and a solo household
+// still wants one per person. Nor is /ledgers — with one household the switcher simply shows
+// one row, and renaming it still works.
+// ────────────────────────────────────────────────────────────────────
+if (!$config['features']['sharing']
+    && ($path === '/join' || $path === '/invite' || str_starts_with($path, '/invite/'))) {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit("Not found.\n");
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Authed POST actions — PRG pattern, CSRF-checked, limit-checked.

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing is handed to Google's automatic cloud backup or to device-to-device transfer.
+  The ledger leaves this phone only when the user asks for a Drive backup, and then it goes
+  to their own Drive appDataFolder, not to us. "We never see your data" has to be true here
+  as well as in the marketing.
+-->
+<data-extraction-rules>
+    <cloud-backup><exclude domain="root" /></cloud-backup>
+    <device-transfer><exclude domain="root" /></device-transfer>
+</data-extraction-rules>

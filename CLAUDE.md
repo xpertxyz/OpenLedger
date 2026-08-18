@@ -31,6 +31,31 @@ Two rules in README.md are easy to miss and will be gotten wrong by default:
 
 Also: Save buttons must be **disabled** until valid (amount > 0, non-empty names) — not just no-op. Every list row deletes immediately on trash click (no confirm) in the prototype; adding a confirm dialog for destructive actions is acceptable.
 
+## Writing SQL: this app runs on two databases
+
+The same PHP serves the website on **MySQL** and the Android app on **SQLite** (see `ANDROID.md`).
+One codebase, two dialects — so every new query has to work on both.
+
+- **Never ask the database for the time.** No `NOW()`, `CURDATE()`, `UNIX_TIMESTAMP()`. Compute
+  in PHP with `today()` / `nowSql()` / `time()` and bind it as a parameter. This is also what
+  keeps dates in `APP_TZ` instead of whichever timezone the server happens to run in.
+- **Extract date parts through the helpers** in `lib.php`: `sqlYm()`, `sqlYear()`, `sqlMonth()`,
+  `sqlDay()`, `sqlCharLen()`. Never write `DATE_FORMAT`, `MONTH()`, `DAY()`, `CHAR_LENGTH` directly.
+- **No `HAVING` without a `GROUP BY`.** MySQL allows it as a filter on a computed alias; SQLite
+  rejects it. Wrap the query and use an outer `WHERE`.
+- **`ON DUPLICATE KEY UPDATE` needs a SQLite branch** (`ON CONFLICT ... DO UPDATE`, `excluded.`
+  instead of `VALUES()`, `CASE WHEN` instead of `IF()`). There is exactly one upsert in the app,
+  in `rateLimit()`; check `isSqlite($db)` if you add another.
+- **`SCHEMA_STATEMENTS` stays written in MySQL.** `sqliteSchema()` translates it — don't keep a
+  second copy. `MIGRATIONS` is MySQL-legacy only; SQLite reconciles declaratively in
+  `sqliteSync()`, so a schema change needs no new migration entry for Android.
+- Money is exact `DECIMAL` on MySQL and float `NUMERIC` on SQLite. Aggregates go through
+  `roundMoney()`.
+
+Verify both before shipping: `php index.php --preflight` and
+`DB_DRIVER=sqlite DB_PATH=/tmp/t.db php index.php --preflight`, then
+`php tests/dual-driver.php` under each driver — the two reports must be byte-identical.
+
 ## Editing the design tokens
 
 If asked to change the look, edit the `:root` variables at the top of `design-tokens/styles.css` — the tonal ramps (`--color-accent-100..900`, `--color-accent-2-100..900`, `--color-neutral-100..900`) are generated in OKLCH on one shared lightness scale, so preserve that relationship when adjusting: don't tweak a single step in isolation.

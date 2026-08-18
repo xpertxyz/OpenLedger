@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is off everywhere except 127.0.0.1.
+
+  The app serves itself over plain HTTP on loopback, which never leaves the device and cannot
+  be intercepted by anything that TLS would protect against. Everywhere else — including the
+  Drive backup upload — stays HTTPS-only, so a blanket usesCleartextTraffic="true" would give
+  away real protection to solve a local problem.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

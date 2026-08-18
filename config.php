@@ -15,13 +15,58 @@ if (is_readable($envFile)) {
     }
 }
 
+// An unset env var and an env var set to "0" are different answers, and `?:` cannot tell them
+// apart — it treats the string "0" as absent. Every boolean switch below goes through here.
+// Guarded because this file is `require`d, not `require_once`d, and it returns an array —
+// a second include would otherwise be a redeclare fatal rather than a harmless repeat.
+if (!function_exists('envStr')) {
+    function envStr(string $key, string $default): string {
+        $v = getenv($key);
+        return ($v === false || $v === '') ? $default : $v;
+    }
+    function envFlag(string $key, bool $default): bool {
+        return envStr($key, $default ? '1' : '0') === '1';
+    }
+}
+
+// Every date in this app is now computed by PHP and bound as a parameter — nothing asks the
+// database what day it is. That makes the app's timezone a real setting rather than an
+// accident of the host's php.ini, which defaulted to UTC: `today()` returned the UTC date, so
+// an expense added between midnight and 05:29 IST filed under yesterday, and an invite's
+// "minutes left" was computed against a clock 5.5 hours from MySQL's.
+// Must run before anything calls date() — this file is the first thing index.php requires.
+date_default_timezone_set(getenv('APP_TZ') ?: 'Asia/Kolkata');
+
 return [
     'db' => [
+        // 'mysql' on the web, 'sqlite' on Android where the whole ledger is one local file.
+        // Same PHP either way; the dialect differences live in makeDb() and the sql*() helpers.
+        'driver' => getenv('DB_DRIVER') ?: 'mysql',
         'host' => getenv('DB_HOST') ?: 'localhost',
         'name' => getenv('DB_NAME') ?: 'homeledger',
         'user' => getenv('DB_USER') ?: 'homeledger',
         'pass' => getenv('DB_PASS') ?: '',
+        // SQLite only. Android passes its app-private files dir here; the default keeps a
+        // local dev database beside the sentinel, inside the already-gitignored data/.
+        'path' => getenv('DB_PATH') ?: __DIR__ . '/data/ledger.db',
     ],
+
+    // Build-time switches, not user preferences. The Android build turns sharing and Google
+    // sign-in off because a local-only ledger has no second device to share with and no
+    // server to hold an account. Read via getenv() so the Android launcher can set them in
+    // the PHP process environment without writing a file — see ANDROID.md.
+    // Defaults are ON, so the web app behaves exactly as before.
+    //
+    // NOT written as `getenv(...) ?: '1'`: PHP counts the string "0" as falsy, so that form
+    // reads an explicit HL_SHARING=0 and hands back '1'. The flags silently never turned off.
+    'features' => [
+        'sharing'        => envFlag('HL_SHARING',       true),
+        'google_signin'  => envFlag('HL_GOOGLE_SIGNIN', true),
+        // Off by default, and off on the web for good: the panel it draws talks to a native
+        // Drive client over a WebView bridge that only the Android build provides.
+        'backup'         => envFlag('HL_BACKUP',        false),
+    ],
+    'terms_url' => envStr('HL_TERMS_URL', ''),
 
     // Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web).
     // Add your Hostinger domain to "Authorised JavaScript origins" (e.g. https://homeledger.example.com).

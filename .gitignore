@@ -8,6 +8,11 @@
 /data/
 /*.zip
 
+# Built Android artifacts — a 10MB binary has no business in the repo.
+# The Android project itself IS tracked; see android/.gitignore for what it excludes.
+*.apk
+*.aab
+
 # Editor/IDE
 .vscode/
 .idea/

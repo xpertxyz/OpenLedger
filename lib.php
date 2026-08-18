@@ -274,15 +274,146 @@ const DEFAULT_CATEGORIES = [
 class UserErr extends Exception {}
 
 // ────────────────────────────────────────────────────────────────────
+// SQLite dialect
+//
+// SCHEMA_STATEMENTS above stays the single source of truth and stays written in MySQL. This
+// translates it for SQLite rather than keeping a second copy of fourteen tables in sync by
+// hand — a duplicate set is how the two dialects silently drift apart.
+//
+// The MySQL path never calls any of this, so translating cannot regress the web app.
+// ────────────────────────────────────────────────────────────────────
+
+// Split a CREATE TABLE body on top-level commas only. A naive explode(',') would cut
+// DECIMAL(12,2), ENUM('monthly','quarterly') and INDEX ix (household_id, date) in half.
+function splitTopLevel(string $body): array {
+    $parts = [''];
+    $depth = 0;
+    $quote = '';
+    foreach (str_split($body) as $ch) {
+        if ($quote !== '') {
+            if ($ch === $quote) $quote = '';
+        } elseif ($ch === "'" || $ch === '"') {
+            $quote = $ch;
+        } elseif ($ch === '(') {
+            $depth++;
+        } elseif ($ch === ')') {
+            $depth--;
+        } elseif ($ch === ',' && $depth === 0) {
+            $parts[] = '';
+            continue;
+        }
+        $parts[array_key_last($parts)] .= $ch;
+    }
+    return array_values(array_filter(array_map('trim', $parts), fn($p) => $p !== ''));
+}
+
+// MySQL column type -> SQLite. Order matters: the AUTO_INCREMENT form has to be rewritten
+// before the bare INT rule can reach it.
+function sqliteColumn(string $def): string {
+    return preg_replace(
+        [
+            '/\bINT\s+AUTO_INCREMENT\s+PRIMARY\s+KEY\b/i',
+            '/\bTINYINT\(\d+\)/i',
+            '/\bINT\s+UNSIGNED\b/i',
+            '/\b(?:VAR)?CHAR\(\d+\)/i',
+            '/\bDECIMAL\(\d+\s*,\s*\d+\)/i',
+            '/\bENUM\s*\([^)]*\)/i',
+            '/\bINT\b/i',
+        ],
+        [
+            'INTEGER PRIMARY KEY AUTOINCREMENT',
+            'INTEGER',
+            'INTEGER',
+            'TEXT',
+            'NUMERIC',   // ponytail: float affinity, not exact decimal — see roundMoney()
+            'TEXT',      // frequency: the app already validates the three allowed values
+            'INTEGER',
+        ],
+        $def
+    );
+}
+
+// Parse SCHEMA_STATEMENTS into [table => ['cols' => [name => full def], 'indexes' => [sql]]].
+// Used both to create a fresh database and to reconcile an existing one after an app update.
+function sqliteSchema(): array {
+    $out = [];
+    foreach (SCHEMA_STATEMENTS as $sql) {
+        if (!preg_match('/CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*)\)\s*ENGINE=/is', $sql, $m)) {
+            throw new RuntimeException('sqliteSchema: unparsable DDL: ' . substr($sql, 0, 60));
+        }
+        [$table, $body] = [$m[1], $m[2]];
+        $cols = $idx = [];
+        foreach (splitTopLevel($body) as $part) {
+            // MySQL index names are scoped to their table; SQLite's share one namespace for the
+            // whole database. Six tables declare ix_household, so the table name has to go in.
+            if (preg_match('/^INDEX\s+(\w+)\s*\((.+)\)$/is', $part, $i)) {
+                $idx[] = "CREATE INDEX IF NOT EXISTS {$table}_{$i[1]} ON $table ({$i[2]})";
+            } elseif (preg_match('/^UNIQUE\s+KEY\s+\w+\s*\((.+)\)$/is', $part, $u)) {
+                $cols[] = "UNIQUE ({$u[1]})";      // keep inline: it is a constraint, not an index
+            } else {
+                $name = strtolower(strtok(trim($part), " \t\n("));
+                $cols[$name] = sqliteColumn($part);
+            }
+        }
+        $out[$table] = ['cols' => $cols, 'indexes' => $idx];
+    }
+    return $out;
+}
+
+// Bring a SQLite database up to SCHEMA_STATEMENTS. A fresh file gets everything; an existing
+// one — an Android install whose data survived an app update — gets whatever columns and
+// indexes it is missing. This replaces the MIGRATIONS ladder on SQLite entirely: the desired
+// shape is declared once, so a future schema change needs no new migration entry here.
+//
+// ponytail: adds only. SQLite cannot drop or retype a column without a table rebuild, and
+// nothing in this app's history has needed to — if that changes, rebuild via the
+// create-copy-drop-rename dance rather than extending this.
+function sqliteSync(PDO $db): void {
+    foreach (sqliteSchema() as $table => $spec) {
+        $db->exec("CREATE TABLE IF NOT EXISTS $table (" . implode(",\n", $spec['cols']) . ")");
+        $have = array_column($db->query("PRAGMA table_info($table)")->fetchAll(), 'name');
+        $have = array_map('strtolower', $have);
+        foreach ($spec['cols'] as $name => $def) {
+            // Numeric key = a UNIQUE(...) constraint, which ADD COLUMN cannot express.
+            // It only matters on a fresh table, where CREATE TABLE above already applied it.
+            if (is_int($name) || in_array($name, $have, true)) continue;
+            $db->exec("ALTER TABLE $table ADD COLUMN $def");
+        }
+        foreach ($spec['indexes'] as $sql) $db->exec($sql);
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
 // DB bootstrap
 // ────────────────────────────────────────────────────────────────────
 function makeDb(array $cfg): PDO {
-    $dsn = "mysql:host={$cfg['db']['host']};dbname={$cfg['db']['name']};charset=utf8mb4";
-    $db = new PDO($dsn, $cfg['db']['user'], $cfg['db']['pass'], [
+    $driver = $cfg['db']['driver'] ?? 'mysql';
+    $opts = [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
+    ];
+
+    if ($driver === 'sqlite') {
+        $path = $cfg['db']['path'];
+        if (!is_dir(dirname($path))) @mkdir(dirname($path), 0755, true);
+        $db = new PDO('sqlite:' . $path, null, null, $opts);
+        // WAL keeps a read during the nightly backup from blocking the write that posts a
+        // recurring item. foreign_keys is OFF by default in SQLite and the schema declares
+        // them. busy_timeout stops a concurrent writer from failing instantly.
+        $db->exec('PRAGMA journal_mode = WAL');
+        $db->exec('PRAGMA foreign_keys = ON');
+        $db->exec('PRAGMA busy_timeout = 5000');
+
+        // No sentinel gate here. sqliteSync() is a handful of PRAGMA reads against a local
+        // file with no network in front of it, and running it every request is what makes an
+        // app update that adds a column just work.
+        sqliteSync($db);
+        return $db;
+    }
+
+    $dsn = "mysql:host={$cfg['db']['host']};dbname={$cfg['db']['name']};charset=utf8mb4";
+    $db = new PDO($dsn, $cfg['db']['user'], $cfg['db']['pass'], $opts);
     // Schema/migration bootstrap runs once, then a sentinel file skips it on every subsequent
     // request. Delete the sentinel to force a re-run after schema changes.
     $sentinel = __DIR__ . '/data/' . SCHEMA_SENTINEL;
@@ -435,6 +566,41 @@ function safeRedirectTarget(string $to): string {
 }
 function redirect(string $to): never { header('Location: ' . safeRedirectTarget($to)); exit; }
 function today(): string { return date('Y-m-d'); }
+// The wall clock, in the app's timezone, as the databases spell it. Every NOW() and CURDATE()
+// this app used to send is now one of these two, computed here and bound as a parameter —
+// which is what keeps MySQL and SQLite from each answering with their own idea of the time.
+function nowSql(): string { return date('Y-m-d H:i:s'); }
+
+// ────────────────────────────────────────────────────────────────────
+// Date extraction, per dialect. Only the GROUP BY / SELECT cases live here: anything that
+// needed the *current* time is computed in PHP instead (see nowSql()/today()). Passed the
+// PDO so the driver answers for itself and nothing has to track global state.
+// ────────────────────────────────────────────────────────────────────
+function isSqlite(PDO $db): bool { return $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'; }
+function sqlYm(PDO $db, string $col): string {
+    return isSqlite($db) ? "strftime('%Y-%m', $col)" : "DATE_FORMAT($col, '%Y-%m')";
+}
+function sqlYear(PDO $db, string $col): string {
+    return isSqlite($db) ? "CAST(strftime('%Y', $col) AS INTEGER)" : "YEAR($col)";
+}
+function sqlMonth(PDO $db, string $col): string {
+    return isSqlite($db) ? "CAST(strftime('%m', $col) AS INTEGER)" : "MONTH($col)";
+}
+function sqlDay(PDO $db, string $col): string {
+    return isSqlite($db) ? "CAST(strftime('%d', $col) AS INTEGER)" : "DAY($col)";
+}
+// Characters, not bytes. Not interchangeable with a bare LENGTH(): MySQL's counts bytes, so
+// LENGTH('₹') is 3 there and 1 in SQLite — which is the whole reason this is checked at all.
+function sqlCharLen(PDO $db, string $col): string {
+    return isSqlite($db) ? "LENGTH($col)" : "CHAR_LENGTH($col)";
+}
+
+// SQLite stores DECIMAL as float, MySQL as exact decimal, so a SUM() of many rows can come
+// back a hair off on Android and match to the paisa on the web. Every aggregate the app
+// shows goes through here so the two agree.
+// ponytail: rounding at read. If a balance ever disagrees with the rows above it, the real
+// fix is storing paise as INTEGER — which changes both dialects and every read/write path.
+function roundMoney(float $n): float { return round($n, 2); }
 
 // Shared hosts, CDNs and load balancers commonly terminate TLS at a proxy: PHP then sees a
 // plain HTTP request with $_SERVER['HTTPS'] unset, and the real scheme only in
@@ -544,12 +710,18 @@ function rateLimit(PDO $db, array $cfg, string $key, int $limit, int $windowSeco
     // Atomic upsert: if the row's window has expired, reset it in one statement;
     // otherwise increment hits. Beats SELECT + REPLACE which lets two concurrent
     // requests at a window boundary both reset the counter.
-    $db->prepare(
-        "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
-         ON DUPLICATE KEY UPDATE
-            hits       = IF(window_end < VALUES(window_end), 1, hits + 1),
-            window_end = IF(window_end < VALUES(window_end), VALUES(window_end), window_end)"
-    )->execute([$bucket, $windowEnd]);
+    // The only upsert in the app, so the two dialects sit here rather than behind a helper.
+    // SQLite spells the incoming row `excluded` and has no IF(); the logic is identical.
+    $sql = isSqlite($db)
+        ? "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
+           ON CONFLICT(bucket) DO UPDATE SET
+              hits       = CASE WHEN rate_limits.window_end < excluded.window_end THEN 1 ELSE rate_limits.hits + 1 END,
+              window_end = CASE WHEN rate_limits.window_end < excluded.window_end THEN excluded.window_end ELSE rate_limits.window_end END"
+        : "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
+           ON DUPLICATE KEY UPDATE
+              hits       = IF(window_end < VALUES(window_end), 1, hits + 1),
+              window_end = IF(window_end < VALUES(window_end), VALUES(window_end), window_end)";
+    $db->prepare($sql)->execute([$bucket, $windowEnd]);
 
     $sel = $db->prepare("SELECT hits, window_end FROM rate_limits WHERE bucket = ?");
     $sel->execute([$bucket]);
@@ -754,10 +926,13 @@ function ledgerNameFor(string $userName): string {
 function mintInvite(PDO $db, int $hid, int $uid): string {
     $db->prepare("DELETE FROM invites WHERE household_id = ? AND used_at IS NULL")->execute([$hid]);
     $token = bin2hex(random_bytes(16));
+    // Written by PHP's clock, and read back below against PHP's clock. It used to be MySQL's
+    // on both sides, which worked only because nothing else compared the two.
+    $expires = date('Y-m-d H:i:s', time() + INVITE_TTL_MINUTES * 60);
     $db->prepare(
         "INSERT INTO invites (household_id, token, created_by, expires_at)
-         VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL " . INVITE_TTL_MINUTES . " MINUTE))"
-    )->execute([$hid, $token, $uid]);
+         VALUES (?, ?, ?, ?)"
+    )->execute([$hid, $token, $uid, $expires]);
     return $token;
 }
 
@@ -765,8 +940,8 @@ function mintInvite(PDO $db, int $hid, int $uid): string {
 // "wrong link", "already used" and "too late" can never drift apart into three answers.
 function liveInvite(PDO $db, string $token): ?array {
     if (!preg_match('/^[0-9a-f]{32}$/', $token)) return null;
-    $s = $db->prepare("SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND expires_at > NOW()");
-    $s->execute([$token]);
+    $s = $db->prepare("SELECT * FROM invites WHERE token = ? AND used_at IS NULL AND expires_at > ?");
+    $s->execute([$token, nowSql()]);
     return $s->fetch() ?: null;
 }
 
@@ -784,8 +959,8 @@ function redeemInvite(PDO $db, string $token, int $uid): array {
     $n->execute([$hid]);
     if ((int)$n->fetchColumn() >= HOUSEHOLD_USERS_MAX) return $out('full');
 
-    $claim = $db->prepare("UPDATE invites SET used_at = NOW(), used_by = ? WHERE id = ? AND used_at IS NULL");
-    $claim->execute([$uid, (int)$inv['id']]);
+    $claim = $db->prepare("UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL");
+    $claim->execute([nowSql(), $uid, (int)$inv['id']]);
     if ($claim->rowCount() !== 1) return $out('invalid');
 
     $db->prepare("INSERT INTO household_users (household_id, user_id, role) VALUES (?, ?, ?)")

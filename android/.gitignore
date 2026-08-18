@@ -1,0 +1,5 @@
+.php-build/
+app/src/main/jniLibs/
+build/
+.gradle/
+local.properties
