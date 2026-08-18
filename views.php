@@ -392,7 +392,16 @@ $boot
   .btn:active { transform: scale(.98); filter: brightness(.95); }
   .amount-submit:active { transform: scale(.94); }
   .col { max-width:480px; margin:0 auto; min-height:100vh; padding: 0 0 104px; box-sizing:border-box; }
-  .hdr { display:flex; align-items:center; justify-content:space-between; padding: var(--space-4) var(--space-4) var(--space-2); }
+  /* Sticky on every tab. The ledger switcher, the light/dark toggle and the way into the
+     drawer all live up here, and on a year of History they were a long scroll away.
+     Opaque background because the page passes underneath it. z-index deliberately far below
+     the drawer (200) and the toast (250): those have to cover the header, never the reverse.
+     The env() adds nothing on Android — the native shell already insets the WebView — and is
+     there for iOS standalone, where viewport-fit=cover puts the status bar over the page and
+     a header that is always on screen would otherwise always be under it. */
+  .hdr { display:flex; align-items:center; justify-content:space-between;
+         padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-2);
+         position:sticky; top:0; z-index:40; background:var(--color-bg); }
   .brand { font-family:var(--font-heading); font-size:22px; }
   .hdr-actions { display:flex; align-items:center; gap:4px; min-width:0; }
   /* max-width in vw, not px: the brand is fixed-width, so the ledger name is the only thing
