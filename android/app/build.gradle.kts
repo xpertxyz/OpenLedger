@@ -1,6 +1,3 @@
-import java.util.Properties
-import javax.inject.Inject
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -8,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.xpertxyz.ledger"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
@@ -154,18 +151,18 @@ androidComponents {
 }
 
 dependencies {
-    implementation("androidx.activity:activity:1.9.3")
+    implementation("androidx.activity:activity:1.13.0")
     // The app lock. Also what pulls in androidx.fragment, which BiometricPrompt needs a
     // FragmentActivity for — hence MainActivity's base class.
     implementation("androidx.biometric:biometric:1.1.0")
     // No appcompat: the activity is a ComponentActivity and the theme extends the platform's
     // Material, so it only ever contributed dex and ~80 translated app-name strings.
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
     // Drive backup, appDataFolder scope only — see ANDROID.md for why not full `drive`.
-    implementation("com.google.android.gms:play-services-auth:21.2.0")
-    implementation("com.google.api-client:google-api-client-android:2.7.0")
+    implementation("com.google.android.gms:play-services-auth:21.6.0")
+    implementation("com.google.api-client:google-api-client-android:2.9.0")
     implementation("com.google.apis:google-api-services-drive:v3-rev20240914-2.0.0")
 
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
 }

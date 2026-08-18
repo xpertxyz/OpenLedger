@@ -13,8 +13,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.OpenLedger"
         tools:ignore="UnusedAttribute"
-        xmlns:tools="http://schemas.android.com/tools"
-        android:extractNativeLibs="true">
+        xmlns:tools="http://schemas.android.com/tools">
 
         <!--
           extractNativeLibs above is required, not cosmetic. The PHP interpreter ships as
