@@ -1107,6 +1107,17 @@ if (PHP_SAPI === 'cli') {
         $stale->execute([time() - 3600]);
         echo "swept " . count($hids) . " households\n"; exit;
     }
+    if ($mode === '--count') {
+        // One number: how many entries this ledger holds. The Android backup path logs it
+        // before an upload and after a restore, because "the restore worked" and "the restore
+        // put back an empty ledger" are otherwise the same observation.
+        $db = makeDb($config);
+        $n = 0;
+        foreach (['expenses', 'earnings', 'investments'] as $t) {
+            $n += (int)$db->query("SELECT COUNT(*) FROM $t")->fetchColumn();
+        }
+        echo $n, "\n"; exit;
+    }
     if ($mode === '--backup') {
         // A consistent snapshot of a SQLite ledger, for the Android build's Google Drive
         // backup. VACUUM INTO is the whole job: it reads through the WAL and writes one
@@ -1184,7 +1195,7 @@ if (PHP_SAPI === 'cli') {
         exit;
     }
     fwrite(STDERR, "usage: php index.php --selfcheck | --preflight | --cron"
-        . " | --backup <path> | --restore <path>\n"); exit(1);
+        . " | --count | --backup <path> | --restore <path>\n"); exit(1);
 }
 
 // Debug output — surface fatals + warnings in the browser response.

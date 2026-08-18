@@ -2,6 +2,7 @@ package com.xpertxyz.ledger
 
 import android.content.Context
 import androidx.work.*
+import kotlinx.coroutines.sync.withLock
 import com.google.api.client.http.FileContent
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.model.File as DriveFile
@@ -36,20 +37,66 @@ object BackupNames {
     const val KEY_FREQUENCY = "frequency"     // off | daily | weekly
     const val KEY_LAST_OK = "last_ok"
     const val KEY_LAST_ERROR = "last_error"
+    // A run that declined to upload. Kept apart from KEY_LAST_ERROR so the panel can say what
+    // happened without painting an intact backup red.
+    const val KEY_LAST_NOTE = "last_note"
 }
+
+/**
+ * One tag for the whole backup path, so the entire round trip reads back with
+ *
+ *     adb logcat -s HLBackup
+ *
+ * Every step that can fail logs what it saw, not just that it failed. The bugs in this path so
+ * far — two workers deleting each other's temp files, a restore that put back an empty snapshot
+ * — were both invisible from the outside and both obvious from one line of "how many bytes".
+ * Sizes and counts are the useful facts here; no entry text or account data is ever logged.
+ */
+internal const val TAG = "HLBackup"
+
+internal fun log(msg: String) { android.util.Log.i(TAG, msg) }
+internal fun logErr(msg: String, e: Throwable? = null) { android.util.Log.e(TAG, msg, e) }
 
 class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
 
-    override suspend fun doWork(): Result {
+    companion object {
+        /**
+         * "Back up now" and the daily run are separate unique work names, so WorkManager is
+         * free to run both at once — and connecting Drive enqueues one of each. They share the
+         * cache filenames below, and the first to finish deletes the other's file mid-flight:
+         * "ledger-backup.db.gz: open failed: ENOENT". Both run in this process, so one lock
+         * settles it, and the second run finds a fresh snapshot to take anyway.
+         */
+        private val lock = kotlinx.coroutines.sync.Mutex()
+    }
+
+    override suspend fun doWork(): Result = lock.withLock { backup() }
+
+    private suspend fun backup(): Result {
         val ctx = applicationContext
         val prefs = ctx.getSharedPreferences(BackupNames.PREFS, Context.MODE_PRIVATE)
         val snapshot = File(ctx.cacheDir, "ledger-backup.db")
         val gz = File(ctx.cacheDir, "ledger-backup.db.gz")
         val sealed = File(ctx.cacheDir, "ledger-backup.sealed")
+        log("backup: start (attempt ${runAttemptCount + 1})")
         try {
             val drive = DriveAuth.drive(ctx) ?: return fail(prefs, "No Google account connected")
 
-            PhpServer(ctx).backupTo(snapshot)?.let { return fail(prefs, it) }
+            val php = PhpServer(ctx)
+            php.backupTo(snapshot)?.let { return fail(prefs, it) }
+            val entries = php.entryCount()
+            log("backup: snapshot ${snapshot.length()} bytes, $entries entries")
+
+            // The one upload this app must never perform. An empty ledger over a backup that
+            // holds something is not a backup, it is the deletion of the only copy — and it is
+            // the *likely* case, because a ledger is empty exactly when the user has just set
+            // the app up again and is about to restore. Cheap to check, and there is no version
+            // of "the user meant this" that is worth the alternative.
+            val existing = remoteId(drive)
+            if (entries == 0 && existing != null) {
+                return skip(prefs, "This ledger is empty — the backup in Drive was left alone. "
+                    + "Restore it first, or add an entry and back up again.")
+            }
 
             // A ledger is repetitive text and compresses to a fraction of its size, which
             // matters on mobile data. Compress BEFORE encrypting — ciphertext does not
@@ -61,16 +108,22 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             val payload = if (BackupCrypto.isEnabled()) {
                 BackupCrypto.encrypt(ctx, gz, sealed); sealed
             } else gz
+            log("backup: uploading ${payload.name}, ${payload.length()} bytes"
+                + if (BackupCrypto.isEnabled()) " (encrypted)" else "")
 
-            upload(drive, payload)
+            upload(drive, payload, existing)
             prefs.edit()
                 .putLong(BackupNames.KEY_LAST_OK, System.currentTimeMillis())
                 .remove(BackupNames.KEY_LAST_ERROR)
+                .remove(BackupNames.KEY_LAST_NOTE)
                 .apply()
+            log("backup: done")
             return Result.success()
         } catch (e: Exception) {
             // Retry covers the ordinary case: no signal, or Drive briefly unavailable.
-            prefs.edit().putString(BackupNames.KEY_LAST_ERROR, e.message ?: e.javaClass.simpleName).apply()
+            logErr("backup: failed", e)
+            prefs.edit().putString(BackupNames.KEY_LAST_ERROR, e.message ?: e.javaClass.simpleName)
+                .remove(BackupNames.KEY_LAST_NOTE).apply()
             return if (runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
             snapshot.delete()
@@ -80,8 +133,22 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
     }
 
     private fun fail(prefs: android.content.SharedPreferences, why: String): Result {
-        prefs.edit().putString(BackupNames.KEY_LAST_ERROR, why).apply()
+        logErr("backup: $why")
+        prefs.edit().putString(BackupNames.KEY_LAST_ERROR, why)
+            .remove(BackupNames.KEY_LAST_NOTE).apply()
         return Result.failure()      // not retry: neither cause fixes itself
+    }
+
+    /**
+     * Declined, not failed — so no retry, and last-backed-up is left alone rather than claiming
+     * a copy that was never made. The reason still goes in the panel: someone whose ledger is
+     * empty is the one person who most needs to be told the backup is still there.
+     */
+    private fun skip(prefs: android.content.SharedPreferences, why: String): Result {
+        log("backup: skipped — $why")
+        prefs.edit().putString(BackupNames.KEY_LAST_NOTE, why)
+            .remove(BackupNames.KEY_LAST_ERROR).apply()
+        return Result.success()
     }
 
     /**
@@ -91,20 +158,38 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
      * in someone else's cloud is a bigger promise than this app wants to make, and Drive keeps
      * its own revisions of a replaced file anyway.
      */
-    private fun upload(drive: Drive, payload: File) {
+    private fun upload(drive: Drive, payload: File, existingId: String?) {
         val content = FileContent("application/gzip", payload)
-        val existing = drive.files().list()
+        if (existingId == null) {
+            val meta = DriveFile().setName(BackupNames.REMOTE).setParents(listOf("appDataFolder"))
+            val made = drive.files().create(meta, content).setFields("id,size").execute()
+            log("upload: created ${made.id}")
+        } else {
+            val put = drive.files().update(existingId, DriveFile(), content).setFields("id,size").execute()
+            log("upload: updated ${put.id}, ${put.getSize()} bytes")
+        }
+    }
+
+    /**
+     * The id of the backup already in Drive, or null if there is none.
+     *
+     * Looked up before the upload rather than inside it, because whether a copy exists decides
+     * whether this run is allowed to happen at all.
+     */
+    private fun remoteId(drive: Drive): String? {
+        val files = drive.files().list()
             .setSpaces("appDataFolder")
             .setQ("name = '${BackupNames.REMOTE}'")
-            .setFields("files(id)")
+            .setFields("files(id,size,modifiedTime)")
+            .setOrderBy("modifiedTime desc")
             .execute().files
-
-        if (existing.isNullOrEmpty()) {
-            val meta = DriveFile().setName(BackupNames.REMOTE).setParents(listOf("appDataFolder"))
-            drive.files().create(meta, content).setFields("id").execute()
-        } else {
-            drive.files().update(existing[0].id, DriveFile(), content).execute()
-        }
+        if (files.isNullOrEmpty()) return null
+        // More than one means an earlier race created a duplicate. Say so — both sides take the
+        // newest, and a silent second copy is how a restore puts back a snapshot nobody
+        // recognises.
+        if (files.size > 1) logErr("upload: ${files.size} remote copies exist, replacing the newest")
+        log("upload: replacing ${files[0].id}, ${files[0].getSize()} bytes from ${files[0].modifiedTime}")
+        return files[0].id
     }
 }
 
@@ -125,8 +210,9 @@ object DriveRestore {
      * someone's backup for the first time has no settings to consult.
      */
     fun run(ctx: Context, server: PhpServer, passphrase: String = ""): String? {
-        if (!DriveAuth.isConfigured) return "Drive backup is not configured in this build"
-        val drive = DriveAuth.drive(ctx) ?: return "No Google account connected"
+        log("restore: start")
+        if (!DriveAuth.isConfigured) return fail("Drive backup is not configured in this build")
+        val drive = DriveAuth.drive(ctx) ?: return fail("No Google account connected")
 
         val blob = File(ctx.cacheDir, "restore.blob")
         val gz = File(ctx.cacheDir, "restore.db.gz")
@@ -136,26 +222,45 @@ object DriveRestore {
                 .setSpaces("appDataFolder")
                 .setQ("name = '${BackupNames.REMOTE}'")
                 .setFields("files(id,size,modifiedTime)")
+                // Newest first. Without this the order is Drive's own, so a duplicate left by
+                // an earlier failed run could be restored in preference to the current backup —
+                // which looks exactly like "restore put back an empty ledger".
+                .setOrderBy("modifiedTime desc")
                 .execute().files
-            if (found.isNullOrEmpty()) return "No backup found in Drive"
+            if (found.isNullOrEmpty()) return fail("No backup found in Drive")
+            if (found.size > 1) logErr("restore: ${found.size} remote copies, taking the newest")
+            val pick = found[0]
+            log("restore: ${pick.id}, ${pick.getSize()} bytes, modified ${pick.modifiedTime}")
 
-            blob.outputStream().use { drive.files().get(found[0].id).executeMediaAndDownloadTo(it) }
+            blob.outputStream().use { drive.files().get(pick.id).executeMediaAndDownloadTo(it) }
+            log("restore: downloaded ${blob.length()} bytes")
 
             if (BackupCrypto.isEncrypted(blob)) {
-                if (passphrase.isEmpty()) return "PASSPHRASE_REQUIRED"
-                if (!BackupCrypto.decrypt(blob, gz, passphrase)) return "That passphrase does not open this backup"
+                if (passphrase.isEmpty()) { log("restore: blob is encrypted, asking for the passphrase"); return "PASSPHRASE_REQUIRED" }
+                if (!BackupCrypto.decrypt(blob, gz, passphrase)) return fail("That passphrase does not open this backup")
             } else {
                 blob.copyTo(gz, overwrite = true)
             }
             GZIPInputStream(gz.inputStream()).use { input -> db.outputStream().use { input.copyTo(it) } }
+            log("restore: decompressed to ${db.length()} bytes")
 
             // Stop the server first: --restore swaps the database file underneath it, and the
             // PHP side deletes the -wal/-shm that the live process still believes it owns.
             server.stop()
+            log("restore: ledger held ${server.entryCount()} entries before this")
             val result = server.restoreFrom(db)
+            if (result != null) { server.start(); return fail("restore: $result") }
+            log("restore: ledger now holds ${server.entryCount()} entries")
+            // "This ledger is empty" was true when it was written and is not any more — a
+            // restore is the exact event that makes it false. Left in place it sits in the
+            // panel telling someone their freshly restored ledger is empty.
+            ctx.getSharedPreferences(BackupNames.PREFS, Context.MODE_PRIVATE)
+                .edit().remove(BackupNames.KEY_LAST_NOTE).apply()
             server.start()
-            return result
+            log("restore: done, server back up on ${server.origin}")
+            return null
         } catch (e: Exception) {
+            logErr("restore: failed", e)
             runCatching { server.start() }        // never leave the app without a server
             return e.message ?: e.javaClass.simpleName
         } finally {
@@ -165,6 +270,8 @@ object DriveRestore {
             db.delete()
         }
     }
+
+    private fun fail(why: String): String { logErr(why); return why }
 }
 
 /** Turns the user's chosen frequency into WorkManager state. */
@@ -181,6 +288,13 @@ object BackupScheduler {
         }
         val days = if (frequency == "weekly") 7L else 1L
         val request = PeriodicWorkRequestBuilder<DriveBackupWorker>(days, TimeUnit.DAYS)
+            // WorkManager runs periodic work as soon as the constraints allow, which means the
+            // moment the schedule is switched on. That is the wrong moment: the schedule gets
+            // switched on when an account is connected, and an account is connected either on a
+            // new phone or after clearing app data — both times with an empty ledger, and the
+            // copy in Drive is the one thing standing between the user and losing everything.
+            // First automatic run is one period out. "Back up now" is unaffected.
+            .setInitialDelay(days, TimeUnit.DAYS)
             .setConstraints(
                 Constraints.Builder()
                     // CONNECTED, not UNMETERED. A gzipped ledger is tens of kilobytes — a

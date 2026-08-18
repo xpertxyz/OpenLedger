@@ -101,6 +101,21 @@ class MainActivity : FragmentActivity() {
                     return true
                 }
             }
+            // Without this the WebView swallows every JavaScript error in silence. The backup
+            // panel called a toast() that did not exist, so each failure — including the reason
+            // a restore stopped — died as an unseen ReferenceError and the buttons looked dead.
+            // One line here turns that into `adb logcat -s HLWeb`.
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                    val where = "${m.sourceId()}:${m.lineNumber()}"
+                    if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                        android.util.Log.e("HLWeb", "${m.message()} ($where)")
+                    } else {
+                        android.util.Log.i("HLWeb", "${m.message()} ($where)")
+                    }
+                    return true
+                }
+            }
             // The backup panel is rendered by views.php and driven from here, so there is one
             // set of buttons in one design system instead of a native screen that almost
             // matches. Safe because the only page this WebView ever loads is our own, served
@@ -264,9 +279,15 @@ class MainActivity : FragmentActivity() {
         // back in six months to one backup from setup day. Daily from here, changeable in the
         // same panel — and only when they have not already chosen, so reconnecting a dropped
         // account never quietly overwrites a deliberate "weekly" or "off".
+        //
+        // Deliberately no backup right now. Connecting an account is also the first step of
+        // restoring one — new phone, or app data cleared — and at that moment the ledger is
+        // empty. Backing up on connect uploaded those zero entries over the copy the user was
+        // about to restore, twenty seconds before they tapped Restore. The schedule's first run
+        // is a day out (see BackupScheduler), which leaves room to restore first, and "Back up
+        // now" is right there for anyone who wants a copy immediately.
         if (DriveAuth.connectedAccount(this) != null && BackupScheduler.frequency(this) == "off") {
             BackupScheduler.apply(this, "daily")
-            BackupScheduler.runNow(this)     // and one straight away, so there is a copy tonight
         }
         web.reload()
     }

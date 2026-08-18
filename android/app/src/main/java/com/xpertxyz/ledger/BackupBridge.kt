@@ -33,6 +33,7 @@ class BackupBridge(private val activity: Activity, private val server: PhpServer
             put("frequency", BackupScheduler.frequency(ctx))
             put("lastOk", prefs.getLong(BackupNames.KEY_LAST_OK, 0L))
             put("lastError", prefs.getString(BackupNames.KEY_LAST_ERROR, "") ?: "")
+            put("lastNote", prefs.getString(BackupNames.KEY_LAST_NOTE, "") ?: "")
             put("encrypted", BackupCrypto.isEnabled())
         }.toString()
     }
@@ -79,7 +80,7 @@ class BackupBridge(private val activity: Activity, private val server: PhpServer
     }
 
     @JavascriptInterface
-    fun backupNow() = BackupScheduler.runNow(ctx)
+    fun backupNow() { log("bridge: backupNow"); BackupScheduler.runNow(ctx) }
 
     /**
      * Fetch the Drive backup and replace the ledger with it.
@@ -89,5 +90,8 @@ class BackupBridge(private val activity: Activity, private val server: PhpServer
      * including the sentinel "PASSPHRASE_REQUIRED", which tells the page to ask and try again.
      */
     @JavascriptInterface
-    fun restore(passphrase: String): String = DriveRestore.run(ctx, server, passphrase) ?: ""
+    fun restore(passphrase: String): String {
+        log("bridge: restore")
+        return DriveRestore.run(ctx, server, passphrase) ?: ""
+    }
 }

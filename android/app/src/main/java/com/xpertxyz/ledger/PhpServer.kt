@@ -138,6 +138,17 @@ class PhpServer(private val ctx: Context) {
     }
 
     /**
+     * How many entries the live ledger holds, or -1 if it cannot be counted.
+     *
+     * Only used to log what a backup or restore actually moved. A restore that "worked" and put
+     * back an empty ledger reads identically to one that failed, unless something counts.
+     */
+    fun entryCount(): Int {
+        val (code, out) = cli("--count")
+        return if (code == 0) out.trim().toIntOrNull() ?: -1 else -1
+    }
+
+    /**
      * Replace the ledger with a snapshot. Returns null on success, or PHP's own reason.
      *
      * The PHP side validates before it touches anything — integrity_check, then that the file
@@ -160,7 +171,12 @@ class PhpServer(private val ctx: Context) {
             redirectErrorStream(true)
         }.start()
         val out = p.inputStream.bufferedReader().readText()
-        return p.waitFor() to out
+        val code = p.waitFor()
+        // The CLI's own message is the only account of what it did — "restored … 571 entries in
+        // the snapshot, 505 expenses live" is the line that tells a working restore apart from
+        // one that put back an empty file. Logging it on success too, not just on failure.
+        log("php ${args.joinToString(" ")} -> exit $code: ${out.trim().take(400)}")
+        return code to out
     }
 
     /**

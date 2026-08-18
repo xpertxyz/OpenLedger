@@ -1130,6 +1130,23 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
 
           /**
+           * The panel's only way to say anything back.
+           *
+           * `.toast` was a server-rendered flash class with no JavaScript behind it, so every
+           * call here — including 'Restore failed: ' + the reason — threw a ReferenceError and
+           * was swallowed by the WebView. A restore that stopped for a nameable reason looked
+           * exactly like a button that does nothing, which is how it was reported.
+           */
+          function toast(msg, kind) {
+            var t = document.createElement('div');
+            t.className = 'toast ' + (kind || 'success');
+            t.textContent = msg;
+            document.body.appendChild(t);
+            // The CSS animation ends at 2.2s (3.6s for .error) but leaves the node in place.
+            setTimeout(function () { t.remove(); }, 4000);
+          }
+
+          /**
            * Ask, then act. Replaces confirm()/prompt(), which a WebView drops on the floor.
            *
            * opts: {title, body, ok, danger, fields:[label,…], validate(values) -> errorOrNull}
@@ -1201,7 +1218,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
           // flight. Held outside render() because render() rewrites the whole panel: keeping
           // the in-progress state on the button element itself lost it the moment anything
           // else repainted.
-          var shown = null, busy = false, baseOk = 0, baseErr = '', watcher = null;
+          var shown = null, busy = false, baseOk = 0, baseErr = '', baseNote = '', watcher = null;
 
           function drawerOpen() {
             var d = document.getElementById('drawer-panel');
@@ -1223,15 +1240,18 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             var s2 = JSON.parse(HLBackup.status());
             if (busy) {
               var done = s2.lastOk !== baseOk;
+              var noted = s2.lastNote && s2.lastNote !== baseNote;
               var failed = s2.lastError && s2.lastError !== baseErr;
-              if (!done && !failed) return;
+              if (!done && !failed && !noted) return;
               busy = false;
-              toast(done ? 'Backed up to Drive.' : 'Backup failed.');
+              toast(done ? 'Backed up to Drive.' : noted ? s2.lastNote : 'Backup failed.',
+                    done ? 'success' : 'error');
               render();
               return;
             }
             // Not our backup: a scheduled one finished, or the account changed. Same repaint.
             if (!shown || s2.lastOk !== shown.lastOk || s2.lastError !== shown.lastError
+                || s2.lastNote !== shown.lastNote
                 || s2.account !== shown.account) render();
           }
 
@@ -1261,7 +1281,13 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             // reading "Last backup: 3 days ago" in calm grey while every run since has failed
             // is worse than no panel. #c0392b matches .btn-danger; the design system has no
             // danger ramp, and this is the one colour for "something went wrong".
-            var status = s.lastError
+            var status = s.lastNote
+              // A run that declined to upload is not a failure and must not be dressed as one:
+              // the empty-ledger guard fires exactly when the copy in Drive is intact and the
+              // user is one tap from getting it back. Red "Backup failed" there reads as "your
+              // backup is broken", which is the opposite of what happened.
+              ? '<p class="muted" style="margin:0;font-size:13px;">' + esc(s.lastNote) + '</p>'
+              : s.lastError
               ? '<p style="margin:0;color:#c0392b;font-size:13px;"><strong>Backup failed.</strong> '
                   + esc(s.lastError) + '</p>'
               : s.lastOk
@@ -1303,7 +1329,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             // Queue it, then let the watcher report what happened. The button's in-progress
             // state comes from `busy` via render(), so it survives any repaint in between.
             document.getElementById('bk-now').onclick = function () {
-              busy = true; baseOk = s.lastOk; baseErr = s.lastError;
+              busy = true; baseOk = s.lastOk; baseErr = s.lastError; baseNote = s.lastNote;
               HLBackup.backupNow();
               render();
               watch();
@@ -1354,7 +1380,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
               }, function (v) {
                 if (!v) return;
                 var err = HLBackup.setPassphrase(v[0]);
-                if (err) { toast(err); return; }
+                if (err) { toast(err, 'error'); return; }
                 toast('Backups will be encrypted from now on.');
                 render();
               });
@@ -1397,7 +1423,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                     }, function (v) { if (v) run(v[0]); });
                     return;
                   }
-                  if (err) { toast('Restore failed: ' + err); return; }
+                  if (err) { toast('Restore failed: ' + err, 'error'); return; }
                   location.href = '/';
                 }, 50);
               }
