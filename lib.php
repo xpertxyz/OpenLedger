@@ -1216,13 +1216,21 @@ function sweepRecurring(PDO $db, int $hid): void {
 // ────────────────────────────────────────────────────────────────────
 // Bootstrap a household for a new Google user.
 // ────────────────────────────────────────────────────────────────────
-function bootstrapHousehold(PDO $db, string $name, string $email, string $googleSub): int {
+function bootstrapHousehold(
+    PDO $db, string $name, string $email, string $googleSub, ?string $ledgerName = null
+): int {
     $db->beginTransaction();
     try {
         // Named after its owner, because this string is what tells ledgers apart in the
         // picker — and a fixed default cannot. Everyone's first ledger used to be called
         // "Personal", so the moment two people shared one they saw two rows reading "Personal".
-        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute([ledgerNameFor($name)]);
+        //
+        // $ledgerName overrides that guess, and only the local build passes one: it is the one
+        // place a person is asked outright, so their answer beats anything derived from a name.
+        $ledger = ($ledgerName !== null && trim($ledgerName) !== '')
+            ? mb_substr(trim($ledgerName), 0, 80)
+            : ledgerNameFor($name);
+        $db->prepare("INSERT INTO households (name) VALUES (?)")->execute([$ledger]);
         $hid = (int)$db->lastInsertId();
         $db->prepare("INSERT INTO users (household_id, google_sub, email, name) VALUES (?, ?, ?, ?)")
            ->execute([$hid, $googleSub, $email, $name]);

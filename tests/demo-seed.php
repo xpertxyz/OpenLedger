@@ -43,8 +43,10 @@ $on  = function (int $monthsAgo, int $day) use ($today): string {
 // database the app has already created and the local user keeps working.
 $hid = (int)($db->query("SELECT id FROM households ORDER BY id LIMIT 1")->fetchColumn() ?: 0);
 if (!$hid) {
+    // A name and a ledger title that read like somebody's, because these end up in screenshots
+    // and "Me / Me" reads like a placeholder nobody bothered to fill in.
     $sub = $config['features']['google_signin'] ? 'demo-seed-user' : 'local-device-user';
-    bootstrapHousehold($db, 'Me', 'me@localhost', $sub);
+    bootstrapHousehold($db, 'Aarav Sharma', '', $sub, 'Home');
     $hid = (int)$db->query("SELECT id FROM households ORDER BY id LIMIT 1")->fetchColumn();
 }
 $uid = (int)$db->query("SELECT id FROM users WHERE household_id = $hid ORDER BY id LIMIT 1")->fetchColumn();
@@ -101,7 +103,24 @@ $pattern = [
     ['EMI / Loans',   1,  14500, 14500],
     ['Credit Card Bill', 1, 4000, 22000],
 ];
-$notes = ['', '', '', 'weekend', 'monthly', 'with family', 'urgent', 'gift', 'annual', 'top-up'];
+// Notes people would actually type, per category. Generic filler ("weekend", "monthly") makes
+// a screenshot look like a fixture; a row reading "sabzi mandi" or "car EMI" reads like a
+// ledger somebody keeps. Blanks are in the mix on purpose — most real entries have no note.
+$notesFor = [
+    'Groceries'        => ['', '', 'BigBasket', 'weekly veg', 'milk and eggs', 'DMart run', 'rice and dal'],
+    'Vegetables'       => ['', 'sabzi mandi', 'weekly veg', 'fruits'],
+    'Rent'             => ['monthly rent'],
+    'Utilities'        => ['', 'electricity', 'water bill', 'gas cylinder', 'broadband'],
+    'Dining Out'       => ['', 'Sunday brunch', 'Swiggy', 'team lunch', 'birthday dinner', 'chai and samosa'],
+    'Transport'        => ['', '', 'Uber', 'petrol', 'metro card', 'auto'],
+    'Health'           => ['', 'pharmacy', 'dentist', 'lab test', 'checkup'],
+    'Shopping'         => ['', 'Amazon', 'shoes', 'kurta', 'gift for Amma'],
+    'Entertainment'    => ['', 'movie night', 'concert tickets', 'board game'],
+    'Subscriptions'    => ['Spotify', 'Netflix', 'iCloud storage', 'newspaper'],
+    'Education'        => ['school fees', 'books', 'online course'],
+    'EMI / Loans'      => ['car EMI'],
+    'Credit Card Bill' => ['HDFC card', 'Amex bill'],
+];
 $insExp = $db->prepare(
     "INSERT INTO expenses (household_id, amount, category_id, member_id, created_by, note, date, created_at)
      VALUES (?,?,?,?,?,?,?,?)"
@@ -115,9 +134,10 @@ for ($back = 13; $back >= 0; $back--) {
             $date = $on($back, $day);
             if ($date > $today) continue;                       // never file a future expense
             $amount = $lo === $hi ? $lo : mt_rand($lo, $hi) + mt_rand(0, 99) / 100;
+            $pool   = $notesFor[$cat] ?? [''];
             $insExp->execute([
                 $hid, $amount, $cats[$cat], $members[mt_rand(0, count($members) - 1)], $uid,
-                $notes[mt_rand(0, count($notes) - 1)], $date, $date . ' 10:00:00',
+                $pool[mt_rand(0, count($pool) - 1)], $date, $date . ' 10:00:00',
             ]);
             $nExp++;
         }
@@ -129,22 +149,28 @@ $ecats = [];
 foreach ($db->query("SELECT id, name FROM earning_categories WHERE household_id = $hid") as $r) {
     $ecats[$r['name']] = (int)$r['id'];
 }
-$earnPattern = [['Salary', 1, 95000, 95000], ['Freelance', 1, 8000, 42000],
-                ['Interest', 1, 400, 2600], ['Other', 1, 500, 9000]];
+// The name is what shows in the list, so it says what the money was rather than which bucket
+// it landed in — the category already says that.
+$earnPattern = [
+    ['Salary',    1, 95000, 95000, ['Salary']],
+    ['Freelance', 1,  8000, 42000, ['Design retainer', 'Logo project', 'Website build']],
+    ['Interest',  1,   400,  2600, ['FD interest', 'Savings interest']],
+    ['Other',     1,   500,  9000, ['Cashback', 'Sold old phone', 'Festival bonus']],
+];
 $insEarn = $db->prepare(
     "INSERT INTO earnings (household_id, name, amount, category_id, member_id, created_by, date, created_at)
      VALUES (?,?,?,?,?,?,?,?)"
 );
 $nEarn = 0;
 for ($back = 13; $back >= 0; $back--) {
-    foreach ($earnPattern as [$cat, $perMonth, $lo, $hi]) {
+    foreach ($earnPattern as [$cat, $perMonth, $lo, $hi, $names]) {
         $cid = $ecats[$cat] ?? array_values($ecats)[0] ?? null;
         if (!$cid) continue;
         if ($cat !== 'Salary' && mt_rand(0, 2) === 0) continue;   // the extras are not every month
         $date = $on($back, $cat === 'Salary' ? 1 : mt_rand(3, 27));
         if ($date > $today) continue;
         $insEarn->execute([
-            $hid, $cat, $lo === $hi ? $lo : mt_rand($lo, $hi), $cid,
+            $hid, $names[mt_rand(0, count($names) - 1)], $lo === $hi ? $lo : mt_rand($lo, $hi), $cid,
             $members[$cat === 'Salary' ? 0 : mt_rand(0, count($members) - 1)], $uid,
             $date, $date . ' 09:00:00',
         ]);

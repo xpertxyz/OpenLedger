@@ -766,11 +766,18 @@ if (PHP_SAPI === 'cli') {
         // authed switch by starting from the end of the unauthed gate, not from the top.
         $gate     = strpos($src, "redirect('/login');\n}");
         $authPost = $gate === false ? false : strpos($src, "if (\$method === 'POST') {", $gate);
-        $csrf     = strpos($src, 'csrfCheck();');
         $sw       = $authPost === false ? false : strpos($src, 'switch ($path) {', $authPost);
-        $gate !== false && $authPost !== false && $sw !== false
-            && $gate < $authPost && $authPost < $csrf && $csrf < $sw && substr_count($src, 'csrfCheck();') === 1
-            ? $line('OK',   'every POST route sits behind the auth gate and a single csrfCheck()')
+        // Exactly two, and where they are is the point. The first is /setup on the local
+        // build, which necessarily runs before the gate — it is what creates the user the gate
+        // would otherwise be checking for. The second is the one guarding the whole authed
+        // switch. A third would mean some route is checking for itself, which is how per-route
+        // audits start and how one of them eventually gets forgotten.
+        $csrfAt = [];
+        for ($o = 0; ($p = strpos($src, 'csrfCheck();', $o)) !== false; $o = $p + 1) $csrfAt[] = $p;
+        $csrf = count($csrfAt) === 2 ? $csrfAt[1] : false;
+        $gate !== false && $authPost !== false && $sw !== false && $csrf !== false
+            && $csrfAt[0] < $gate && $gate < $authPost && $authPost < $csrf && $csrf < $sw
+            ? $line('OK',   'every POST route sits behind the auth gate and one csrfCheck(), first-run setup ahead of both')
             : $line('FAIL', 'the POST switch is no longer uniformly auth/CSRF gated — check the order in index.php');
         // `back` is attacker-controlled and only redirect() runs it through safeRedirectTarget().
         $loc = 0;
@@ -1289,9 +1296,39 @@ if (!$user && !$config['features']['google_signin']) {
     $localSub = 'local-device-user';
     $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
     $stmt->execute([$localSub]);
-    $uid = $stmt->fetchColumn()
-        ?: bootstrapHousehold($db, 'Me', 'me@localhost', $localSub);
-    $_SESSION['user_id'] = (int)$uid;
+    $uid = (int)$stmt->fetchColumn();
+
+    // First run. Nothing is created until this is answered — the ledger used to be conjured
+    // silently as "Me" / me@localhost, which then showed up as the spender on every entry and
+    // could only be corrected in two different places once the household already had rows in
+    // it. Asking once, before anything exists, is both cheaper and more honest.
+    if (!$uid) {
+        $err = '';
+        if ($method === 'POST' && $path === '/setup') {
+            // Not the csrfCheck() below: that one guards the authed switch, and this runs
+            // before any of it. Same token, same session, checked before anything is written.
+            csrfCheck();
+            try {
+                $yourName = requireStr((string)($_POST['name'] ?? ''), 80, 'Your name');
+                $ledger   = requireStr((string)($_POST['ledger'] ?? ''), 80, 'Ledger name');
+                // Optional on purpose. There is no server to mail, nothing to verify it
+                // against, and no password to reset — demanding one would be theatre.
+                $email    = optionalStr($_POST['email'] ?? '', 190, 'Email');
+                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    throw new UserErr('That does not look like an email address.');
+                }
+                $_SESSION['user_id'] = bootstrapHousehold($db, $yourName, $email, $localSub, $ledger);
+                redirect('/');
+            } catch (UserErr $e) {
+                $err = $e->getMessage();
+            }
+        }
+        // Any other path lands here too: there is no app to show until this is done.
+        renderSetup($err, $_POST);
+        exit;
+    }
+
+    $_SESSION['user_id'] = $uid;
     $user = currentUser($db);
 }
 

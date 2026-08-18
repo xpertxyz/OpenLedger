@@ -6,7 +6,8 @@
 
 <p align="center">
   A warm, mobile-first household ledger — earnings, expenses, investments, recurring bills — shared with the people you actually live with.<br>
-  PHP + MySQL + Google One Tap sign-in. No build step. Deploys to any shared host.
+  PHP + MySQL + Google One Tap sign-in. No build step. Deploys to any shared host.<br>
+  <em>The same PHP also ships as an offline Android app, with the ledger in a SQLite file on the phone.</em>
 </p>
 
 <p align="center">
@@ -18,6 +19,7 @@
   <a href="#self-hosting">Self-hosting</a> ·
   <a href="#local-development">Local development</a> ·
   <a href="#features">Features</a> ·
+  <a href="#android-app">Android app</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="docs/DESIGN.md">Design spec</a>
 </p>
@@ -52,27 +54,35 @@
 - **Three themes, each in light and dark** — *Organic* (terracotta and sage on cream), *Harbor* (deep azure and teal on cool paper), *Plum* (berry and emerald on blush). Picked from the **Theme** panel in the side menu, applied the instant you tap — no reload, and the panel repaints under your thumb. Per-user, persisted, and remembered for the signed-out pages too.
 - **CSRF-guarded**, rate-limited (10 sign-ins / 15 min, 60 POSTs / min per IP), data-caps enforced server-side.
 - **Pagination** on expenses, earnings + investments, with SQL-side aggregates so month/all-time totals stay cheap.
+- **Runs offline as an Android app** — the same `index.php`, `lib.php` and `views.php`, served to a WebView by a PHP interpreter bundled in the APK, against a SQLite file in the app's private storage. No account, no server, nothing leaves the device. See [Android app](#android-app).
 - **No build step, no npm, no composer** — just PHP + MySQL + a stylesheet.
 
 ## Screens
 
+Captured from the Android build. The website renders the same pages — it adds Google sign-in
+and ledger sharing, which the phone build compiles out.
+
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/signin.png" alt="Sign-in" width="240"><br><sub><b>Sign in with Google</b></sub></td>
-    <td align="center"><img src="docs/screenshots/add.png" alt="Add expense" width="240"><br><sub><b>Add an expense</b></sub></td>
-    <td align="center"><img src="docs/screenshots/history.png" alt="Expense tab with budgets" width="240"><br><sub><b>Expense — budget per category</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/add.png" alt="Add an expense" width="240"><br><sub><b>Add — three taps, budget left in view</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/expense.png" alt="Expense tab with budgets" width="240"><br><sub><b>Expense — day strip and budget per category</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/earn.png" alt="Earnings" width="240"><br><sub><b>Earn — rolling 12 months and the mix</b></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/earn.png" alt="Earnings" width="240"><br><sub><b>Earnings — rolling 12 months</b></sub></td>
-    <td align="center"><img src="docs/screenshots/invest.png" alt="Investments" width="240"><br><sub><b>Investments — active / archived</b></sub></td>
-    <td align="center"><img src="docs/screenshots/year.png" alt="Yearly summary" width="240"><br><sub><b>Yearly summary — calendar or FY</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/invest.png" alt="Investments" width="240"><br><sub><b>Invest — active / archived by type</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring — repeats and split bills</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/year.png" alt="Yearly summary" width="240"><br><sub><b>Yearly summary — calendar or FY</b></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/recurring.png" alt="Recurring" width="240"><br><sub><b>Recurring — repeats and split bills</b></sub></td>
-    <td align="center"><img src="docs/screenshots/ledgers.png" alt="Ledgers and sharing" width="240"><br><sub><b>Ledgers &amp; sharing — invite, people, names</b></sub></td>
-    <td align="center"><img src="docs/screenshots/profile.png" alt="Profile drawer" width="240"><br><sub><b>Profile drawer — navigation and lists</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/setup.png" alt="First run" width="240"><br><sub><b>First run — no account, ever</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/expense-dark.png" alt="Expense in dark" width="240"><br><sub><b>Expense — dark</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/earn-dark.png" alt="Earn in dark" width="240"><br><sub><b>Earn — dark</b></sub></td>
   </tr>
 </table>
+
+<sub>Originals are 1344 × 2992 PNG in <a href="docs/screenshots/android/"><code>docs/screenshots/android/</code></a>. Google Play wants each side between 320 and 3840 px and an aspect ratio no taller than 2:1, so these need scaling or padding (they are 2.23:1) before they go on a listing. The earlier web-UI captures are still in <code>docs/screenshots/</code>.</sub>
+
+<sub>Every figure in them comes from <code>tests/demo-seed.php</code> — a generated fourteen months of household money. No real ledger appears anywhere in this repository.</sub>
 
 ---
 
@@ -258,6 +268,55 @@ DB_DRIVER=sqlite DB_PATH=/tmp/ledger.db php index.php --backup /tmp/snapshot.db
 > **`APP_TZ` matters.** Every date is now computed by PHP, not by the database. It defaults to
 > `Asia/Kolkata`; before, PHP ran in UTC and an expense added between midnight and 05:29 IST
 > filed under the previous day.
+
+### Filling a ledger with demo data
+
+`tests/demo-seed.php` writes fourteen months of plausible household money — ~500 expenses across
+every category, salary and freelance earnings, SIPs, five recurring items, three people, budgets
+on the parent categories. It is what every screenshot above was taken against.
+
+```bash
+# a throwaway SQLite ledger to look at
+DB_DRIVER=sqlite DB_PATH=/tmp/demo.db php tests/demo-seed.php
+DB_DRIVER=sqlite DB_PATH=/tmp/demo.db php -S 127.0.0.1:8152 router.php
+```
+
+It refuses to run against a household that already has expenses unless you pass `--force`, and
+it lives in `tests/` — which `.htaccess` and `router.php` both deny over HTTP — so no demo-data
+code ever ships inside the app.
+
+---
+
+## Android app
+
+The phone app is not a rewrite. Gradle copies `index.php`, `lib.php`, `views.php`,
+`config.php`, `router.php`, `design-tokens/` and `assets/` straight out of this repository into
+the APK; a PHP interpreter bundled as `libphp.so` serves them over loopback to a WebView. If it
+isn't in the web app, it isn't in the phone app.
+
+| | |
+|---|---|
+| Database | one SQLite file in the app's private storage |
+| Account | none — `HL_GOOGLE_SIGNIN=0`, so there is no login screen at all |
+| Sharing | compiled out — `HL_SHARING=0`, invite routes 404 |
+| Lock | the phone's own fingerprint / face / PIN, on every launch and every resume |
+| Backup | optional, to the user's **own** Google Drive `appDataFolder`, daily via WorkManager |
+| Release size | 4.7 MB APK — 7.5 MB interpreter, 2.3 MB dex after R8 |
+
+- **First run asks for a name and a ledger name**, and creates nothing until it is answered. It
+  says plainly on that screen that there is no account, no server, and no copy anywhere else.
+- **Backups can be sealed with a passphrase** (AES-GCM, PBKDF2-HMAC-SHA256, 210k iterations)
+  before they leave the device, so not even Google can read them. Forget it and the backup is
+  gone — the UI says so before you set one.
+- **Recurring items need no background job**: the first request after the app opens runs the
+  catch-up sweep, so a phone that was off for a month files that month on launch.
+
+Build it, and the whole story of what was hard about it, in **[ANDROID.md](ANDROID.md)**.
+
+```bash
+./android/build-php.sh          # cross-compile PHP + SQLite (once)
+cd android && ./gradlew assembleDebug
+```
 
 ---
 

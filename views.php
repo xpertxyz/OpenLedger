@@ -875,7 +875,11 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
         <div class="drawer-avatar"><?= $initial ?></div>
         <div class="drawer-who">
           <div class="n"><?= h($user['name'] ?? 'You') ?></div>
-          <div class="e"><?= h($user['email'] ?? '') ?></div>
+          <?php /* Omitted rather than blank: on the phone the email is optional, and an empty
+                   line under the name reads as something that failed to load. */ ?>
+          <?php if (trim((string)($user['email'] ?? '')) !== ''): ?>
+          <div class="e"><?= h($user['email']) ?></div>
+          <?php endif; ?>
         </div>
         <button class="icon-btn" type="button" aria-label="Close" onclick="closeProfile()"><?= icon('x', 18) ?></button>
       </div>
@@ -1392,6 +1396,9 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <section>
           <a class="plain-link" href="/terms">Terms &amp; conditions</a>
+          <div style="margin-top:8px;font-size:12px;color:var(--color-neutral-800);">
+            Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700);text-decoration:none;">XpertXYZ</a>
+          </div>
         </section>
 
         <section>
@@ -1951,6 +1958,142 @@ $sprite
     <span>Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700); text-decoration:none;">XpertXYZ</a></span>
   </div>
 </div>
+</body></html>
+HTML;
+}
+
+// ─── First run (local build only) ───────────────────────────────────
+//
+// The phone build has no Google account to take a name from, so it asks once. A full page
+// rather than a dialog: nothing exists yet to put a dialog on top of, and the answers decide
+// what gets created — the household row, the user row, and the member label on every entry
+// they will ever add.
+//
+// Nothing here leaves the device and the page says so, because being asked for a name and an
+// email by an app that has just promised it has no server is otherwise a fair thing to be
+// suspicious of.
+function renderSetup(string $error, array $old): void {
+    $sprite    = SVG_SPRITE;
+    $origin    = originUrl();
+    $meta      = metaHead($origin);
+    $themeVars = themeCss();
+    $boot      = themeBootScript();
+    $cssV      = cssVersion();
+    $csrf      = csrfInput();
+    // Re-shown on a rejected submit, so nobody retypes three fields to fix one.
+    $name   = h(trim((string)($old['name']   ?? '')));
+    $ledger = h(trim((string)($old['ledger'] ?? '')));
+    $email  = h(trim((string)($old['email']  ?? '')));
+    $errBox = $error === ''
+        ? ''
+        : '<div style="width:100%;padding:10px 12px;border-radius:var(--radius-md);'
+          . 'background:color-mix(in srgb, #c0392b 12%, transparent);color:#c0392b;font-size:13px;">'
+          . h($error) . '</div>';
+
+    // Said here, once, at the only moment the person is deciding whether to trust this thing
+    // with a year of their household's money. The terms page says the same in more words, and
+    // nobody reads the terms page. Static text, so the <strong> in it is safe unescaped.
+    $facts = [
+        'There is <strong>no account and no server</strong>. Nothing to sign in to, nothing to be locked out of.',
+        'Every entry lives in <strong>one file on this phone</strong>, in storage only this app can open.',
+        '<strong>We never get a copy.</strong> Nothing for us to sell, leak, lose, or hand to anyone who asks.',
+    ];
+    if (FEATURE_BACKUP) {
+        $facts[] = 'A backup, if you turn one on, goes to <strong>your own Google Drive</strong> — '
+                 . 'and can be sealed with a passphrase only you know.';
+    }
+    $facts[] = 'Uninstall and it is <strong>gone</strong>. No copy survives somewhere else.';
+    $factList = implode('', array_map(
+        fn($t) => '<li style="display:flex;gap:8px;align-items:flex-start;">'
+                . '<span style="color:var(--color-accent);flex:none;margin-top:1px;">' . icon('check', 15) . '</span>'
+                . '<span>' . $t . '</span></li>',
+        $facts
+    ));
+
+    echo <<<HTML
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Open Ledger — Set up</title>
+$meta
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
+$boot
+<style>
+  body { margin:0; background:var(--color-bg); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .field > span { display:block; font-size:12px; margin-bottom:5px; color:color-mix(in srgb, var(--color-text) 70%, transparent); }
+  .btn:disabled { opacity:.45; }
+</style>
+</head>
+<body>
+$sprite
+<div style="width:100%;max-width:340px;padding:var(--space-4);">
+  <div class="card elev-lg" style="padding:var(--space-6);gap:var(--space-4);">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;">
+      <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="var(--color-accent)"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
+      </svg>
+      <h1 style="margin:0;font-family:var(--font-heading);font-size:24px;font-weight:normal;">Set up your ledger</h1>
+      <p style="margin:0;font-family:var(--font-heading);font-size:19px;line-height:1.3;color:var(--color-accent-700);">
+        You own your data.<br>Every last rupee of it.</p>
+    </div>
+
+    <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px;
+               font-size:13px;line-height:1.45;color:var(--color-neutral-800);">
+      $factList
+    </ul>
+
+    <hr style="width:100%;border:none;border-top:1px solid var(--color-divider);margin:0;">
+
+    $errBox
+
+    <form method="post" action="/setup" id="setup-form"
+          style="display:flex;flex-direction:column;gap:var(--space-3);width:100%;">
+      <p style="margin:0;font-size:13px;color:var(--color-neutral-800);">
+        These two names are only so the app knows what to call you and your ledger.</p>
+      $csrf
+      <label class="field"><span>Your name</span>
+        <input class="input" id="s-name" name="name" maxlength="80" autocomplete="name"
+               autocapitalize="words" value="$name" required></label>
+      <label class="field"><span>Ledger name</span>
+        <input class="input" id="s-ledger" name="ledger" maxlength="80"
+               autocapitalize="words" value="$ledger" required></label>
+      <label class="field"><span>Email — optional</span>
+        <input class="input" id="s-email" name="email" type="email" maxlength="190"
+               autocomplete="email" autocapitalize="none" spellcheck="false" value="$email"></label>
+      <button class="btn btn-primary btn-block" id="s-save" type="submit" disabled>Create my ledger</button>
+    </form>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;
+              margin-top:14px;font-size:12px;color:var(--color-neutral-800);">
+    <a href="/terms" style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Terms &amp; conditions</a>
+    <span>Built by <a href="https://xpertxyz.in" style="color:var(--color-accent-700);text-decoration:none;">XpertXYZ</a></span>
+  </div>
+</div>
+<script>
+(function () {
+  var n = document.getElementById('s-name'),
+      l = document.getElementById('s-ledger'),
+      b = document.getElementById('s-save');
+  // The ledger name follows the first name until it is edited, which is the same guess
+  // ledgerNameFor() makes on the server — shown here so it can be corrected rather than
+  // discovered later. Once touched it is left alone, including on a rejected submit.
+  var touched = l.value.trim() !== '';
+  function sync() { b.disabled = !(n.value.trim() && l.value.trim()); }
+  n.addEventListener('input', function () {
+    if (!touched) l.value = n.value.trim().split(/\s+/)[0] || '';
+    sync();
+  });
+  l.addEventListener('input', function () { touched = true; sync(); });
+  sync();
+  n.focus();
+})();
+</script>
 </body></html>
 HTML;
 }

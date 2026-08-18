@@ -1,8 +1,10 @@
 package com.xpertxyz.ledger
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -86,8 +88,18 @@ class MainActivity : FragmentActivity() {
             // Everything is served from 127.0.0.1; anything else is a link the user tapped and
             // belongs in a browser, not inside a window that holds their ledger.
             webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean =
-                    url != null && !url.startsWith(server.origin)
+                override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
+                    if (url == null || url.startsWith(server.origin)) return false
+                    // Hand it to the browser. Returning true on its own claimed the navigation
+                    // and then did nothing with it, so every outbound link in the app — the
+                    // terms page's GitHub links, the XpertXYZ credit — was a tap that did
+                    // nothing at all. http/https only: the WebView should never be able to
+                    // fire an arbitrary intent, whatever a page asks for.
+                    if (url.startsWith("https://") || url.startsWith("http://")) {
+                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                    }
+                    return true
+                }
             }
             // The backup panel is rendered by views.php and driven from here, so there is one
             // set of buttons in one design system instead of a native screen that almost
