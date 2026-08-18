@@ -67,7 +67,13 @@ cd "php-$PHP_VERSION"
 # would have measured are supplied here. Without these it guesses wrong and the build fails
 # late, during make, with errors that look unrelated.
 export CFLAGS="-Os -fPIE -fPIC -I$SYSROOT/include"
-export LDFLAGS="-pie -L$SYSROOT/lib"
+# max-page-size=16384 is not optional and not cosmetic. Android 15 introduced devices with a
+# 16 KB memory page, and from November 2025 Play rejects an app targeting Android 15+ whose
+# native libraries have LOAD segments aligned to anything smaller. The linker defaults to 4 KB
+# here — the NDK's own 16 KB default applies to shared libraries, and this is linked -pie as an
+# executable (see the libphp.so naming story above), so it does not inherit it. Getting this
+# wrong fails at upload with "not compatible with 16 KB devices", never at build time.
+export LDFLAGS="-pie -Wl,-z,max-page-size=16384 -L$SYSROOT/lib"
 export SQLITE_CFLAGS="-I$SYSROOT/include"
 export SQLITE_LIBS="-L$SYSROOT/lib -lsqlite3"
 cat > config.cache <<'EOF'
@@ -136,6 +142,17 @@ make -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 
 mkdir -p "$OUT"
 "$STRIP" -o "$OUT/libphp.so" sapi/cli/php
+
+# Prove the 16 KB alignment here rather than finding out at upload. Nothing else notices: the
+# APK builds, installs and runs perfectly on a 4 KB device, and Play rejects it months later
+# with "not compatible with 16 KB devices". One readelf is cheaper than that.
+BAD=$("$TC/llvm-readelf" -l "$OUT/libphp.so" | awk '/LOAD/ {print $NF}' | sort -u | grep -vx '0x4000' || true)
+if [ -n "$BAD" ]; then
+  echo "libphp.so has LOAD segments aligned $BAD, not 0x4000 (16 KB)." >&2
+  echo "Play rejects that for apps targeting Android 15+. Check -Wl,-z,max-page-size in LDFLAGS." >&2
+  exit 1
+fi
+
 echo
-echo "wrote $OUT/libphp.so ($(du -h "$OUT/libphp.so" | cut -f1))"
+echo "wrote $OUT/libphp.so ($(du -h "$OUT/libphp.so" | cut -f1)), LOAD segments 16 KB aligned"
 echo "now: gradle assembleDebug"
