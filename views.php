@@ -438,6 +438,12 @@ $boot
   .cat-chip.on { border-color:var(--color-accent); background:var(--color-accent-100); color:var(--color-accent-700); }
   .cat-chip.new { border-style:dashed; color:var(--color-neutral-800); }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; }
+  /* One line that scrolls, for a row long enough that wrapping it would cost the card a
+     second row of height on every screen. flex:none because the default would shrink each
+     pill to fit instead of overflowing, which is the whole point. */
+  .pill-row.scroll { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+  .pill-row.scroll::-webkit-scrollbar { display:none; }
+  .pill-row.scroll > * { flex:none; }
   /* The rule above sets display:flex, which outranks the browser's own [hidden]{display:none}
      — a class beats an attribute selector. Without this every parent's sub-category row shows
      at once, and you can light a pill under a parent that isn't even selected. */
@@ -469,6 +475,13 @@ $boot
   .total-card .day-strip a:hover { opacity:.8; }
   .total-card .day-strip .peak { opacity:1; }
   .total-card .day-strip .z { opacity:.18; }
+  /* Today pulses, so "where am I in the month" needs no counting along the axis. Nothing is
+     drawn around it: height on this strip means money, and any added mark reads as one. */
+  .total-card .day-strip .today { animation: day-now 1.6s ease-in-out infinite; }
+  @keyframes day-now { 0%, 100% { opacity:1; } 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) {
+    .total-card .day-strip .today { animation:none; opacity:1; }
+  }
   .total-card .day-axis { display:flex; gap:2px; margin-top:3px; font-size:8px; line-height:1; opacity:.7; }
   .total-card .day-axis span { flex:1; text-align:center; }
   /* 31 two-digit labels don't fit a phone: show every other one there.
@@ -2416,16 +2429,23 @@ function renderHistory(PDO $db, array $user, int $offset): void {
             <strong><?= h(fmt($budgetTotal)) ?></strong> budgeted
           <?php endif; ?>
         </div>
-        <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t'); ?>
+        <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t');
+          // Today is only on this strip while the month being looked at is the current one —
+          // page back to July and nothing should pulse. Computed from today(), like every
+          // other date in this app, rather than asked of the database.
+          $todayD = str_starts_with(today(), $anchor->format('Y-m')) ? (int)substr(today(), 8, 2) : 0;
+        ?>
           <div class="day-strip">
             <?php for ($d = 1; $d <= $daysInMonth; $d++):
               $amt  = (float)($stripDays[$d] ?? 0);
               $hPct = $amt > 0 ? max(6, ($amt / $dayMax) * 100) : 0;
               $cls  = $amt <= 0 ? 'z' : ($amt >= $dayMax ? 'peak' : '');
-              $tip  = $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt));
+              if ($d === $todayD) $cls = trim($cls . ' today');
+              $tip  = $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt))
+                    . ($d === $todayD ? ' (today)' : '');
             ?><?php if ($amt > 0): // a bar with spend jumps to that date in the list ?><a<?=
               $cls ? ' class="' . $cls . '"' : '' ?> href="#d<?= $d ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
-            else: ?><i class="z"></i><?php endif; ?><?php endfor; ?>
+            else: ?><i class="<?= $cls ?: 'z' ?>" title="<?= $tip ?>"></i><?php endif; ?><?php endfor; ?>
           </div>
           <div class="day-axis dense" aria-hidden="true">
             <?php for ($d = 1; $d <= $daysInMonth; $d++): ?><span><?= $d ?></span><?php endfor; ?>
@@ -2681,6 +2701,22 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     ?>
     <!-- Person filter first: every figure, bar and row below is scoped to $who. -->
     <?= whoFilterRow($db, $hid, $mems, $who) ?>
+
+    <!-- Then active/archived, above the card rather than below it: it scopes the card's own
+         totals and the month strip as well as the list, so sitting underneath them read as
+         though it only filtered the rows it happened to precede. The add action shares the
+         row, hanging off the end via margin-left. Rendered outside the has-entries guard so
+         an empty ledger still offers a way in. -->
+    <div class="pill-row">
+      <?php if ($grandCount > 0): ?>
+        <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
+        <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
+        <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
+      <?php endif; ?>
+      <button type="button" class="pill-btn act" style="margin-left:auto;"
+              onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
+    </div>
+
     <?php if ($grandCount > 0): ?>
       <div class="card total-card sage yearcard">
         <div class="split-card">
@@ -2703,15 +2739,21 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         <?php if ($stripMax > 0): ?>
           <div style="padding: 0 var(--space-3) var(--space-3);">
             <div class="day-strip">
-              <?php for ($m = 1; $m <= 12; $m++):
+              <?php
+              // Same marker as the Expense day strip, one scale up. $stripYear is always the
+              // current year today, so the year check never fails — it is here so the marker
+              // stays right if this strip ever gains the year navigation History already has.
+              $nowM = (int)$stripYear === (int)substr(today(), 0, 4) ? (int)substr(today(), 5, 2) : 0;
+              for ($m = 1; $m <= 12; $m++):
                 $amt  = (float)($stripMonths[$m] ?? 0);
                 $hPct = $amt > 0 ? max(6, ($amt / $stripMax) * 100) : 0;
                 $cls  = $amt <= 0 ? 'z' : ($amt >= $stripMax ? 'peak' : '');
+                if ($m === $nowM) $cls = trim($cls . ' today');
                 $mon  = date('M', mktime(0, 0, 0, $m, 1, $stripYear));
-                $tip  = $mon . ' ' . $stripYear . ' — ' . h(fmt($amt));
+                $tip  = $mon . ' ' . $stripYear . ' — ' . h(fmt($amt)) . ($m === $nowM ? ' (this month)' : '');
               ?><?php if ($amt > 0): ?><a<?=
                 $cls ? ' class="' . $cls . '"' : '' ?> href="#m<?= sprintf('%d-%02d', $stripYear, $m) ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
-              else: ?><i class="z"></i><?php endif; ?><?php endfor; ?>
+              else: ?><i class="<?= $cls ?: 'z' ?>" title="<?= $tip ?>"></i><?php endif; ?><?php endfor; ?>
             </div>
             <div class="day-axis" aria-hidden="true">
               <?php for ($m = 1; $m <= 12; $m++): ?><span><?= date('M', mktime(0, 0, 0, $m, 1, $stripYear)) ?></span><?php endfor; ?>
@@ -2721,18 +2763,6 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       </div>
 
     <?php endif; ?>
-
-    <!-- Filters and the add action share one row; the button hangs off the end via margin-left.
-         Rendered outside the has-entries guard so an empty ledger still offers a way in. -->
-    <div class="pill-row">
-      <?php if ($grandCount > 0): ?>
-        <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
-        <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
-        <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
-      <?php endif; ?>
-      <button type="button" class="pill-btn act" style="margin-left:auto;"
-              onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
-    </div>
 
     <?php if ($grandCount > 0): ?>
       <div class="stack">
@@ -3025,11 +3055,46 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
         ['exp', 'Spent',    $winSpent],
         ['inv', 'Invested', $winInv],
       ];
-      $stops = []; $at = 0.0;
-      foreach ($slices as [$k, , $amt]) {
-        $at += $winTot > 0 ? ($amt / $winTot) * 100 : 0;
-        $var = $k === 'exp' ? 'var(--color-accent)' : ($k === 'inv' ? 'var(--color-accent-2)' : 'var(--color-neutral-700)');
-        $stops[] = "$var 0 " . number_format($at, 2) . '%';
+
+      /**
+       * One period's worth of pie: the gradient, and each slice's amount and share.
+       *
+       * Built here rather than in JavaScript because the amounts have to go through fmt(),
+       * which knows the ledger's currency symbol and whether it groups in lakh or thousands.
+       * Reimplementing that in the browser is how the two would eventually disagree.
+       */
+      $pieOf = function (float $e, float $x, float $iv, string $period): array {
+        $tot = $e + $x + $iv;
+        $stops = []; $rows = []; $said = []; $at = 0.0;
+        foreach ([['ern', 'Earned', $e], ['exp', 'Spent', $x], ['inv', 'Invested', $iv]] as [$k, $label, $amt]) {
+          $pct  = $tot > 0 ? ($amt / $tot) * 100 : 0;
+          $at  += $pct;
+          $var  = $k === 'exp' ? 'var(--color-accent)' : ($k === 'inv' ? 'var(--color-accent-2)' : 'var(--color-neutral-700)');
+          $stops[] = "$var 0 " . number_format($at, 2) . '%';
+          $rows[]  = ['amt' => fmt($amt), 'pct' => number_format($pct, 1) . '%'];
+          $said[]  = $label . ' ' . number_format($pct, 1) . '%';
+        }
+        return [
+          // A month with nothing in it has no shares to draw. Three stops all at 0% would
+          // paint the whole disc the last colour, which reads as "everything was invested".
+          'grad'  => $tot > 0 ? 'conic-gradient(' . implode(', ', $stops) . ')' : 'var(--color-neutral-300)',
+          'rows'  => $rows,
+          'label' => $tot > 0 ? "Share of $period: " . implode(', ', $said) : "Nothing recorded in $period",
+        ];
+      };
+
+      // The month pills need no extra query: $series already holds every month of the rolling
+      // window, and every elapsed month of the current year is necessarily inside twelve.
+      $thisYear  = substr(today(), 0, 4);
+      $pie       = ['all' => $pieOf($winEarn, $winSpent, $winInv, 'the last 12 months')];
+      $pieMonths = [];
+      foreach ($winKeys as $ym) {
+        if (substr($ym, 0, 4) !== $thisYear) continue;
+        $mLabel = (new DateTimeImmutable($ym . '-01'))->format('F Y');
+        $pie[$ym] = $pieOf(
+          $series['ern'][$ym] ?? 0.0, $series['exp'][$ym] ?? 0.0, $series['inv'][$ym] ?? 0.0, $mLabel
+        );
+        $pieMonths[] = $ym;
       }
     ?>
       <div class="card ychart">
@@ -3052,22 +3117,66 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
           <?php endforeach; ?>
         </div>
         <div class="muted" style="margin-top:8px; font-size:11.5px;">Last 12 months</div>
+        <?php
+        // Opens on this month, not on the whole window: the question people arrive with is
+        // "how is this month going", and the bars above already answer the twelve-month one.
+        $pieNow  = substr(today(), 0, 7);
+        $pieOpen = isset($pie[$pieNow]) ? $pieNow : 'all';
+        $init    = $pie[$pieOpen];
+        ?>
+        <?php /* Scopes the pie only — the bars above always show the full twelve months, so
+                 you can see a single month's mix without losing the shape it sits in. */ ?>
+        <div class="pill-row scroll" role="group" aria-label="Period for the share breakdown"
+             id="pie-pills" style="margin-top:10px;">
+          <button type="button" class="pill-btn<?= $pieOpen === 'all' ? ' on' : '' ?>" data-pie="all">All</button>
+          <?php foreach ($pieMonths as $ym): ?>
+            <button type="button" class="pill-btn<?= $pieOpen === $ym ? ' on' : '' ?>" data-pie="<?= h($ym) ?>"><?=
+              h((new DateTimeImmutable($ym . '-01'))->format('M')) ?></button>
+          <?php endforeach; ?>
+        </div>
         <div class="pieblock">
-          <div class="pie" role="img"
-               aria-label="Share of the last 12 months: <?= h(implode(', ', array_map(
-                   fn($s) => $s[1] . ' ' . number_format($winTot > 0 ? ($s[2] / $winTot) * 100 : 0, 1) . '%', $slices))) ?>"
-               style="background: conic-gradient(<?= h(implode(', ', $stops)) ?>);"></div>
+          <div class="pie" id="pie-disc" role="img" aria-label="<?= h($init['label']) ?>"
+               style="background: <?= h($init['grad']) ?>;"></div>
           <div class="pielist">
-            <?php foreach ($slices as [$k, $label, $amt]): ?>
+            <?php foreach ($slices as $i => [$k, $label, ]): ?>
               <div class="r">
                 <i class="sw <?= $k ?>"></i>
                 <span class="nm"><?= h($label) ?></span>
-                <span class="amt"><?= h(fmt($amt)) ?></span>
-                <span class="pct"><?= number_format($winTot > 0 ? ($amt / $winTot) * 100 : 0, 1) ?>%</span>
+                <span class="amt" id="pie-amt-<?= $k ?>"><?= h($init['rows'][$i]['amt']) ?></span>
+                <span class="pct" id="pie-pct-<?= $k ?>"><?= h($init['rows'][$i]['pct']) ?></span>
               </div>
             <?php endforeach; ?>
           </div>
         </div>
+        <script>
+        (function () {
+          // Every period is computed and formatted server-side and shipped with the page, so
+          // switching is a repaint rather than a request — thirteen periods of three numbers
+          // is smaller than the round trip would be.
+          var pie = <?= json_encode($pie, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+          var keys = ['ern', 'exp', 'inv'];
+          var pills = document.getElementById('pie-pills');
+          var disc  = document.getElementById('pie-disc');
+          // The row opens on the current month, which is the last pill — off-screen on a phone
+          // until it is scrolled to. scrollLeft rather than scrollIntoView(), which would also
+          // scroll the page and land the visitor halfway down the card.
+          var on = pills.querySelector('.pill-btn.on');
+          if (on) pills.scrollLeft = on.offsetLeft - (pills.clientWidth - on.offsetWidth) / 2;
+          pills.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-pie]');
+            if (!btn) return;
+            var d = pie[btn.getAttribute('data-pie')];
+            if (!d) return;
+            pills.querySelectorAll('.pill-btn').forEach(function (b) { b.classList.toggle('on', b === btn); });
+            disc.style.background = d.grad;
+            disc.setAttribute('aria-label', d.label);
+            keys.forEach(function (k, i) {
+              document.getElementById('pie-amt-' + k).textContent = d.rows[i].amt;
+              document.getElementById('pie-pct-' + k).textContent = d.rows[i].pct;
+            });
+          });
+        })();
+        </script>
       </div>
     <?php endif; ?>
 
