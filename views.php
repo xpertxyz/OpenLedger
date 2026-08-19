@@ -9,7 +9,8 @@ const THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text
   . '--color-accent-2:#93a86e;--color-accent-2-100:#2a301f;--color-accent-2-200:#333b26;--color-accent-2-300:#414c2f;--color-accent-2-400:#57643d;--color-accent-2-500:#71804f;--color-accent-2-600:#8a9863;--color-accent-2-700:#a8b884;--color-accent-2-800:#c4d1a8;--color-accent-2-900:#e2e8d0;'
   . '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);'
   // Not a token: tells the browser to draw native widgets (date-picker calendar
-  // icon, select arrows, scrollbars) in dark, instead of light-on-dark-invisible.
+  // icon, the open select list, scrollbars) in dark, instead of light-on-dark-invisible.
+  // The CLOSED select is fully custom (.select in layout()); only the popup stays native.
   . 'color-scheme:dark;';
 
 // The three palettes, each in both modes. Organic is the one the design system ships, so its
@@ -190,6 +191,9 @@ function swipeNavScript(?string $older, ?string $newer): string {
         // these listeners are passive so preventDefault() isn't available. Don't compete —
         // just ignore gestures that start in the OS hot zone.
         if (x < 28 || x > innerWidth - 28) { t0 = 0; return; }
+        // A drag that starts inside a horizontally-scrollable row (category filter pills)
+        // is that row's own scroll, not a month swipe.
+        if (e.target.closest && e.target.closest('.pill-row.scroll')) { t0 = 0; return; }
         x0 = x; y0 = e.touches[0].clientY; t0 = Date.now();
       }, { passive: true });
 
@@ -654,7 +658,13 @@ $boot
   .tabnav a.on { background:var(--color-accent); color:var(--color-bg); opacity:1; }
 
   input[type="date"]::-webkit-calendar-picker-indicator { opacity:.6; }
-  .select { padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-family:var(--font-body); font-size:14px; }
+  /* Themed selects: hide the OS chrome, draw the chevron with gradients so it follows
+     --color-text across every palette/mode. The OPEN list is still native (color-scheme). */
+  .select, select.input { appearance:none; -webkit-appearance:none; padding:10px 34px 10px 14px; border-radius:999px; border:1px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-family:var(--font-body); font-size:14px;
+    background-image:linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--color-text) 70%, transparent) 50%), linear-gradient(135deg, color-mix(in srgb, var(--color-text) 70%, transparent) 50%, transparent 50%);
+    background-repeat:no-repeat; background-position:calc(100% - 19px) calc(50% + 1px), calc(100% - 14px) calc(50% + 1px); background-size:5px 5px; }
+  .select:hover, select.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+  .select:focus-visible, select.input:focus-visible { border-color: var(--color-accent); outline-offset:0; }
   .field-row { display:flex; gap:8px; }
   .field-row > * { flex:1; min-width:0; }
 
@@ -2374,6 +2384,31 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     // and the round trip through an edit or a delete.
     $whoQ = $who > 0 ? '&amp;who=' . $who : '';
 
+    // Category filter for the transaction list. The pill rows sit at the top of the list, so
+    // only the list (and its pagination) narrows — the month summary above stays whole-month.
+    // Validated against this household's categories the same way `who` is; a parent id also
+    // matches its sub-categories, a sub-category id matches only itself.
+    // (This list also feeds the edit-expense modal below.)
+    $catList = $db->prepare("SELECT id, name, parent_id FROM categories WHERE household_id = ? ORDER BY is_custom, id");
+    $catList->execute([$hid]); $catList = categoryTree($catList->fetchAll());
+    $catById = array_column($catList, null, 'id');
+    $cat = (int)($_GET['cat'] ?? 0);
+    if (!isset($catById[$cat])) $cat = 0;
+    $catParent = 0; $catIds = [];
+    if ($cat > 0) {
+        $pid = (int)($catById[$cat]['parent_id'] ?? 0);
+        // A sub whose parent vanished sits at top level in the picker; treat it the same here.
+        $catParent = ($pid && isset($catById[$pid])) ? $pid : $cat;
+        $catIds = [$cat];
+        if ($catParent === $cat) { // top-level pick sweeps in its subs, like the rollup above
+            foreach ($catList as $c) if ((int)($c['parent_id'] ?? 0) === $cat) $catIds[] = (int)$c['id'];
+        }
+    }
+    $catSql = $catIds ? ' AND e.category_id IN (' . implode(',', array_fill(0, count($catIds), '?')) . ')' : '';
+    $catQ   = $cat > 0 ? '&amp;cat=' . $cat : '';
+    // Plain-& variant of both filters, for URLs that travel through JS or json_encode.
+    $filterQ = ($who > 0 ? "&who=$who" : '') . ($cat > 0 ? "&cat=$cat" : '');
+
     // Monthly aggregates — one indexed SUM per query, no fetchAll of the whole month.
     $sumStmt = $db->prepare(
         "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
@@ -2428,16 +2463,26 @@ function renderHistory(PDO $db, array $user, int $offset): void {
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id
          LEFT JOIN members m ON m.id = e.member_id
-         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE$catSql
          ORDER BY e.`date` DESC, e.id DESC
          LIMIT $pageSize OFFSET $rowOffset"
     );
-    $rows->execute([$hid, $monthStart, $monthEnd, ...$whoBindE]);
+    $rows->execute([$hid, $monthStart, $monthEnd, ...$whoBindE, ...$catIds]);
     $expenses = $rows->fetchAll();
 
+    // Pagination must count what the list shows — with a category filter active that is
+    // narrower than the whole-month $entryCount above.
+    $listCount = $entryCount;
+    if ($catIds) {
+        $cnt = $db->prepare(
+            "SELECT COUNT(*) FROM expenses e
+             WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE$catSql"
+        );
+        $cnt->execute([$hid, $monthStart, $monthEnd, ...$whoBindE, ...$catIds]);
+        $listCount = (int)$cnt->fetchColumn();
+    }
+
     // For the edit-expense modal.
-    $catList = $db->prepare("SELECT id, name, parent_id FROM categories WHERE household_id = ? ORDER BY is_custom, id");
-    $catList->execute([$hid]); $catList = categoryTree($catList->fetchAll());
     $memList = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
     $memList->execute([$hid]); $memList = $memList->fetchAll();
 
@@ -2445,10 +2490,10 @@ function renderHistory(PDO $db, array $user, int $offset): void {
     ?>
     <?= whoFilterRow($db, $hid, $memList, $who) ?>
     <div class="month-switch">
-      <a href="/history?m=<?= $offset + 1 ?><?= $whoQ ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
+      <a href="/history?m=<?= $offset + 1 ?><?= $whoQ ?><?= $catQ ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
       <div class="label"><?= h($label) ?></div>
       <?php if ($offset > 0): ?>
-        <a href="/history?m=<?= $offset - 1 ?><?= $whoQ ?>" class="btn btn-icon" aria-label="Next month"><?= icon('chevron-right', 20) ?></a>
+        <a href="/history?m=<?= $offset - 1 ?><?= $whoQ ?><?= $catQ ?>" class="btn btn-icon" aria-label="Next month"><?= icon('chevron-right', 20) ?></a>
       <?php else: ?>
         <span class="btn btn-icon" style="opacity:.35;pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
       <?php endif; ?>
@@ -2523,6 +2568,31 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         <?php endforeach; ?>
       </div>
 
+      <?php // Category filter pills. Row one is every top-level category; row two appears
+            // once a parent with subs is picked, scoped to that parent. Both default to All.
+        $topCats = array_values(array_filter($catList, fn($c) => empty($c['depth'])));
+        $subCats = $catParent
+            ? array_values(array_filter($catList, fn($c) => (int)($c['parent_id'] ?? 0) === $catParent))
+            : [];
+      ?>
+      <div class="pill-row scroll" role="group" aria-label="Filter by category">
+        <button type="button" class="pill-btn<?= $cat === 0 ? ' on' : '' ?>" onclick="setCat(0)">All</button>
+        <?php foreach ($topCats as $c): ?>
+          <button type="button" class="pill-btn<?= (int)$c['id'] === $catParent ? ' on' : '' ?>"
+                  onclick="setCat(<?= (int)$c['id'] ?>)"><?= h($c['name']) ?></button>
+        <?php endforeach; ?>
+      </div>
+      <?php if ($subCats): ?>
+        <div class="pill-row scroll" role="group" aria-label="Filter by sub-category">
+          <button type="button" class="pill-btn<?= $cat === $catParent ? ' on' : '' ?>"
+                  onclick="setCat(<?= $catParent ?>)">All <?= h($catById[$catParent]['name'] ?? '') ?></button>
+          <?php foreach ($subCats as $k): ?>
+            <button type="button" class="pill-btn<?= $cat === (int)$k['id'] ? ' on' : '' ?>"
+                    onclick="setCat(<?= (int)$k['id'] ?>)"><?= h($k['name']) ?></button>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
       <?php
       $byDay = [];
       foreach ($expenses as $e) { $byDay[$e['date']][] = $e; }
@@ -2561,7 +2631,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
                         onclick='askConfirm(<?= h(json_encode([
                             "action" => "/expenses/delete",
                             "id"     => (int)$e['id'],
-                            "back"   => "/history?m=$offset" . ($who > 0 ? "&who=$who" : ""),
+                            "back"   => "/history?m=$offset" . $filterQ,
                             "title"  => "Delete expense?",
                             "body"   => fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised'),
                             "ok"     => "Delete",
@@ -2575,19 +2645,23 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         </div>
       <?php endforeach; ?>
 
+      <?php if ($catIds && !$expenses): ?>
+        <div class="empty">Nothing in this category this month.</div>
+      <?php endif; ?>
+
       <?php
       $shown = $rowOffset + count($expenses);
-      $hasMore = $shown < $entryCount;
+      $hasMore = $shown < $listCount;
       $hasPrev = $rowOffset > 0;
       ?>
       <?php if ($hasMore || $hasPrev): ?>
         <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
           <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
-            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?>&amp;o=<?= $prev ?>">← Newer</a>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?><?= $catQ ?>&amp;o=<?= $prev ?>">← Newer</a>
           <?php else: ?><span></span><?php endif; ?>
-          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $entryCount ?></div>
+          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $listCount ?></div>
           <?php if ($hasMore): ?>
-            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
+            <a class="btn btn-secondary" href="/history?m=<?= $offset ?><?= $whoQ ?><?= $catQ ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
           <?php else: ?><span></span><?php endif; ?>
         </div>
       <?php endif; ?>
@@ -2598,7 +2672,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <form method="post" action="/expenses/update">
         <?= csrfInput() ?>
         <input type="hidden" name="id" id="ed-id">
-        <input type="hidden" name="back" value="/history?m=<?= $offset ?><?= $whoQ ?>">
+        <input type="hidden" name="back" value="/history?m=<?= $offset ?><?= $whoQ ?><?= $catQ ?>">
         <div class="dlg-title">Edit expense</div>
 
         <div class="field-row">
@@ -2646,12 +2720,37 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       document.getElementById('edit-expense-dlg').showModal();
     }
 
+    // Mirrors setWho() in layout(): keeps every other param (who, m), resets paging.
+    // The pills sit mid-page, so the reload remembers where you were: scrollY goes into
+    // sessionStorage and is put back below — the tap reads as an in-place update, not a
+    // jump to the top of the screen.
+    function setCat(v) {
+      var u = new URL(location.href);
+      if (v) u.searchParams.set('cat', v); else u.searchParams.delete('cat');
+      u.searchParams.delete('o');
+      sessionStorage.setItem('hlScroll', scrollY);
+      location.href = u.toString();
+    }
+    (function () {
+      var s = sessionStorage.getItem('hlScroll');
+      if (s !== null) { sessionStorage.removeItem('hlScroll'); scrollTo(0, +s); }
+      // The pill rows' own horizontal scroll also resets on reload — center the picked
+      // pill in each row so a filter chosen off the right edge doesn't come back hidden.
+      document.querySelectorAll('.pill-row.scroll').forEach(function (r) {
+        var on = r.querySelector('.pill-btn.on');
+        if (!on) return;
+        r.scrollLeft += on.getBoundingClientRect().left - r.getBoundingClientRect().left
+                      - (r.clientWidth - on.clientWidth) / 2;
+      });
+    })();
     </script>
     <?= stripNavScript() ?>
-    <?= swipeNavScript("/history?m=" . ($offset + 1) . $whoQ, $offset > 0 ? "/history?m=" . ($offset - 1) . $whoQ : null) ?>
+    <?php // $filterQ, not $whoQ: these URLs go through json_encode into JS, where the
+          // HTML-entity form would literally send an "amp;who" parameter. ?>
+    <?= swipeNavScript("/history?m=" . ($offset + 1) . $filterQ, $offset > 0 ? "/history?m=" . ($offset - 1) . $filterQ : null) ?>
     <?php
     $content = ob_get_clean();
-    layout($db, $user, 'history', $content, "/history?m=$offset" . ($who > 0 ? "&who=$who" : ""));
+    layout($db, $user, 'history', $content, "/history?m=$offset" . $filterQ);
 }
 
 // ─── Investments ────────────────────────────────────────────────────
