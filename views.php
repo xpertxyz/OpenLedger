@@ -447,7 +447,8 @@ $boot
   .amount-submit { width:52px; height:52px; border-radius:999px; border:none; background:var(--color-accent); color:var(--color-bg); display:grid; place-items:center; cursor:pointer; flex-shrink:0; box-shadow: var(--shadow-sm); }
   .amount-submit:disabled { opacity:.45; cursor:not-allowed; box-shadow:none; }
   .cat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-  .cat-chip { border:1.5px solid var(--color-divider); background:var(--color-surface); border-radius:var(--radius-md); padding:12px 4px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; font-size:11.5px; color:var(--color-text); text-decoration:none; }
+  /* Same reason as .pill-btn below: the grid mixes <button> chips with an <a> chip. */
+  .cat-chip { border:1.5px solid var(--color-divider); background:var(--color-surface); border-radius:var(--radius-md); padding:12px 4px; display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; font-family:var(--font-body); font-size:11.5px; line-height:1.35; color:var(--color-text); text-decoration:none; }
   .cat-chip.on { border-color:var(--color-accent); background:var(--color-accent-100); color:var(--color-accent-700); }
   .cat-chip.new { border-style:dashed; color:var(--color-neutral-800); }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; }
@@ -461,7 +462,10 @@ $boot
      — a class beats an attribute selector. Without this every parent's sub-category row shows
      at once, and you can light a pill under a parent that isn't even selected. */
   .pill-row.sub-row[hidden] { display:none; }
-  .pill-btn { padding:6px 14px; border-radius:999px; border:1.5px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-size:12px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
+  /* font-family and line-height are spelled out because a <button> inherits neither: without
+     them an <a class="pill-btn"> and a <button class="pill-btn"> sitting in the same row came
+     out in different typefaces at different heights (Figtree/33px against Arial/28px). */
+  .pill-btn { padding:6px 14px; border-radius:999px; border:1.5px solid var(--color-divider); background:var(--color-surface); color:var(--color-text); font-family:var(--font-body); font-size:12px; line-height:1.35; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
   .pill-btn.on { background:var(--color-accent); color:var(--color-bg); border-color:transparent; }
   /* The add action shares the filter row. Outlined rather than filled, so it doesn't read as
      a selected filter sitting next to the real ones. */
@@ -665,6 +669,22 @@ $boot
     background-repeat:no-repeat; background-position:calc(100% - 19px) calc(50% + 1px), calc(100% - 14px) calc(50% + 1px); background-size:5px 5px; }
   .select:hover, select.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
   .select:focus-visible, select.input:focus-visible { border-color: var(--color-accent); outline-offset:0; }
+  /* …and the list it opens. The native popup is an OS widget — a Material sheet in the Android
+     WebView, a platform listbox on desktop — so no amount of styling on the closed control
+     made the open one match. The <select> stays as the trigger and the value; the wrapper
+     takes the tap and openSelect() draws the list out of the same tokens as everything else. */
+  .sel-wrap { position:relative; display:block; }
+  .sel-wrap > select { width:100%; pointer-events:none; }
+  .sel-pop { position:fixed; z-index:300; display:flex; flex-direction:column; gap:2px; padding:6px;
+    max-height:min(52vh, 320px); max-width:calc(100vw - 16px); overflow-y:auto; overscroll-behavior:contain;
+    background:var(--color-surface); border:1px solid var(--color-divider);
+    border-radius:var(--radius-md); box-shadow:var(--shadow-lg); }
+  .sel-opt { flex:none; text-align:left; padding:9px 13px; border:none; border-radius:999px;
+    background:transparent; color:var(--color-text); font-family:var(--font-body); font-size:14px;
+    line-height:1.3; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sel-opt:hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+  .sel-opt.on { background:var(--color-accent); color:var(--color-bg); }
+  .sel-opt:disabled { opacity:.45; cursor:not-allowed; background:transparent; }
   .field-row { display:flex; gap:8px; }
   .field-row > * { flex:1; min-width:0; }
 
@@ -871,6 +891,82 @@ function closeProfile() {
 // Auto-open when redirected back from a POST inside the drawer.
 window.addEventListener('load', function () { if (location.hash === '#profile') openProfile(); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeProfile(); });
+
+// ── Themed dropdowns ────────────────────────────────────────────────
+// Every <select> keeps doing its job — it holds the value, it submits, it is what page
+// scripts read and write, and it still paints the closed control. Only the list it opens is
+// ours: the wrapper swallows the tap that would have summoned the OS popup, and openSelect()
+// draws the options in the app's own tokens instead. window.hlSelect enhances a <select>
+// built after load (the Android backup panel makes one).
+var selPop = null, selFor = null;
+function closeSelect() { if (selPop) { selPop.remove(); selPop = null; selFor = null; } }
+function openSelect(sel) {
+  closeSelect();
+  selPop = document.createElement('div');
+  selPop.className = 'sel-pop';
+  selPop.setAttribute('role', 'listbox');
+  Array.prototype.forEach.call(sel.options, function (o, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sel-opt' + (i === sel.selectedIndex ? ' on' : '');
+    b.setAttribute('role', 'option');
+    b.textContent = o.text;
+    b.disabled = o.disabled;
+    b.onclick = function () {
+      // By index, not value: plenty of these options carry no value attribute at all.
+      sel.selectedIndex = i;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      closeSelect();
+    };
+    selPop.appendChild(b);
+  });
+  // Into the dialog when there is one. A modal puts the rest of the document behind its
+  // backdrop and out of reach, so a list appended to <body> would be dimmed and inert.
+  (sel.closest('dialog') || document.body).appendChild(selPop);
+  selFor = sel;
+  var r = sel.getBoundingClientRect();
+  selPop.style.minWidth = r.width + 'px';
+  selPop.style.left = Math.max(8, Math.min(r.left, innerWidth - selPop.offsetWidth - 8)) + 'px';
+  // Below the control, unless that runs off the bottom and there is room above.
+  var below = r.bottom + 4, above = r.top - selPop.offsetHeight - 4;
+  selPop.style.top = (below + selPop.offsetHeight > innerHeight && above > 4 ? above : below) + 'px';
+  var on = selPop.querySelector('.sel-opt.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
+}
+function hlSelect(sel) {
+  if (sel.parentNode && sel.parentNode.classList.contains('sel-wrap')) return;
+  var w = document.createElement('span');
+  w.className = 'sel-wrap';
+  sel.parentNode.insertBefore(w, sel);
+  w.appendChild(sel);
+  var mirror = function () { w.style.display = sel.style.display === 'none' ? 'none' : ''; };
+  mirror();
+  // Page scripts show and hide these by writing style.display straight onto the select — the
+  // recurring dialog swaps three of them by kind. The wrapper is the box in the layout now,
+  // so it has to follow, and mirroring here beats editing every call site.
+  new MutationObserver(mirror).observe(sel, { attributes: true, attributeFilter: ['style'] });
+  w.addEventListener('click', function () {
+    if (sel.disabled) return;
+    if (selFor === sel) closeSelect(); else openSelect(sel);
+  });
+  sel.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); openSelect(sel); }
+  });
+}
+window.hlSelect = hlSelect;
+document.querySelectorAll('select').forEach(hlSelect);
+document.addEventListener('pointerdown', function (e) {
+  if (!selPop || selPop.contains(e.target)) return;
+  // A tap on the open control's own wrapper is a toggle, handled by its click listener.
+  if (selFor && selFor.parentNode.contains(e.target)) return;
+  closeSelect();
+});
+// Capture, so a dropdown open inside a dialog closes itself instead of closing the dialog.
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && selPop) { e.preventDefault(); e.stopPropagation(); closeSelect(); }
+}, true);
+addEventListener('scroll', function (e) { if (selPop && !selPop.contains(e.target)) closeSelect(); }, true);
+addEventListener('resize', closeSelect);
 </script>
 </body></html>
 DLG;
@@ -1331,6 +1427,8 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
               + '<button class="btn btn-ghost" id="bk-off" style="color:#c0392b; align-self:flex-start;">'
               +   'Disconnect this account</button>';
 
+            // Built after load, so it misses the sweep that themes every other dropdown.
+            if (window.hlSelect) window.hlSelect(document.getElementById('bk-freq'));
             document.getElementById('bk-freq').onchange = function () {
               HLBackup.setFrequency(this.value);
               toast(this.value === 'off' ? 'Automatic backup off.'
@@ -2482,13 +2580,19 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         $listCount = (int)$cnt->fetchColumn();
     }
 
-    // For the edit-expense modal.
+    // For the add/edit-expense modal.
     $memList = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
     $memList->execute([$hid]); $memList = $memList->fetchAll();
+    // Adding from this screen files under you unless you say otherwise, like the Add tab does.
+    $ownMem = 0;
+    foreach ($memList as $m) if (isset($m['user_id']) && (int)$m['user_id'] === $uid) $ownMem = (int)$m['id'];
 
     ob_start();
     ?>
-    <?= whoFilterRow($db, $hid, $memList, $who) ?>
+    <?php // The add action hangs off the end of the person filter, as on Earn. ?>
+    <?= whoFilterRow($db, $hid, $memList, $who,
+          '<button type="button" class="pill-btn act" style="margin-left:auto;"'
+        . ' onclick="openAddExpense()">' . icon('plus', 13) . ' Add</button>') ?>
     <div class="month-switch">
       <a href="/history?m=<?= $offset + 1 ?><?= $whoQ ?><?= $catQ ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
       <div class="label"><?= h($label) ?></div>
@@ -2667,16 +2771,18 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       <?php endif; ?>
     <?php endif; ?>
 
-    <!-- Edit-expense modal: one shared <dialog>; row click fills it via openEditExpense() -->
+    <!-- One shared <dialog> for both jobs, on the openAddSplit/openEditSplit pattern: adding
+         and editing ask for exactly the same five things, so a second dialog would be a second
+         copy of the same fields. openAddExpense() repoints the action and clears it. -->
     <dialog id="edit-expense-dlg" class="confirm" style="max-width:360px;">
-      <form method="post" action="/expenses/update">
+      <form method="post" action="/expenses/update" id="ed-form">
         <?= csrfInput() ?>
         <input type="hidden" name="id" id="ed-id">
         <input type="hidden" name="back" value="/history?m=<?= $offset ?><?= $whoQ ?><?= $catQ ?>">
-        <div class="dlg-title">Edit expense</div>
+        <div class="dlg-title" id="ed-dlg-title">Edit expense</div>
 
         <div class="field-row">
-          <input class="input" name="amount" id="ed-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount">
+          <input class="input" name="amount" id="ed-amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" required placeholder="Amount" oninput="edSync()">
           <input class="input" name="date" id="ed-date" type="date" required style="flex:0 0 auto; width:auto;">
         </div>
 
@@ -2689,9 +2795,8 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         <?php if (count($memList) > 1 && ($user['role'] ?? ROLE_MEMBER) === ROLE_OWNER): ?>
           <select class="select" name="member_id" id="ed-member">
             <option value="">— No member —</option>
-            <?php $mine = attributableIds($memList, $uid, ROLE_OWNER); ?>
-            <?php foreach ($memList as $m): $off = !in_array((int)$m['id'], $mine, true); ?>
-              <option value="<?= (int)$m['id'] ?>"<?= $off ? ' disabled' : '' ?>><?= h($m['name']) ?><?= $off ? ' — signs in' : '' ?></option>
+            <?php foreach ($memList as $m): ?>
+              <option value="<?= (int)$m['id'] ?>"><?= h($m['name']) ?></option>
             <?php endforeach; ?>
           </select>
         <?php elseif ($memList): ?>
@@ -2704,19 +2809,51 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-expense-dlg').close()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="submit" class="btn btn-primary" id="ed-save">Save</button>
         </div>
       </form>
     </dialog>
     <script>
+    var ED_TODAY = <?= json_encode(today()) ?>;
+    var ED_CAT   = <?= json_encode((string)($cat ?: ($catList[0]['id'] ?? ''))) ?>;
+    var ED_MEM   = <?= json_encode((string)($ownMem ?: '')) ?>;
+
+    // Save follows the same rule as every other form here: off until the amount is real.
+    function edSync() {
+      document.getElementById('ed-save').disabled =
+        !(parseFloat(document.getElementById('ed-amount').value) > 0);
+    }
+
+    // Add mode: a fresh expense, posting to /expenses. The id field stays disabled so it is
+    // not submitted at all, rather than submitted empty. Defaults match the Add tab — today,
+    // your own name — except the category, which follows whichever filter you are looking at.
+    function openAddExpense() {
+      document.getElementById('ed-form').action = '/expenses';
+      document.getElementById('ed-id').disabled = true;
+      document.getElementById('ed-dlg-title').textContent = 'Add expense';
+      document.getElementById('ed-amount').value = '';
+      document.getElementById('ed-date').value   = ED_TODAY;
+      document.getElementById('ed-note').value   = '';
+      if (ED_CAT) document.getElementById('ed-category').value = ED_CAT;
+      var mem = document.getElementById('ed-member');
+      if (mem) mem.value = ED_MEM;
+      edSync();
+      document.getElementById('edit-expense-dlg').showModal();
+    }
+
     function openEditExpense(d) {
-      document.getElementById('ed-id').value       = d.id;
+      document.getElementById('ed-form').action = '/expenses/update';
+      var idf = document.getElementById('ed-id');
+      idf.disabled = false;
+      idf.value = d.id;
+      document.getElementById('ed-dlg-title').textContent = 'Edit expense';
       document.getElementById('ed-amount').value   = d.amount;
       document.getElementById('ed-date').value     = d.date;
       document.getElementById('ed-category').value = d.category_id;
       var mem = document.getElementById('ed-member');
       if (mem) mem.value = d.member_id || '';
       document.getElementById('ed-note').value     = d.note || '';
+      edSync();
       document.getElementById('edit-expense-dlg').showModal();
     }
 
@@ -2833,23 +2970,23 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     ob_start();
     ?>
-    <!-- Person filter first: every figure, bar and row below is scoped to $who. -->
-    <?= whoFilterRow($db, $hid, $mems, $who) ?>
+    <!-- Person filter first: every figure, bar and row below is scoped to $who. The add action
+         hangs off the end of it, as on Earn and Expense — and whoFilterRow still emits the row
+         for the tail alone when a solo ledger has no people to choose between. -->
+    <?= whoFilterRow($db, $hid, $mems, $who,
+          '<button type="button" class="pill-btn act" style="margin-left:auto;"'
+        . ' onclick="document.getElementById(\'add-inv-dlg\').showModal()">' . icon('plus', 13) . ' Add</button>') ?>
 
     <!-- Then active/archived, above the card rather than below it: it scopes the card's own
          totals and the month strip as well as the list, so sitting underneath them read as
-         though it only filtered the rows it happened to precede. The add action shares the
-         row, hanging off the end via margin-left. Rendered outside the has-entries guard so
-         an empty ledger still offers a way in. -->
-    <div class="pill-row">
-      <?php if ($grandCount > 0): ?>
+         though it only filtered the rows it happened to precede. -->
+    <?php if ($grandCount > 0): ?>
+      <div class="pill-row">
         <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
         <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
         <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
-      <?php endif; ?>
-      <button type="button" class="pill-btn act" style="margin-left:auto;"
-              onclick="document.getElementById('add-inv-dlg').showModal()"><?= icon('plus', 13) ?> Add</button>
-    </div>
+      </div>
+    <?php endif; ?>
 
     <?php if ($grandCount > 0): ?>
       <div class="card total-card sage yearcard">
@@ -4490,30 +4627,29 @@ function renderOrganise(PDO $db, array $user): void {
 // The "who?" select, shared by every add and edit dialog outside the Add tab (which has its
 // own chips). A ledger with one member has nothing to choose, so this emits nothing at all
 // and the entry simply carries no member — same as before sharing existed.
-// Only the owner gets a select: they may file under themselves or any name that does not
-// sign in, and those options render pickable while other people's logins render disabled —
-// present so an entry already filed under them keeps its name when the owner edits the
-// amount, unpickable so a fresh entry cannot land in their name. Everyone else files as
-// themselves, so they get a hidden field instead of a choice. It keeps the id because the
+// Only the owner gets a select: they keep the books, so they may file an entry under any
+// name in the household. Everyone else files as themselves, so they get a hidden field
+// instead of a choice — attributableMember overrules whatever it holds. It keeps the id because the
 // edit dialogs' JS writes the row's current member into it — an unchanged value is always
 // accepted, so a member editing an amount cannot silently re-attribute the entry.
 function memberSelect(array $mems, int $uid, string $role, string $id = '', ?int $selected = null): string {
     if (count($mems) < 2) return '';
+    $own = 0;
+    foreach ($mems as $m) if ((int)($m['user_id'] ?? 0) === $uid) $own = (int)$m['id'];
     if ($role !== ROLE_OWNER) {
-        $own = 0;
-        foreach ($mems as $m) if ((int)($m['user_id'] ?? 0) === $uid) $own = (int)$m['id'];
         return '<input type="hidden" name="member_id"' . ($id !== '' ? ' id="' . h($id) . '"' : '')
              . ' value="' . $own . '">';
     }
-    $mine = attributableIds($mems, $uid, $role);
+    // Most of what you log is your own, so an add dialog opens on your name rather than on
+    // "Anyone" — same default as the Add tab. Edit dialogs pass no $selected either, but their
+    // JS writes the row's own member in before showing, so this never overrides an edit.
+    if ($selected === null) $selected = $own;
     $out = '<select class="select" name="member_id"' . ($id !== '' ? ' id="' . h($id) . '"' : '') . '>'
          . '<option value="0">Anyone</option>';
     foreach ($mems as $m) {
         $mid = (int)$m['id'];
         $on  = ($selected !== null && $mid === $selected) ? ' selected' : '';
-        $off = in_array($mid, $mine, true) ? '' : ' disabled';
-        $out .= '<option value="' . $mid . '"' . $on . $off . '>' . h($m['name'])
-              . ($off !== '' ? ' — signs in' : '') . '</option>';
+        $out .= '<option value="' . $mid . '"' . $on . '>' . h($m['name']) . '</option>';
     }
     return $out . '</select>';
 }

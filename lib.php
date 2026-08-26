@@ -860,10 +860,11 @@ function requireEditable(PDO $db, string $table, int $hid, int $id, int $uid, st
     return $row;
 }
 
-// Whose name an entry may be filed under. The owner may name themselves or anyone who does
-// not sign in — a child, a parent, a shared card. Everyone else files as themselves, always:
-// whatever member_id their form posts, the entry lands under their own linked row. Nobody
-// may file under another person's login — putting words in their ledger is theirs to do.
+// Whose name an entry may be filed under. The owner may name anyone in the household — they
+// keep the books, and half of what they log (a card bill, a school fee, a partner's SIP) is
+// somebody else's spend regardless of whether that somebody has a login of their own.
+// Everyone else files as themselves, always: whatever member_id their form posts, the entry
+// lands under their own linked row.
 //
 // $current is the value the row already holds. An edit that leaves it alone is always allowed,
 // so correcting the amount on an entry cannot silently re-attribute it.
@@ -878,26 +879,18 @@ function attributableMember(PDO $db, int $hid, int $uid, string $role, int $memb
         return ($mid = (int)$s->fetchColumn()) > 0 ? $mid : null;
     }
     if ($memberId <= 0) return null;
-    $s = $db->prepare("SELECT name, user_id FROM members WHERE id = ? AND household_id = ?");
-    $s->execute([$memberId, $hid]);
-    $row = $s->fetch();
-    if (!$row) return null;                                    // foreign or deleted — uncategorised
-    if ($row['user_id'] === null || (int)$row['user_id'] === $uid) return $memberId;
-    throw new UserErr('Only ' . $row['name'] . ' can file an entry under their own name.');
+    // Still scoped to the household: an id from someone else's ledger is not a name here.
+    return ownedId($db, 'members', $hid, $memberId);
 }
 
-// The same rule, for building a picker: the ids you may choose. For the owner, everything
-// else still renders disabled, so an entry already filed under someone else keeps its name
-// when they edit it. For everyone else this is at most their own row — the pickers see a
-// single choice and collapse to nothing, which is the point: members just file as "me".
+// The same rule, for building a picker: the ids you may choose. The owner gets every name in
+// the household. For everyone else this is at most their own row — the pickers see a single
+// choice and collapse to nothing, which is the point: members just file as "me".
 function attributableIds(array $mems, int $uid, string $role): array {
     $out = [];
     foreach ($mems as $m) {
-        $linked = isset($m['user_id']) && $m['user_id'] !== null;
-        $own    = $linked && (int)$m['user_id'] === $uid;
-        if ($role === ROLE_OWNER ? (!$linked || $own) : $own) {
-            $out[] = (int)$m['id'];
-        }
+        $own = isset($m['user_id']) && $m['user_id'] !== null && (int)$m['user_id'] === $uid;
+        if ($role === ROLE_OWNER || $own) $out[] = (int)$m['id'];
     }
     return $out;
 }

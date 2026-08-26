@@ -171,12 +171,12 @@ if (PHP_SAPI === 'cli') {
         assert(mayEdit([],                     ['id' => 7, 'role' => ROLE_OWNER])  === true);
         assert(mayEdit(['created_by' => 8],    ['id' => 7])                        === false); // role absent = member
 
-        // Who a fresh entry may be filed under. The owner picks themselves or any name that
-        // does not sign in; everyone else files as themselves, full stop — the picker never
+        // Who a fresh entry may be filed under. The owner picks any name in the household,
+        // login or no login; everyone else files as themselves, full stop — the picker never
         // renders for them and attributableMember enforces the same rule server-side.
         $mm = [['id' => 1, 'user_id' => 7], ['id' => 2, 'user_id' => null], ['id' => 3, 'user_id' => 9]];
-        assert(attributableIds($mm, 7, ROLE_OWNER)  === [1, 2]);
-        assert(attributableIds($mm, 9, ROLE_OWNER)  === [2, 3]);  // a second owner-role user, same rule
+        assert(attributableIds($mm, 7, ROLE_OWNER)  === [1, 2, 3]);
+        assert(attributableIds($mm, 9, ROLE_OWNER)  === [1, 2, 3]);  // a second owner-role user, same rule
         assert(attributableIds($mm, 7, ROLE_MEMBER) === [1]);     // own linked row only
         assert(attributableIds($mm, 9, ROLE_MEMBER) === [3]);
         assert(attributableIds($mm, 5, ROLE_MEMBER) === []);      // not linked yet — nothing to pick
@@ -1069,6 +1069,18 @@ if (PHP_SAPI === 'cli') {
                 ? $line('OK',   'landing keeps ' . rtrim(strtok($rule, '{')))
                 : $line('FAIL', 'renderLanding() lost its press feedback: ' . $rule);
         }
+        // Both halves of the themed dropdown, on every tab. Lose either and the pages still
+        // render, still submit, and quietly go back to opening the OS popup — which is the
+        // whole thing this replaced, and it looks like nothing is wrong until you tap one.
+        $noSel = [];
+        foreach ($pages as $name => $html) {
+            if (!str_contains($html, '.sel-pop {') || !str_contains($html, '.sel-wrap > select {')
+                || !str_contains($html, "document.querySelectorAll('select').forEach(hlSelect)")) $noSel[] = $name;
+        }
+        $pages && $noSel
+            ? $line('FAIL', 'the themed dropdown is missing its CSS or its sweep on: ' . implode(', ', $noSel)
+                          . ' — every <select> there opens the OS popup instead')
+            : $line('OK',   'every tab ships the themed dropdown (CSS + the sweep that wraps each select)');
 
         echo "\nIcons:\n";
         // A name with no matching <symbol> renders a blank box — no error, nothing in the log.
@@ -1610,7 +1622,9 @@ if ($method === 'POST') {
                      VALUES (?, ?, ?, ?, ?, ?, ?)"
                 )->execute([$hid, $amt, $catId, $memId, $note, $date, $uid]);
                 flash('success', 'Expense added');
-                redirect('/');
+                // The Add tab posts no `back` and lands on itself, ready for the next one. The
+                // History tab's own add dialog sends one, so it returns to the month you were in.
+                redirect($_POST['back'] ?? '/');
 
             case '/expenses/delete':
                 requireEditable($db, 'expenses', $hid, (int)$_POST['id'], $uid, $role);
