@@ -2872,8 +2872,9 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     $typeRows = $db->prepare("SELECT id, name, target, parent_id FROM investment_types WHERE household_id = ?");
     $typeRows->execute([$hid]);
     $typeByName = array_column($typeRows->fetchAll(), null, 'name');
-    $visible    = array_column($byType, null, 'type');
-    $byType     = rollupTypes($byType, $typeByName, $visible);
+    // Every name this filter permits, whether or not it has entries — see rollupTypes().
+    $allowed = allowedTypeNames($typeByName, $archSet, $filter);
+    $byType  = rollupTypes($byType, $typeByName, $allowed);
 
     // A target is per month, so it needs this month's figure to sit against — the totals above
     // are lifetime. One extra grouped scan on the same index, folded through the same rollup.
@@ -2884,7 +2885,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
          WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql GROUP BY type"
     );
     $mtd->execute([$hid, $mStart, $mEnd, ...$whoBind]);
-    $thisMonth = array_column(rollupTypes($mtd->fetchAll(), $typeByName, $visible), 'amt', 'name');
+    $thisMonth = array_column(rollupTypes($mtd->fetchAll(), $typeByName, $allowed), 'amt', 'name');
 
     // Paginated list, scoped to the filter.
     $pageSize  = 200;
@@ -3192,8 +3193,8 @@ function renderInvestMonth(PDO $db, array $user, bool $showForm, string $filter,
     );
     $grp->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind));
     $monthTypes = $grp->fetchAll();
-    $visible    = array_column($monthTypes, null, 'type');
-    $byType     = rollupTypes($monthTypes, $typeByName, $visible);
+    $allowed    = allowedTypeNames($typeByName, $archSet, $filter);
+    $byType     = rollupTypes($monthTypes, $typeByName, $allowed);
 
     // Household monthly target = every top-level target, including types with nothing in them
     // this month. Children are held at 0, but scope it anyway so a stale row can't double-count.

@@ -216,6 +216,28 @@ if (PHP_SAPI === 'cli') {
         // Parent filtered out (archived, say): the child stands alone rather than vanishing.
         $solo = array_column(rollupTypes($rows, $tt, ['Nifty' => 1, 'Gold' => 1]), null, 'name');
         assert($solo['Nifty']['amt'] === 2400.0 && $solo['Nifty']['children'] === []);
+        // The case nesting exists for: a parent whose money is ALL in its sub-types has no
+        // entries of its own, so it is absent from the rows. It must still be the bucket, or
+        // every child renders as its own top-level card and the nesting looks ignored.
+        $kidsOnly = [['type' => 'Nifty', 'n' => 2, 'amt' => 2400], ['type' => 'Gold', 'n' => 1, 'amt' => 900]];
+        $viaKids  = array_column(rollupTypes($kidsOnly, $tt, allowedTypeNames($tt, [], 'all')), null, 'name');
+        assert(!isset($viaKids['Nifty']));
+        assert($viaKids['SIP']['amt'] === 2400.0);
+        assert($viaKids['SIP']['target'] === 5000.0);
+        assert($viaKids['SIP']['children'] === [['name' => 'Nifty', 'amt' => 2400.0]]);  // no Direct line
+        // A parent_id pointing at a row that no longer exists groups nothing.
+        $orphan = array_column(rollupTypes(
+            [['type' => 'Nifty', 'n' => 1, 'amt' => 500]],
+            ['Nifty' => ['id' => 2, 'name' => 'Nifty', 'target' => 0, 'parent_id' => 99]],
+            ['Nifty' => true]
+        ), null, 'name');
+        assert($orphan['Nifty']['amt'] === 500.0);
+
+        // allowedTypeNames answers from the type list, not from what has entries.
+        $arch = ['Gold' => 0];
+        assert(array_keys(allowedTypeNames($tt, $arch, 'all'))      === ['SIP', 'Nifty', 'Gold']);
+        assert(array_keys(allowedTypeNames($tt, $arch, 'active'))   === ['SIP', 'Nifty']);
+        assert(array_keys(allowedTypeNames($tt, $arch, 'archived')) === ['Gold']);
 
         // monthsSpan is the inverse of splitPlan's end date, and editing a split depends on it
         // round-tripping: the dialog re-derives "how many months" from the dates it stored.

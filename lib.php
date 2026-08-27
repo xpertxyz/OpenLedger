@@ -1196,21 +1196,43 @@ function unknownTypeWhere(): string {
     return "household_id = ? AND type NOT IN (SELECT name FROM investment_types WHERE household_id = ?)";
 }
 
+// The names an Invest view may show under the archived/active filter it is on. Built from the
+// type rows rather than from the entries, so a type with nothing in it this month still counts
+// as a name the screen is allowed to group under.
+function allowedTypeNames(array $types, array $archSet, string $filter): array {
+    $out = [];
+    foreach ($types as $name => $t) {
+        $isArch = isset($archSet[$name]);
+        if ($filter === 'all' || $isArch === ($filter === 'archived')) $out[(string)$name] = true;
+    }
+    return $out;
+}
+
 // Fold per-type money into parent buckets — the investment twin of rollupCategories(), down
 // to the trailing "Direct" line, but keyed on names because that is what an investment stores.
-// $rows are [type, n, amt]; $types is the household's type rows by name. A child only folds
-// into a parent that is itself in $visible, so the archived/active filter can never pull a
-// hidden name onto the screen.
-function rollupTypes(array $rows, array $types, array $visible): array {
+// $rows are [type, n, amt]; $types is the household's type rows by name.
+//
+// $allowed is the set of names the archived/active filter permits, which is deliberately NOT
+// the set of names that happen to have entries in this window. It used to be the latter, and
+// that broke nesting exactly where it earns its keep: a parent whose money is all in its
+// sub-types has no entries of its own, so it was absent from the window, so its children found
+// no parent to fold into and each rendered as its own top-level card. Filtering on what the
+// filter allows keeps the original point — an "active" screen can never be given an archived
+// parent's name — without making a parent's own spending a condition of grouping.
+function rollupTypes(array $rows, array $types, array $allowed): array {
+    // id => row, so the parent lookup is not a scan per entry row.
+    $byId = [];
+    foreach ($types as $t) $byId[(int)$t['id']] = $t;
     $out = [];
     foreach ($rows as $r) {
         $name  = (string)$r['type'];
         $me    = $types[$name] ?? null;
         $par   = null;
         if ($me && !empty($me['parent_id'])) {
-            foreach ($types as $t) {
-                if ((int)$t['id'] === (int)$me['parent_id'] && isset($visible[$t['name']])) { $par = $t; break; }
-            }
+            // A parent_id with no row behind it (deleted out from under it, or carried in by a
+            // restore) leaves the child standing on its own — there is nothing to group under.
+            $cand = $byId[(int)$me['parent_id']] ?? null;
+            if ($cand && isset($allowed[(string)$cand['name']])) $par = $cand;
         }
         $key = $par ? (string)$par['name'] : $name;
         if (!isset($out[$key])) {
