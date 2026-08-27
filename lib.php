@@ -1196,10 +1196,11 @@ function unknownTypeWhere(): string {
     return "household_id = ? AND type NOT IN (SELECT name FROM investment_types WHERE household_id = ?)";
 }
 
-// Fold per-type money into parent buckets — the investment twin of rollupCategories(), but
-// keyed on names because that is what an investment stores. $rows are [type, n, amt]; $types
-// is the household's type rows by name. A child only folds into a parent that is itself in
-// $visible, so the archived/active filter can never pull a hidden name onto the screen.
+// Fold per-type money into parent buckets — the investment twin of rollupCategories(), down
+// to the trailing "Direct" line, but keyed on names because that is what an investment stores.
+// $rows are [type, n, amt]; $types is the household's type rows by name. A child only folds
+// into a parent that is itself in $visible, so the archived/active filter can never pull a
+// hidden name onto the screen.
 function rollupTypes(array $rows, array $types, array $visible): array {
     $out = [];
     foreach ($rows as $r) {
@@ -1226,7 +1227,13 @@ function rollupTypes(array $rows, array $types, array $visible): array {
         if ($par) $out[$key]['children'][] = ['name' => $name, 'amt' => (float)$r['amt']];
     }
     foreach ($out as $k => $b) {
-        if ($b['children']) usort($out[$k]['children'], fn($a, $c) => $c['amt'] <=> $a['amt']);
+        if (!$b['children']) continue;
+        usort($out[$k]['children'], fn($a, $c) => $c['amt'] <=> $a['amt']);
+        // Same closing line rollupCategories() adds: a parent usually holds money of its own
+        // as well as its sub-types', and without this the listed children fall short of the
+        // bar above them with nothing to say where the rest went.
+        $direct = $b['amt'] - array_sum(array_column($b['children'], 'amt'));
+        if ($direct > 0.004) $out[$k]['children'][] = ['name' => 'Direct', 'amt' => round($direct, 2)];
     }
     usort($out, fn($a, $b) => $b['amt'] <=> $a['amt']);
     return array_values($out);

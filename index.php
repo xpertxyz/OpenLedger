@@ -207,7 +207,11 @@ if (PHP_SAPI === 'cli') {
         $roll = array_column(rollupTypes($rows, $tt, $vis), null, 'name');
         assert($roll['SIP']['amt'] === 4400.0);                 // parent carries its children's money
         assert($roll['SIP']['target'] === 5000.0);              // …against the parent's target
-        assert(count($roll['SIP']['children']) === 1);
+        // The parent's own money gets a closing line, so the children always sum to the bar.
+        assert(count($roll['SIP']['children']) === 2);
+        assert($roll['SIP']['children'][0] === ['name' => 'Nifty', 'amt' => 2400.0]);
+        assert($roll['SIP']['children'][1] === ['name' => 'Direct', 'amt' => 2000.0]);
+        assert(array_sum(array_column($roll['SIP']['children'], 'amt')) === $roll['SIP']['amt']);
         assert(!isset($roll['Nifty']));                         // a child never gets a bar of its own
         // Parent filtered out (archived, say): the child stands alone rather than vanishing.
         $solo = array_column(rollupTypes($rows, $tt, ['Nifty' => 1, 'Gold' => 1]), null, 'name');
