@@ -181,6 +181,18 @@ if (PHP_SAPI === 'cli') {
         assert(attributableIds($mm, 9, ROLE_MEMBER) === [3]);
         assert(attributableIds($mm, 5, ROLE_MEMBER) === []);      // not linked yet — nothing to pick
 
+        // What a name reads as depends on who is reading it. "Me" is a pronoun, so a ledger
+        // shared with one other person must not show them your word for yourself.
+        $his  = ['id' => 1, 'name' => 'Me',     'user_id' => 7,    'user_name' => 'Praveen Kumar'];
+        $hers = ['id' => 2, 'name' => 'Wife',   'user_id' => 9,    'user_name' => 'Sruthi'];
+        $appa = ['id' => 3, 'name' => 'Appa',   'user_id' => null, 'user_name' => null];
+        assert(memberLabel($his,  7) === 'Me');
+        assert(memberLabel($his,  9) === 'Praveen');  // his own row, read by her: his name, not his pronoun
+        assert(memberLabel($hers, 9) === 'Me');
+        assert(memberLabel($hers, 7) === 'Sruthi');   // a signed-in person is named by their account
+        assert(memberLabel($appa, 7) === 'Appa');     // nobody signs in as Appa, so the household names him
+        assert(memberLabel($appa, 9) === 'Appa');
+
         // monthsSpan is the inverse of splitPlan's end date, and editing a split depends on it
         // round-tripping: the dialog re-derives "how many months" from the dates it stored.
         foreach ([2, 6, 12, 18, 24, 36, 120] as $n) {

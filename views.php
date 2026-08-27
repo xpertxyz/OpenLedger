@@ -2259,8 +2259,7 @@ function renderAdd(PDO $db, array $user): void {
     $hid = (int)$user['household_id'];
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = $cats->fetchAll();
-    $mems = $db->prepare("SELECT * FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $mems = membersFor($db, $hid, (int)$user['id']);
 
     // Sticky category: default to the last one this household used; falls back to first if none.
     $lastCat = $db->prepare("SELECT category_id FROM expenses WHERE household_id = ? ORDER BY id DESC LIMIT 1");
@@ -2390,7 +2389,7 @@ function renderAdd(PDO $db, array $user): void {
                      tag at its `>`, which turns the onclick into visible text. */ ?>
             <button type="button" class="pill-btn<?= $m['id'] == $selectedMem ? ' on' : '' ?>"
                     onclick="document.getElementById('mem-input').value=<?= (int)$m['id'] ?>;this.parentNode.querySelectorAll('.pill-btn').forEach(e=>e.classList.remove('on'));this.classList.add('on');">
-              <?= h($m['name']) ?>
+              <?= h($m['label']) ?>
             </button>
           <?php endforeach; ?>
         </div>
@@ -2557,10 +2556,9 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 
     // Paginated transaction list — LIMIT + OFFSET on the (household_id, date) index.
     $rows = $db->prepare(
-        "SELECT e.*, c.name AS cat_name, c.icon AS cat_icon, m.name AS mem_name
+        "SELECT e.*, c.name AS cat_name, c.icon AS cat_icon
          FROM expenses e
          LEFT JOIN categories c ON c.id = e.category_id
-         LEFT JOIN members m ON m.id = e.member_id
          WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?$whoSqlE$catSql
          ORDER BY e.`date` DESC, e.id DESC
          LIMIT $pageSize OFFSET $rowOffset"
@@ -2580,9 +2578,11 @@ function renderHistory(PDO $db, array $user, int $offset): void {
         $listCount = (int)$cnt->fetchColumn();
     }
 
-    // For the add/edit-expense modal.
-    $memList = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
-    $memList->execute([$hid]); $memList = $memList->fetchAll();
+    // For the add/edit-expense modal, and for naming the spender on each row. The name comes
+    // from here rather than from a join on the list query, because who a row is filed under
+    // reads differently depending on who is looking — see memberLabel().
+    $memList  = membersFor($db, $hid, $uid);
+    $memLabel = array_column($memList, 'label', 'id');
     // Adding from this screen files under you unless you say otherwise, like the Add tab does.
     $ownMem = 0;
     foreach ($memList as $m) if (isset($m['user_id']) && (int)$m['user_id'] === $uid) $ownMem = (int)$m['id'];
@@ -2723,7 +2723,8 @@ function renderHistory(PDO $db, array $user, int $offset): void {
               <div class="row-icon"><?= icon($e['cat_icon'] ?? 'tag', 16) ?></div>
               <div class="row-main">
                 <div class="title"><?= h($e['cat_name'] ?? 'Uncategorised') ?></div>
-                <div class="sub"><?= h(trim(($e['note'] ?? '') . ($e['note'] && $e['mem_name'] ? ' · ' : '') . ($e['mem_name'] ?? ''))) ?></div>
+                <?php $who1 = $memLabel[(int)($e['member_id'] ?? 0)] ?? ''; ?>
+                <div class="sub"><?= h(trim(($e['note'] ?? '') . ($e['note'] && $who1 ? ' · ' : '') . $who1)) ?></div>
               </div>
               <div class="row-amt"><?= h(fmt((float)$e['amount'])) ?></div>
               <?php if (mayEdit($e, $user)): ?>
@@ -2796,7 +2797,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
           <select class="select" name="member_id" id="ed-member">
             <option value="">— No member —</option>
             <?php foreach ($memList as $m): ?>
-              <option value="<?= (int)$m['id'] ?>"><?= h($m['name']) ?></option>
+              <option value="<?= (int)$m['id'] ?>"><?= h($m['label']) ?></option>
             <?php endforeach; ?>
           </select>
         <?php elseif ($memList): ?>
@@ -2894,8 +2895,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
 function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'active'): void {
     $hid = (int)$user['household_id'];
     $uid  = (int)$user['id'];
-    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $mems = membersFor($db, $hid, $uid);
     if (!in_array($filter, ['all', 'active', 'archived'], true)) $filter = 'active';
 
     // Filter by whose investment it is. Validated against this household's members.
@@ -3218,8 +3218,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 function renderEarn(PDO $db, array $user, bool $showForm): void {
     $hid = (int)$user['household_id'];
     $uid  = (int)$user['id'];
-    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $mems = membersFor($db, $hid, $uid);
 
     // Filter by whose money it is. Validated against this household's members.
     $who = (int)($_GET['who'] ?? 0);
@@ -3627,8 +3626,7 @@ function renderYear(PDO $db, array $user, int $y, string $mode, string $invFilte
     if (!in_array($invFilter, ['all', 'active', 'archived'], true)) $invFilter = 'all';
     $now  = new DateTimeImmutable('today');
     $uid  = (int)$user['id'];
-    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $mems = membersFor($db, $hid, $uid);
 
     // Filter the whole year to one person. Validated against this household's members.
     $who = (int)($_GET['who'] ?? 0);
@@ -3929,8 +3927,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
     $cats = $db->prepare("SELECT * FROM categories WHERE household_id = ? ORDER BY is_custom, id");
     $cats->execute([$hid]); $cats = categoryTree($cats->fetchAll());
     $uid  = (int)$user['id'];
-    $mems = $db->prepare("SELECT id, name, user_id FROM members WHERE household_id = ? ORDER BY id");
-    $mems->execute([$hid]); $mems = $mems->fetchAll();
+    $mems = membersFor($db, $hid, $uid);
     // Same split as the Invest tab: new recurring investments can only target a live type,
     // but the edit dialog lists archived ones so an existing item keeps its type on save.
     $typeStmt = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, id");
@@ -4649,7 +4646,7 @@ function memberSelect(array $mems, int $uid, string $role, string $id = '', ?int
     foreach ($mems as $m) {
         $mid = (int)$m['id'];
         $on  = ($selected !== null && $mid === $selected) ? ' selected' : '';
-        $out .= '<option value="' . $mid . '"' . $on . '>' . h($m['name']) . '</option>';
+        $out .= '<option value="' . $mid . '"' . $on . '>' . h($m['label']) . '</option>';
     }
     return $out . '</select>';
 }
@@ -4677,7 +4674,7 @@ function whoFilterRow(PDO $db, int $hid, array $mems, int $who, string $tail = '
     foreach ($mems as $m) {
         $id = (int)$m['id'];
         $pills .= '<button type="button" class="pill-btn' . ($id === $who ? ' on' : '')
-                . '" onclick="setWho(' . $id . ')">' . h($m['name']) . '</button>';
+                . '" onclick="setWho(' . $id . ')">' . h($m['label']) . '</button>';
     }
     return '<div class="pill-row" role="group" aria-label="Filter by person">' . $pills . $tail . '</div>';
 }
@@ -4852,12 +4849,20 @@ function renderLedgers(PDO $db, array $user): void {
         <hr style="margin:12px 0 8px;">
         <h4 style="margin:0 0 2px;">Names on entries</h4>
         <div class="muted" style="font-size:12px; margin-bottom:8px;">
-          What each person is called on an entry and on the filter. Rename freely — entries stay
-          attached to the person, not to the spelling. Add a name for someone who does not sign
-          in: a child, a parent, a shared card. A name gets no access; only an invite does.
+          What each person is called on an entry and on the filter. Add a name for someone who
+          does not sign in: a child, a parent, a shared card — rename those freely, entries stay
+          attached to the person and not to the spelling. A name gets no access; only an invite
+          does. Anyone who signs in brings their own name and reads as "Me" in their own login.
         </div>
         <?php foreach ($labels as $m): $linked = !empty($m['user_id']); ?>
           <div class="row-form" style="margin-bottom:6px; align-items:center;">
+            <?php if ($linked): ?>
+              <?php /* No rename box: a row with a login is labelled by its own account name,
+                       and "Me" to the person themselves, so whatever were typed here would be
+                       shown to nobody. See memberLabel(). */ ?>
+              <div class="input" style="flex:1; display:flex; align-items:center;"><?= h(memberLabel($m, $uid)) ?></div>
+              <span class="muted" style="font-size:11px; white-space:nowrap;" title="<?= h($m['user_name'] ?? '') ?>">signs in</span>
+            <?php else: ?>
             <form method="post" action="/members/update" class="row-form" style="flex:1; margin:0;">
               <?= csrfInput() ?>
               <input type="hidden" name="back" value="/ledgers">
@@ -4866,9 +4871,7 @@ function renderLedgers(PDO $db, array $user): void {
                      aria-label="Name on entries">
               <button class="btn" type="submit">Save</button>
             </form>
-            <?php if ($linked): ?>
-              <span class="muted" style="font-size:11px; white-space:nowrap;" title="<?= h($m['user_name'] ?? '') ?>">signs in</span>
-            <?php elseif ($isOwner && $memberCount > 1): ?>
+            <?php if ($isOwner && $memberCount > 1): ?>
               <button type="button" class="icon-btn" aria-label="Remove name"
                       onclick='askConfirm(<?= h(json_encode([
                           "action" => "/members/delete",
@@ -4879,6 +4882,7 @@ function renderLedgers(PDO $db, array $user): void {
                           "body"   => "Entries already filed under them stay logged and keep the name; new ones can no longer name them.",
                           "ok"     => "Remove",
                       ])) ?>)'><?= icon('x', 16) ?></button>
+            <?php endif; ?>
             <?php endif; ?>
           </div>
         <?php endforeach; ?>

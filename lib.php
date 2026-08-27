@@ -895,6 +895,47 @@ function attributableIds(array $mems, int $uid, string $role): array {
     return $out;
 }
 
+// ── What a member row is called, from the viewer's side of the ledger ─────────
+//
+// "Me" is a pronoun, not a name: it has to resolve to whoever is reading. Praveen calls his
+// own row "Me", which is right in his login and a lie in his wife's — she was reading his
+// word for himself. So the row belonging to whoever is signed in always renders as "Me",
+// whatever it is stored as, and a row belonging to somebody else who signs in renders with
+// their own account name: theirs to spell, and the only name that means the same thing to
+// both of them.
+//
+// A row nobody signs in as keeps whatever the household stored. That is the whole point of
+// those rows — "Appa" is a person in this ledger long after Google has decided he is Rajesh
+// Kumar — and nothing about them is relative to who is looking.
+function memberLabel(array $m, int $uid): string {
+    $linked = isset($m['user_id']) && $m['user_id'] !== null;
+    if ($linked && (int)$m['user_id'] === $uid) return 'Me';
+    if ($linked && trim((string)($m['user_name'] ?? '')) !== '') {
+        // First name only: these render in pills and dropdowns, where a full Google name wraps.
+        return ledgerNameFor((string)$m['user_name']);
+    }
+    return (string)$m['name'];
+}
+
+// Every member of a household, ready to render. Each row carries the `label` this viewer
+// should see, and the viewer's own row sorts first so "Me" sits in the same place for
+// everybody rather than wherever their row happens to have been created.
+function membersFor(PDO $db, int $hid, int $uid): array {
+    $s = $db->prepare(
+        "SELECT m.id, m.name, m.user_id, u.name AS user_name
+         FROM members m LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.household_id = ? ORDER BY m.id"
+    );
+    $s->execute([$hid]);
+    $mems = $s->fetchAll();
+    $mine = fn(array $m): int => (isset($m['user_id']) && (int)$m['user_id'] === $uid) ? 0 : 1;
+    foreach ($mems as &$m) $m['label'] = memberLabel($m, $uid);
+    unset($m);
+    // Stable since PHP 8.0, so everyone else keeps their creation order behind you.
+    usort($mems, fn(array $a, array $b): int => $mine($a) <=> $mine($b));
+    return $mems;
+}
+
 // The view-side twin of requireEditable: same rule, no query, so a list row can hide the two
 // controls the server would refuse anyway. Never the only check — the server still decides.
 function mayEdit(array $row, array $user): bool {
