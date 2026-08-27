@@ -475,6 +475,12 @@ $boot
 
   .month-switch { display:flex; align-items:center; justify-content:space-between; }
   .month-switch .label { font-family:var(--font-heading); font-size:18px; }
+  /* Back is the only control on a sub-page header and it sits straight on the page ground,
+     where a bare chevron reads as decoration rather than as something to press. A soft disc
+     of the ink colour gives it an edge in every palette without painting a solid button. */
+  .btn-back { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+  .btn-back:hover { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+  .btn-back:active { background: color-mix(in srgb, var(--color-text) 18%, transparent); }
   .total-card { padding: var(--space-4); text-align:center; }
   .total-card.accent { background:var(--color-accent-700); color:var(--color-bg); }
   .total-card.sage { background:var(--color-accent-2-700); color:var(--color-bg); }
@@ -2908,7 +2914,8 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     // Every link on the page keeps the person filter alongside the archived/active one.
     $whoQ = $who > 0 ? '&amp;who=' . $who : '';
-    $qs = fn(string $f) => '/invest?f=' . $f . ($who > 0 ? '&who=' . $who : '');
+    $qs = fn(string $f) => '/invest?f=' . $f . ($who > 0 ? '&amp;who=' . $who : '');
+    $back = '/invest?f=' . $filter . ($who > 0 ? '&who=' . $who : '');
 
     ob_start();
     ?>
@@ -2918,6 +2925,14 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     <?= whoFilterRow($db, $hid, $mems, $who,
           '<button type="button" class="pill-btn act" style="margin-left:auto;"'
         . ' onclick="document.getElementById(\'add-inv-dlg\').showModal()">' . icon('plus', 13) . ' Add</button>') ?>
+
+    <?php /* All time or one month at a time. All-time is the default and carries no `v` at
+             all, so an old link, a bookmark and the tab bar all still land here. Rendered
+             outside the has-entries guard: an empty ledger can still be switched. */ ?>
+    <div class="pill-row th-mode" role="group" aria-label="Choose a view">
+      <a class="pill-btn on" href="<?= $qs($filter) ?>"><?= icon('trending-up', 13) ?> All time</a>
+      <a class="pill-btn" href="/invest?v=m&amp;f=<?= h($filter) ?><?= $whoQ ?>"><?= icon('calendar', 13) ?> Monthly</a>
+    </div>
 
     <!-- Then active/archived, above the card rather than below it: it scopes the card's own
          totals and the month strip as well as the list, so sitting underneath them read as
@@ -3020,45 +3035,6 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
       </div>
     <?php endif; ?>
 
-    <!-- Add opens in the same kind of modal as edit, rather than re-rendering the page with an
-         inline form — one affordance for "fill in an investment", wherever you started from. -->
-    <dialog id="add-inv-dlg" class="confirm" style="max-width:360px;">
-      <?php if (!$activeTypes): ?>
-        <form method="dialog">
-          <div class="dlg-title">No active types</div>
-          <div class="dlg-body">Every investment type is archived. Restore one from the profile drawer before adding a new investment.</div>
-          <div class="dlg-actions"><button class="btn btn-secondary" value="cancel">Close</button></div>
-        </form>
-      <?php else: ?>
-        <form method="post" action="/investments">
-          <?= csrfInput() ?>
-          <div class="dlg-title">Add investment</div>
-          <input class="input" name="name" placeholder="e.g. SIP - Mutual Fund" required maxlength="80" id="inv-name"
-                 oninput="document.getElementById('inv-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('inv-amt').value) > 0)">
-          <div class="field-row">
-            <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
-                   oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
-            <select class="select" name="type">
-              <?php foreach ($activeTypes as $t): ?>
-                <option><?= h($t['name']) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <div class="field-row">
-            <input class="input" name="date" type="date" value="<?= h(today()) ?>">
-            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER) ?>
-          </div>
-          <div class="dlg-actions">
-            <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-inv-dlg').close()">Cancel</button>
-            <button class="btn btn-primary" type="submit" id="inv-save" disabled>Save</button>
-          </div>
-        </form>
-      <?php endif; ?>
-    </dialog>
-    <?php if ($showForm): ?>
-      <!-- /invest?new=1 still works — old links and the back button land with the form open. -->
-      <script>document.getElementById('add-inv-dlg').showModal();</script>
-    <?php endif; ?>
 
     <?php if ($grandCount === 0): ?>
       <div class="empty">Nothing logged yet.</div>
@@ -3135,11 +3111,418 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         </div>
       <?php endif; ?>
 
+    <?php endif; ?>
+    <?= investDialogs($mems, $uid, $user, $activeTypes, $typeList, $back, $showForm) ?>
+    <?= stripNavScript() ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'invest', $content, $back);
+}
+
+// ─── Invest, by month ───────────────────────────────────────────────
+// The Expense tab's shape applied to the other side of the ledger: one month at a time, a day
+// strip, per-type bars with their targets, a type filter and the month's entries grouped by
+// day. It is a second *view*, not a second screen — the toggle at the top swaps between this
+// and the all-time view, which stays the default and is unchanged.
+//
+// The archived/active filter and the person filter scope this exactly as they scope the other
+// view, so the two answer the same question over different windows.
+function renderInvestMonth(PDO $db, array $user, bool $showForm, string $filter, int $offset): void {
+    $hid  = (int)$user['household_id'];
+    $uid  = (int)$user['id'];
+    $mems = membersFor($db, $hid, $uid);
+    if (!in_array($filter, ['all', 'active', 'archived'], true)) $filter = 'active';
+    if ($offset < 0)   $offset = 0;
+    if ($offset > 600) $offset = 600;   // same sanity cap the Expense tab uses, ~50 years
+
+    $anchor     = (new DateTimeImmutable('first day of this month 00:00:00'))->modify("-{$offset} months");
+    $monthStart = $anchor->format('Y-m-d');
+    $monthEnd   = $anchor->modify('+1 month')->format('Y-m-d');
+    $label      = $anchor->format('F Y');
+
+    $who = (int)($_GET['who'] ?? 0);
+    $who = $who > 0 ? (int)(ownedId($db, 'members', $hid, $who) ?? 0) : 0;
+    [$whoSql, $whoBind] = whoWhere($who);
+
+    $archived = archivedTypeNames($db, $hid);
+    $archSet  = array_flip($archived);
+    [$clause, $clauseParams] = investmentFilterSql($filter, $archived);
+
+    // Type rows carry the tree, the targets and the names the fact table joins on.
+    $typeStmt = $db->prepare("SELECT id, name, archived, target, parent_id FROM investment_types WHERE household_id = ? ORDER BY archived, id");
+    $typeStmt->execute([$hid]); $typeList = $typeStmt->fetchAll();
+    $activeTypes = array_values(array_filter($typeList, fn($t) => !(int)$t['archived']));
+    $typeByName  = array_column($typeList, null, 'name');
+    $typeTree    = categoryTree($typeList);
+    $typeById    = array_column($typeTree, null, 'id');
+
+    // Type filter for the entry list, the twin of the Expense tab's category pills. Validated
+    // against this household's types, so a crafted id resets to All rather than matching
+    // nothing. A parent sweeps in its sub-types; a sub-type matches only itself.
+    $ty = (int)($_GET['ty'] ?? 0);
+    if (!isset($typeById[$ty])) $ty = 0;
+    $tyParent = 0; $tyNames = [];
+    if ($ty > 0) {
+        $pid = (int)($typeById[$ty]['parent_id'] ?? 0);
+        $tyParent = ($pid && isset($typeById[$pid])) ? $pid : $ty;
+        $tyNames  = [(string)$typeById[$ty]['name']];
+        if ($tyParent === $ty) {
+            foreach ($typeTree as $t) if ((int)($t['parent_id'] ?? 0) === $ty) $tyNames[] = (string)$t['name'];
+        }
+    }
+    $tySql = $tyNames ? ' AND type IN (' . implode(',', array_fill(0, count($tyNames), '?')) . ')' : '';
+    $tyQ   = $ty > 0 ? '&amp;ty=' . $ty : '';
+    // Plain-& variant, for URLs that travel through JS or json_encode.
+    $filterQ = "&v=m&f=$filter" . ($who > 0 ? "&who=$who" : '') . ($ty > 0 ? "&ty=$ty" : '');
+
+    // Month aggregates — the whole month, not the filtered list, exactly as Expense does.
+    $sumStmt = $db->prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql"
+    );
+    $sumStmt->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind));
+    $agg = $sumStmt->fetch();
+    $entryCount = (int)$agg['n'];
+    $total      = (float)$agg['total'];
+
+    // Per-type bars for the month, folded onto parents by the shared rollup.
+    $grp = $db->prepare(
+        "SELECT type, COUNT(*) AS n, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql GROUP BY type"
+    );
+    $grp->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind));
+    $monthTypes = $grp->fetchAll();
+    $visible    = array_column($monthTypes, null, 'type');
+    $byType     = rollupTypes($monthTypes, $typeByName, $visible);
+
+    // Household monthly target = every top-level target, including types with nothing in them
+    // this month. Children are held at 0, but scope it anyway so a stale row can't double-count.
+    $tgtStmt = $db->prepare("SELECT COALESCE(SUM(target), 0) FROM investment_types WHERE household_id = ? AND parent_id IS NULL");
+    $tgtStmt->execute([$hid]);
+    $targetTotal = (float)$tgtStmt->fetchColumn();
+
+    // Day-wise sums for the strip chart in the total card.
+    $dayExpr = sqlDay($db, '`date`');
+    $dayStmt = $db->prepare(
+        "SELECT $dayExpr AS d, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql GROUP BY $dayExpr"
+    );
+    $dayStmt->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind));
+    $stripDays = array_column($dayStmt->fetchAll(), 'amt', 'd');
+    $dayMax    = $stripDays ? max(array_map('floatval', $stripDays)) : 0.0;
+
+    // Paginated entry list for the month, narrowed by the type filter.
+    $pageSize  = 200;
+    $rowOffset = min(100000, max(0, (int)($_GET['o'] ?? 0)));
+    $rows = $db->prepare(
+        "SELECT * FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql$tySql
+         ORDER BY `date` DESC, id DESC LIMIT $pageSize OFFSET $rowOffset"
+    );
+    $rows->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind, $tyNames));
+    $invs = $rows->fetchAll();
+
+    // Pagination counts what the list shows, which a type filter makes narrower than the month.
+    $listCount = $entryCount;
+    if ($tyNames) {
+        $cnt = $db->prepare(
+            "SELECT COUNT(*) FROM investments
+             WHERE household_id = ? AND `date` >= ? AND `date` < ?$clause$whoSql$tySql"
+        );
+        $cnt->execute(array_merge([$hid, $monthStart, $monthEnd], $clauseParams, $whoBind, $tyNames));
+        $listCount = (int)$cnt->fetchColumn();
+    }
+
+    $whoQ = $who > 0 ? '&amp;who=' . $who : '';
+    $back = "/invest?v=m&f=$filter&m=$offset" . ($who > 0 ? "&who=$who" : '') . ($ty > 0 ? "&ty=$ty" : '');
+    // The view toggle and the archived/active pills each keep everything the other one set.
+    $qs  = fn(string $f) => '/invest?v=m&amp;f=' . $f . '&amp;m=' . $offset . $whoQ . $tyQ;
+    $mQ  = fn(int $o) => '/invest?v=m&amp;f=' . h($filter) . '&amp;m=' . $o . $whoQ . $tyQ;
+
+    ob_start();
+    ?>
+    <?= whoFilterRow($db, $hid, $mems, $who,
+          '<button type="button" class="pill-btn act" style="margin-left:auto;"'
+        . ' onclick="document.getElementById(\'add-inv-dlg\').showModal()">' . icon('plus', 13) . ' Add</button>') ?>
+
+    <?php /* The view toggle. All-time is the default and carries no `v` at all, so an old
+             link, a bookmark and the tab bar all still land on it. */ ?>
+    <div class="pill-row th-mode" role="group" aria-label="Choose a view">
+      <a class="pill-btn" href="/invest?f=<?= h($filter) ?><?= $whoQ ?>"><?= icon('trending-up', 13) ?> All time</a>
+      <a class="pill-btn on" href="<?= $mQ($offset) ?>"><?= icon('calendar', 13) ?> Monthly</a>
+    </div>
+
+    <div class="pill-row">
+      <a class="pill-btn<?= $filter === 'all' ? ' on' : '' ?>" href="<?= $qs('all') ?>">All</a>
+      <a class="pill-btn<?= $filter === 'active' ? ' on' : '' ?>" href="<?= $qs('active') ?>">Active</a>
+      <a class="pill-btn<?= $filter === 'archived' ? ' on' : '' ?>" href="<?= $qs('archived') ?>">Archived</a>
+    </div>
+
+    <div class="month-switch">
+      <a href="<?= $mQ($offset + 1) ?>" class="btn btn-icon" aria-label="Previous month"><?= icon('chevron-left', 20) ?></a>
+      <div class="label"><?= h($label) ?></div>
+      <?php if ($offset > 0): ?>
+        <a href="<?= $mQ($offset - 1) ?>" class="btn btn-icon" aria-label="Next month"><?= icon('chevron-right', 20) ?></a>
+      <?php else: ?>
+        <span class="btn btn-icon" style="opacity:.35;pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
+      <?php endif; ?>
+    </div>
+
+    <?php if ($entryCount === 0): ?>
+      <div class="empty">Nothing invested this month.</div>
+    <?php else: ?>
+      <div class="card total-card sage">
+        <div class="big"><?= h(fmt($total)) ?></div>
+        <div class="sub">
+          <?= $entryCount ?> <?= $entryCount === 1 ? 'entry' : 'entries' ?><?php if ($targetTotal > 0): ?> ·
+            <strong><?= h(fmt($targetTotal)) ?></strong> targeted
+          <?php endif; ?>
+        </div>
+        <?php if ($dayMax > 0): $daysInMonth = (int)$anchor->format('t');
+          // Today only pulses while the month on screen is the current one.
+          $todayD = str_starts_with(today(), $anchor->format('Y-m')) ? (int)substr(today(), 8, 2) : 0;
+        ?>
+          <div class="day-strip">
+            <?php for ($d = 1; $d <= $daysInMonth; $d++):
+              $amt  = (float)($stripDays[$d] ?? 0);
+              $hPct = $amt > 0 ? max(6, ($amt / $dayMax) * 100) : 0;
+              $cls  = $amt <= 0 ? 'z' : ($amt >= $dayMax ? 'peak' : '');
+              if ($d === $todayD) $cls = trim($cls . ' today');
+              $tip  = $d . ' ' . h($anchor->format('M')) . ' — ' . h(fmt($amt))
+                    . ($d === $todayD ? ' (today)' : '');
+            ?><?php if ($amt > 0): ?><a<?=
+              $cls ? ' class="' . $cls . '"' : '' ?> href="#d<?= $d ?>" style="height:<?= number_format($hPct, 1) ?>%" title="<?= $tip ?>" aria-label="<?= $tip ?>"></a><?php
+            else: ?><i class="<?= $cls ?: 'z' ?>" title="<?= $tip ?>"></i><?php endif; ?><?php endfor; ?>
+          </div>
+          <div class="day-axis dense" aria-hidden="true">
+            <?php for ($d = 1; $d <= $daysInMonth; $d++): ?><span><?= $d ?></span><?php endfor; ?>
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <div class="stack">
+        <?php foreach ($byType as $t):
+          $amt    = (float)$t['amt'];
+          $pct    = $total > 0 ? ($amt / $total) * 100 : 0;
+          $target = (float)$t['target'];
+          // Here the bar and the target measure the same window, so it tracks the target
+          // directly — no second query, unlike the all-time view.
+          $barPct = $target > 0 ? min(100, ($amt / $target) * 100) : $pct;
+        ?>
+          <div class="card cat-bar">
+            <div class="top">
+              <div class="name">
+                <?= icon(isset($archSet[$t['name']]) ? 'archive' : 'trending-up', 18) ?> <?= h($t['name']) ?>
+                <?php if (isset($archSet[$t['name']])): ?><span class="tag-archived">archived</span><?php endif; ?>
+              </div>
+              <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
+            </div>
+            <div class="bar sage"><i style="width: <?= number_format(max(2, $barPct), 2) ?>%"></i></div>
+            <?php foreach ($t['children'] as $k): ?>
+              <div class="sub-line">
+                <span>↳ <?= h($k['name']) ?></span>
+                <span><?= h(fmt((float)$k['amt'])) ?></span>
+              </div>
+            <?php endforeach; ?>
+            <?php if ($target > 0): $short = $target - $amt; ?>
+              <div class="budget-note">
+                <span><?= h(fmt($target)) ?> target · <?= number_format(($amt / $target) * 100, 0) ?>% put in</span>
+                <?php if ($short > 0): ?>
+                  <span><?= h(fmt($short)) ?> to go</span>
+                <?php else: ?>
+                  <span>target met</span>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
+          </div>
+        <?php endforeach; ?>
+      </div>
+
+      <?php // Type filter pills. Row one is every top-level type; row two appears once a
+            // parent with sub-types is picked, scoped to that parent. Both default to All.
+        $topTypes = array_values(array_filter($typeTree, fn($t) => empty($t['depth'])));
+        $subTypes = $tyParent
+            ? array_values(array_filter($typeTree, fn($t) => (int)($t['parent_id'] ?? 0) === $tyParent))
+            : [];
+      ?>
+      <div class="pill-row scroll" role="group" aria-label="Filter by type">
+        <button type="button" class="pill-btn<?= $ty === 0 ? ' on' : '' ?>" onclick="setTy(0)">All</button>
+        <?php foreach ($topTypes as $t): ?>
+          <button type="button" class="pill-btn<?= (int)$t['id'] === $tyParent ? ' on' : '' ?>"
+                  onclick="setTy(<?= (int)$t['id'] ?>)"><?= h($t['name']) ?></button>
+        <?php endforeach; ?>
+      </div>
+      <?php if ($subTypes): ?>
+        <div class="pill-row scroll" role="group" aria-label="Filter by sub-type">
+          <button type="button" class="pill-btn<?= $ty === $tyParent ? ' on' : '' ?>"
+                  onclick="setTy(<?= $tyParent ?>)">All <?= h($typeById[$tyParent]['name'] ?? '') ?></button>
+          <?php foreach ($subTypes as $k): ?>
+            <button type="button" class="pill-btn<?= $ty === (int)$k['id'] ? ' on' : '' ?>"
+                    onclick="setTy(<?= (int)$k['id'] ?>)"><?= h($k['name']) ?></button>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php
+      $byDay = [];
+      foreach ($invs as $i) { $byDay[$i['date']][] = $i; }
+      foreach ($byDay as $day => $entries):
+        $dayLabel = (new DateTimeImmutable($day))->format('D, M j');
+        $dayTotal = array_sum(array_map(fn($x) => (float)$x['amount'], $entries));
+      ?>
+        <div class="day-group" id="d<?= (int)substr($day, 8, 2) ?>">
+        <div class="day-hdr" style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span><?= h($dayLabel) ?></span>
+          <span style="font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--color-neutral-800);"><?= h(fmt($dayTotal)) ?></span>
+        </div>
+        <div class="stack">
+          <?php foreach ($entries as $i): ?>
+            <?php $invJson = json_encode([
+                'id'        => (int)$i['id'],
+                'name'      => $i['name'],
+                'amount'    => (string)$i['amount'],
+                'type'      => $i['type'],
+                'date'      => $i['date'],
+                'member_id' => (int)($i['member_id'] ?? 0),
+            ]); ?>
+            <?php $rowArch = isset($archSet[$i['type']]); ?>
+            <div class="card elev-sm row<?= $rowArch ? ' archived' : '' ?>">
+              <div class="row-icon sage"><?= icon($rowArch ? 'archive' : 'trending-up', 16) ?></div>
+              <div class="row-main">
+                <div class="title"><?= h($i['name']) ?></div>
+                <div class="sub"><?= h($i['type']) ?><?= $rowArch ? ' (archived)' : '' ?></div>
+              </div>
+              <div class="row-amt"><?= h(fmt((float)$i['amount'])) ?></div>
+              <?php if (mayEdit($i, $user)): ?>
+                <button class="icon-btn" type="button" aria-label="Edit"
+                        onclick='openEditInvestment(<?= h($invJson) ?>)'>
+                  <?= icon('edit', 15) ?>
+                </button>
+                <button class="icon-btn" type="button" aria-label="Delete"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/investments/delete",
+                            "id"     => (int)$i['id'],
+                            "back"   => "/invest?m=$offset" . $filterQ,
+                            "title"  => "Delete investment?",
+                            "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
+                            "ok"     => "Delete",
+                        ])) ?>)'>
+                  <?= icon('trash-2', 15) ?>
+                </button>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        </div>
+      <?php endforeach; ?>
+
+      <?php if ($tyNames && !$invs): ?>
+        <div class="empty">Nothing in this type this month.</div>
+      <?php endif; ?>
+
+      <?php
+      $shown   = $rowOffset + count($invs);
+      $hasMore = $shown < $listCount;
+      $hasPrev = $rowOffset > 0;
+      ?>
+      <?php if ($hasMore || $hasPrev): ?>
+        <div style="display:flex; gap:8px; justify-content:space-between; margin-top: var(--space-3);">
+          <?php if ($hasPrev): $prev = max(0, $rowOffset - $pageSize); ?>
+            <a class="btn btn-secondary" href="<?= $mQ($offset) ?>&amp;o=<?= $prev ?>">← Newer</a>
+          <?php else: ?><span></span><?php endif; ?>
+          <div class="muted" style="align-self:center;">Showing <?= $rowOffset + 1 ?>–<?= $shown ?> of <?= $listCount ?></div>
+          <?php if ($hasMore): ?>
+            <a class="btn btn-secondary" href="<?= $mQ($offset) ?>&amp;o=<?= $rowOffset + $pageSize ?>">Older →</a>
+          <?php else: ?><span></span><?php endif; ?>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+
+    <?= investDialogs($mems, $uid, $user, $activeTypes, $typeList, $back, $showForm) ?>
+    <script>
+    // The twin of setCat() on the Expense tab, down to remembering where you were: the pills
+    // sit mid-page, so the reload puts scrollY back and centres the pill you picked.
+    function setTy(v) {
+      var u = new URL(location.href);
+      if (v) u.searchParams.set('ty', v); else u.searchParams.delete('ty');
+      u.searchParams.delete('o');
+      sessionStorage.setItem('hlScroll', scrollY);
+      location.href = u.toString();
+    }
+    (function () {
+      var s = sessionStorage.getItem('hlScroll');
+      if (s !== null) { sessionStorage.removeItem('hlScroll'); scrollTo(0, +s); }
+      document.querySelectorAll('.pill-row.scroll').forEach(function (r) {
+        var on = r.querySelector('.pill-btn.on');
+        if (!on) return;
+        r.scrollLeft += on.getBoundingClientRect().left - r.getBoundingClientRect().left
+                      - (r.clientWidth - on.clientWidth) / 2;
+      });
+    })();
+    </script>
+    <?= stripNavScript() ?>
+    <?= swipeNavScript("/invest?m=" . ($offset + 1) . $filterQ, $offset > 0 ? "/invest?m=" . ($offset - 1) . $filterQ : null) ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'invest', $content, $back);
+}
+
+// ─── Investment dialogs, shared by both Invest views ────────────────
+// Add and edit both open a <dialog> rather than re-rendering the page with an inline form —
+// one affordance for "fill in an investment", wherever you started from. Lifted out of
+// renderInvest() when the monthly view arrived: the two views differ in what they summarise,
+// never in how you enter or correct an entry, so a second copy would be two places to fix.
+//
+// $back is the page's own URL, so a save lands you back on the view (and month) you were on.
+function investDialogs(array $mems, int $uid, array $user, array $activeTypes, array $typeList,
+                       string $back, bool $showForm): string {
+    ob_start();
+    ?>
+    <!-- Add opens in the same kind of modal as edit, rather than re-rendering the page with an
+         inline form — one affordance for "fill in an investment", wherever you started from. -->
+    <dialog id="add-inv-dlg" class="confirm" style="max-width:360px;">
+      <?php if (!$activeTypes): ?>
+        <form method="dialog">
+          <div class="dlg-title">No active types</div>
+          <div class="dlg-body">Every investment type is archived. Restore one from the profile drawer before adding a new investment.</div>
+          <div class="dlg-actions"><button class="btn btn-secondary" value="cancel">Close</button></div>
+        </form>
+      <?php else: ?>
+        <form method="post" action="/investments">
+          <?= csrfInput() ?>
+          <div class="dlg-title">Add investment</div>
+          <input class="input" name="name" placeholder="e.g. SIP - Mutual Fund" required maxlength="80" id="inv-name"
+                 oninput="document.getElementById('inv-save').disabled = !(this.value.trim() && parseFloat(document.getElementById('inv-amt').value) > 0)">
+          <div class="field-row">
+            <input class="input" name="amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" maxlength="13" placeholder="Amount" id="inv-amt"
+                   oninput="document.getElementById('inv-save').disabled = !(document.getElementById('inv-name').value.trim() && parseFloat(this.value) > 0)">
+            <select class="select" name="type">
+              <?php foreach ($activeTypes as $t): ?>
+                <option><?= h($t['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="field-row">
+            <input class="input" name="date" type="date" value="<?= h(today()) ?>">
+            <?= memberSelect($mems, $uid, $user['role'] ?? ROLE_MEMBER) ?>
+          </div>
+          <div class="dlg-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-inv-dlg').close()">Cancel</button>
+            <button class="btn btn-primary" type="submit" id="inv-save" disabled>Save</button>
+          </div>
+        </form>
+      <?php endif; ?>
+    </dialog>
+    <?php if ($showForm): ?>
+      <!-- /invest?new=1 still works — old links and the back button land with the form open. -->
+      <script>document.getElementById('add-inv-dlg').showModal();</script>
+    <?php endif; ?>
+
       <dialog id="edit-investment-dlg" class="confirm" style="max-width:360px;">
         <form method="post" action="/investments/update">
           <?= csrfInput() ?>
           <input type="hidden" name="id" id="ei-id">
-          <input type="hidden" name="back" value="/invest?f=<?= h($filter) ?><?= $whoQ ?>">
+          <input type="hidden" name="back" value="<?= h($back) ?>">
           <div class="dlg-title">Edit investment</div>
           <input class="input" name="name" id="ei-name" required maxlength="80" placeholder="Name">
           <div class="field-row">
@@ -3173,11 +3556,8 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
         document.getElementById('edit-investment-dlg').showModal();
       }
       </script>
-    <?php endif; ?>
-    <?= stripNavScript() ?>
     <?php
-    $content = ob_get_clean();
-    layout($db, $user, 'invest', $content, '/invest?f=' . $filter . ($who > 0 ? '&who=' . $who : ''));
+    return (string)ob_get_clean();
 }
 
 // ─── Earnings ───────────────────────────────────────────────────────
@@ -4303,7 +4683,7 @@ function renderOrganise(PDO $db, array $user): void {
     ob_start();
     ?>
     <div class="month-switch">
-      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <a href="/#profile" class="btn btn-icon btn-back" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
       <div class="label" style="font-size:16px;">Organise expense categories</div>
       <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
     </div>
@@ -4646,7 +5026,7 @@ function renderOrganiseInvest(PDO $db, array $user): void {
     ob_start();
     ?>
     <div class="month-switch">
-      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <a href="/#profile" class="btn btn-icon btn-back" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
       <div class="label" style="font-size:16px;">Organise investment types</div>
       <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
     </div>
@@ -4981,7 +5361,7 @@ function renderLedgers(PDO $db, array $user): void {
     ob_start();
     ?>
     <div class="month-switch">
-      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <a href="/#profile" class="btn btn-icon btn-back" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
       <div class="label" style="font-size:16px;"><?= FEATURE_SHARING ? 'Ledgers &amp; sharing' : 'Ledger settings' ?></div>
       <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
     </div>

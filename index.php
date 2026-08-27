@@ -922,6 +922,7 @@ if (PHP_SAPI === 'cli') {
                 'history'   => ['renderHistory',   [$db, $stub, 0]],
                 'earn'      => ['renderEarn',      [$db, $stub, true]],
                 'invest'    => ['renderInvest',    [$db, $stub, true, 'active']],
+                'investmth' => ['renderInvestMonth', [$db, $stub, true, 'active', 0]],
                 'recurring' => ['renderRecurring', [$db, $stub, true]],
                 'year'      => ['renderYear',      [$db, $stub, (int)date('Y'), 'cal', 'all']],
                 'organise'  => ['renderOrganise',  [$db, $stub]],
@@ -947,6 +948,7 @@ if (PHP_SAPI === 'cli') {
                 'history'   => ['renderHistory',   [$db, $guest, 0]],
                 'earn'      => ['renderEarn',      [$db, $guest, true]],
                 'invest'    => ['renderInvest',    [$db, $guest, true, 'active']],
+                'investmth' => ['renderInvestMonth', [$db, $guest, true, 'active', 0]],
                 'recurring' => ['renderRecurring', [$db, $guest, true]],
             ] as $name => [$fn, $args]) {
                 ob_start(); $fn(...$args); $html = (string)ob_get_clean();
@@ -2294,7 +2296,13 @@ switch ($path) {
     case '/':
     case '/add':       renderAdd($db, $user); break;
     case '/history':   renderHistory($db, $user, (int)($_GET['m'] ?? 0)); break;
-    case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
+    // v=m is the month-at-a-time view; anything else (including nothing) is the all-time
+    // one, which is the default and what every existing link still resolves to.
+    case '/invest':
+        ($_GET['v'] ?? '') === 'm'
+            ? renderInvestMonth($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active'), (int)($_GET['m'] ?? 0))
+            : renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active'));
+        break;
     case '/earn':      renderEarn($db, $user, isset($_GET['new'])); break;
     case '/organise':  renderOrganise($db, $user); break;
     case '/organise-invest': renderOrganiseInvest($db, $user); break;
