@@ -975,22 +975,12 @@ DLG;
 // Right-side drawer — replaces the old /manage page. All account/household controls live here.
 function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
     $hid = (int)$user['household_id'];
-    $iTypes = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY archived, id");
-    $iTypes->execute([$hid]); $iTypes = $iTypes->fetchAll();
-    $canDeleteType = count($iTypes) > 1;
     $eCats = $db->prepare("SELECT * FROM earning_categories WHERE household_id = ? ORDER BY id");
     $eCats->execute([$hid]); $eCats = $eCats->fetchAll();
     $canDeleteECat = count($eCats) > 1;
     // How many earnings each category would orphan — shown in the delete confirmation.
     $s = $db->prepare("SELECT category_id, COUNT(*) n FROM earnings WHERE household_id = ? GROUP BY category_id");
     $s->execute([$hid]); $earnPerCat = array_column($s->fetchAll(), 'n', 'category_id');
-
-    // Impact counts for the archive confirmation: how many entries move out of the active
-    // view, and whether a recurring item will keep posting into the type after archiving.
-    $s = $db->prepare("SELECT type, COUNT(*) n FROM investments WHERE household_id = ? GROUP BY type");
-    $s->execute([$hid]); $invPerType = array_column($s->fetchAll(), 'n', 'type');
-    $s = $db->prepare("SELECT type, COUNT(*) n FROM recurring WHERE household_id = ? AND kind = 'investment' GROUP BY type");
-    $s->execute([$hid]); $recPerType = array_column($s->fetchAll(), 'n', 'type');
 
     $currency = $_SESSION['currency'] ?? '₹';
     $initial  = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
@@ -1019,12 +1009,19 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <span>Yearly summary</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
-          <!-- Expense categories are managed entirely on /organise — rename, budget, nest,
-               delete. Keeping a second copy of those controls here would mean two places to
-               fix every time the rules change. -->
+          <!-- Categories and types are managed entirely on their own pages — rename, budget
+               or target, nest, delete, and moving entries between them. Keeping a second copy
+               of those controls here would mean two places to fix every rule change. -->
           <a class="drawer-nav" href="/organise">
             <span class="ico"><?= icon('tag', 18) ?></span>
             <span>Organise expense categories</span>
+            <span class="chev"><?= icon('chevron-right', 16) ?></span>
+          </a>
+          <?php /* Same story for investment types, and the same page shape — so the two
+                   sit together rather than one here and one buried further down. */ ?>
+          <a class="drawer-nav" href="/organise-invest">
+            <span class="ico"><?= icon('trending-up', 18) ?></span>
+            <span>Organise investment types</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
           <?php /* Sharing lives on its own page rather than in here. This drawer renders on
@@ -1069,78 +1066,6 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <?php endforeach; ?>
           </div>
         </section>
-
-        <hr>
-
-        <details>
-          <summary><h4>Investment types</h4></summary>
-          <div class="details-body">
-            <div class="muted" style="font-size:11.5px;">Archive a type when a scheme ends — its entries stay logged but drop out of active investments.</div>
-            <?php foreach ($iTypes as $t): $isArch = (int)$t['archived'] === 1; ?>
-              <div class="cat-row<?= $isArch ? ' archived' : '' ?>">
-                <form method="post" action="/investment-types/update">
-                  <?= csrfInput() ?>
-                  <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
-                  <input type="hidden" name="back" value="<?= $back ?>">
-                  <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="40">
-                  <button class="icon-btn" type="submit" aria-label="Save"><?= icon('check', 15) ?></button>
-                </form>
-                <?php if ($isArch): ?>
-                  <!-- Restoring only widens what's visible, so it goes straight through. -->
-                  <form method="post" action="/investment-types/archive" style="margin:0; display:inline-flex;">
-                    <?= csrfInput() ?>
-                    <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
-                    <input type="hidden" name="back" value="<?= $back ?>">
-                    <button class="icon-btn" type="submit" aria-label="Restore <?= h($t['name']) ?>"
-                            title="Restore to active"><?= icon('archive-restore', 15) ?></button>
-                  </form>
-                <?php else:
-                  $nInv = (int)($invPerType[$t['name']] ?? 0);
-                  $nRec = (int)($recPerType[$t['name']] ?? 0);
-                  $body = $nInv === 1 ? '1 investment moves out of the active view.'
-                                      : "$nInv investments move out of the active view.";
-                  $body .= ' Nothing is deleted — you can restore it any time.';
-                  // The genuine surprise: a recurring item keeps auto-posting after archiving.
-                  if ($nRec > 0) {
-                      $body .= ' Heads up: ' . ($nRec === 1 ? '1 recurring item' : "$nRec recurring items")
-                             . ' still post into this type, so new entries will keep arriving as archived.'
-                             . ' Delete them on the Recurring tab to stop that.';
-                  }
-                ?>
-                  <button type="button" class="icon-btn" aria-label="Archive <?= h($t['name']) ?>" title="Archive"
-                          onclick='askConfirm(<?= h(json_encode([
-                              "action" => "/investment-types/archive",
-                              "id"     => (int)$t['id'],
-                              "back"   => strtok($requestUri, '#') . '#profile',
-                              "csrf"   => csrfToken(),
-                              "title"  => "Archive " . $t['name'] . "?",
-                              "body"   => $body,
-                              "ok"     => "Archive",
-                              "danger" => false,
-                          ])) ?>)'><?= icon('archive', 15) ?></button>
-                <?php endif; ?>
-                <?php if ($canDeleteType): ?>
-                  <button type="button" class="icon-btn" aria-label="Delete type"
-                          onclick='askConfirm(<?= h(json_encode([
-                              "action" => "/investment-types/delete",
-                              "id"     => (int)$t['id'],
-                              "back"   => strtok($requestUri, '#') . '#profile',
-                              "csrf"   => csrfToken(),
-                              "title"  => "Delete investment type?",
-                              "body"   => "Existing investments of type '" . $t['name'] . "' stay logged.",
-                              "ok"     => "Delete",
-                          ])) ?>)'><?= icon('trash-2', 14) ?></button>
-                <?php endif; ?>
-              </div>
-            <?php endforeach; ?>
-            <form method="post" action="/investment-types" class="row-form" style="margin-top:6px;">
-              <?= csrfInput() ?>
-              <input type="hidden" name="back" value="<?= $back ?>">
-              <input class="input" name="name" placeholder="e.g. Gold scheme" maxlength="40">
-              <button class="btn btn-primary" type="submit">Add</button>
-            </form>
-          </div>
-        </details>
 
         <hr>
 
@@ -2931,12 +2856,29 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
     $entryCount = $sum[$filter]['n'];      // rows the current filter will list
     $total      = $sum[$filter]['amt'];    // denominator for the visible bars
 
-    // Bars for the filtered subset only.
+    // Bars for the filtered subset only, with sub-types folded onto their parent — the same
+    // rollup the Expense tab does for sub-categories, keyed on names because that is what an
+    // investment stores. A child only folds into a parent that passes the same filter.
     $byType = array_values(array_filter(
         $allTypes,
         fn($t) => $filter === 'all' || (isset($archSet[$t['type']]) === ($filter === 'archived'))
     ));
-    usort($byType, fn($a, $b) => (float)$b['amt'] <=> (float)$a['amt']);
+    $typeRows = $db->prepare("SELECT id, name, target, parent_id FROM investment_types WHERE household_id = ?");
+    $typeRows->execute([$hid]);
+    $typeByName = array_column($typeRows->fetchAll(), null, 'name');
+    $visible    = array_column($byType, null, 'type');
+    $byType     = rollupTypes($byType, $typeByName, $visible);
+
+    // A target is per month, so it needs this month's figure to sit against — the totals above
+    // are lifetime. One extra grouped scan on the same index, folded through the same rollup.
+    $mStart = (new DateTimeImmutable('first day of this month 00:00:00'))->format('Y-m-d');
+    $mEnd   = (new DateTimeImmutable('first day of next month 00:00:00'))->format('Y-m-d');
+    $mtd = $db->prepare(
+        "SELECT type, COUNT(*) AS n, SUM(amount) AS amt FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?$whoSql GROUP BY type"
+    );
+    $mtd->execute([$hid, $mStart, $mEnd, ...$whoBind]);
+    $thisMonth = array_column(rollupTypes($mtd->fetchAll(), $typeByName, $visible), 'amt', 'name');
 
     // Paginated list, scoped to the filter.
     $pageSize  = 200;
@@ -3037,16 +2979,42 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
 
     <?php if ($grandCount > 0): ?>
       <div class="stack">
-        <?php foreach ($byType as $t): $amt = (float)$t['amt']; $pct = $total > 0 ? ($amt / $total) * 100 : 0; ?>
+        <?php foreach ($byType as $t):
+          $amt    = (float)$t['amt'];
+          $pct    = $total > 0 ? ($amt / $total) * 100 : 0;
+          $target = (float)$t['target'];
+          $mAmt   = (float)($thisMonth[$t['name']] ?? 0);
+          // With a target the bar tracks this month against it, exactly as a budgeted category
+          // bar tracks the month's spend. Without one it stays a share of the total.
+          $barPct = $target > 0 ? min(100, ($mAmt / $target) * 100) : $pct;
+        ?>
           <div class="card cat-bar">
             <div class="top">
               <div class="name">
-                <?= icon(isset($archSet[$t['type']]) ? 'archive' : 'trending-up', 18) ?> <?= h($t['type']) ?>
-                <?php if (isset($archSet[$t['type']])): ?><span class="tag-archived">archived</span><?php endif; ?>
+                <?= icon(isset($archSet[$t['name']]) ? 'archive' : 'trending-up', 18) ?> <?= h($t['name']) ?>
+                <?php if (isset($archSet[$t['name']])): ?><span class="tag-archived">archived</span><?php endif; ?>
               </div>
               <div><span class="amt"><?= h(fmt($amt)) ?></span><span class="pct"><?= number_format($pct, 2) ?>%</span></div>
             </div>
-            <div class="bar sage"><i style="width: <?= number_format(max(2, $pct), 2) ?>%"></i></div>
+            <div class="bar sage"><i style="width: <?= number_format(max(2, $barPct), 2) ?>%"></i></div>
+            <?php foreach ($t['children'] as $k): ?>
+              <div class="sub-line">
+                <span>↳ <?= h($k['name']) ?></span>
+                <span><?= h(fmt((float)$k['amt'])) ?></span>
+              </div>
+            <?php endforeach; ?>
+            <?php if ($target > 0): $short = $target - $mAmt; ?>
+              <?php /* No red on a shortfall: falling behind a target is not the same kind of
+                       news as going over a budget, and the colour would say it was. */ ?>
+              <div class="budget-note">
+                <span><?= h(fmt($target)) ?> a month · <?= number_format(($mAmt / $target) * 100, 0) ?>% this month</span>
+                <?php if ($short > 0): ?>
+                  <span><?= h(fmt($short)) ?> to go</span>
+                <?php else: ?>
+                  <span>target met</span>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -4528,8 +4496,35 @@ function renderOrganise(PDO $db, array $user): void {
       </div>
     <?php endif; ?>
 
-    <!-- Own dialog rather than the shared askConfirm(): that one posts a fixed id/back pair,
-         and this needs two selects' worth of state. -->
+    <?= organiseTools('expense', 'category', 'budget', 'spending') ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'organise', $content, '/organise');
+}
+
+// ─── Terms & Conditions ─────────────────────────────────────────────
+
+// Shared prose block — no chrome; both the authed and public wrappers embed this.
+// ────────────────────────────────────────────────────────────────────
+// /ledgers — pick which ledger you are looking at, and share it.
+// This is also where sign-in lands anyone who belongs to more than one.
+// ────────────────────────────────────────────────────────────────────
+// The nest/move confirmations, shared by both organise pages. Own dialogs rather than the
+// shared askConfirm(): that one posts a fixed id/back pair, and these need two selects' worth
+// of state. The wording is the only thing that differs between expense categories and
+// investment types, so it comes in as four nouns rather than as a second copy of the file.
+//
+// $entry  — what a row is ("expense" / "investment")
+// $thing  — what it is filed under ("category" / "type")
+// $limit  — the monthly figure ("budget" / "target")
+// $money  — what rolls up ("spending" / "money")
+function organiseTools(string $entry, string $thing, string $limit, string $money): string {
+    $entries = $entry . 's';
+    $things  = $thing === 'category' ? 'categories' : $thing . 's';
+    $j = fn(string $v): string => json_encode($v, JSON_UNESCAPED_UNICODE);
+    [$jEntry, $jEntries, $jThings, $jLimit, $jMoney] =
+        [$j($entry), $j($entries), $j($things), $j($limit), $j($money)];
+    return <<<TOOLS
     <dialog id="move-dlg" class="confirm" aria-labelledby="move-title">
       <form method="dialog">
         <div class="dlg-title" id="move-title">Move entries?</div>
@@ -4540,8 +4535,7 @@ function renderOrganise(PDO $db, array $user): void {
         </div>
       </form>
     </dialog>
-    <!-- Its own dialog, not askConfirm(): that one posts a fixed id/back pair and this needs
-         the parent from a second select. -->
+
     <dialog id="nest-dlg" class="confirm" aria-labelledby="nest-title">
       <form method="dialog">
         <div class="dlg-title" id="nest-title"></div>
@@ -4552,22 +4546,24 @@ function renderOrganise(PDO $db, array $user): void {
         </div>
       </form>
     </dialog>
+
     <script>
+    var ORG = {entry: $jEntry, entries: $jEntries, things: $jThings, limit: $jLimit, money: $jMoney};
     function syncMove() {
       var f = document.getElementById('move-from'), t = document.getElementById('move-to');
       var n = parseInt(f.selectedOptions[0].dataset.n || '0', 10);
       var same = f.value === t.value;
       var btn = document.getElementById('move-btn');
       btn.disabled = same || n === 0;
-      btn.textContent = same ? 'Pick two different categories'
+      btn.textContent = same ? 'Pick two different ' + ORG.things
                      : n === 0 ? 'Nothing to move'
-                     : 'Move ' + n + (n === 1 ? ' expense' : ' expenses');
+                     : 'Move ' + n + ' ' + (n === 1 ? ORG.entry : ORG.entries);
     }
     function askMove(e) {
       e.preventDefault();
       var f = document.getElementById('move-from'), t = document.getElementById('move-to');
       document.getElementById('move-body').textContent =
-        'Every expense in "' + f.selectedOptions[0].dataset.name + '" moves to "' +
+        'Every ' + ORG.entry + ' in "' + f.selectedOptions[0].dataset.name + '" moves to "' +
         t.selectedOptions[0].dataset.name + '", along with any recurring item that posts into it. ' +
         'Moving them back afterwards would also carry entries that were already there.';
       document.getElementById('move-dlg').showModal();
@@ -4596,10 +4592,11 @@ function renderOrganise(PDO $db, array $user): void {
       var bud = c.selectedOptions[0].dataset.budget;
       document.getElementById('nest-title').textContent = 'Nest ' + kid + ' under ' + par + '?';
       document.getElementById('nest-dlg-body').textContent =
-        kid + ' keeps its own entries, but its spending now rolls up into ' + par +
-        ' and counts against that budget instead of standing on its own.' +
-        // The budget is the one part that can't be undone by moving it back out.
-        (bud ? ' Its ' + bud + ' monthly budget will be cleared — sub-categories don’t carry one.' : '');
+        kid + ' keeps its own entries, but its ' + ORG.money + ' now rolls up into ' + par +
+        ' and counts towards that ' + ORG.limit + ' instead of standing on its own.' +
+        // The one part that can't be undone by moving it back out.
+        (bud ? ' Its ' + bud + ' monthly ' + ORG.limit + ' will be cleared — sub-'
+             + ORG.things + ' don’t carry one.' : '');
       document.getElementById('nest-dlg').showModal();
       return false;
     }
@@ -4609,18 +4606,269 @@ function renderOrganise(PDO $db, array $user): void {
     }
     syncMove(); syncNest();
     </script>
-    <?php
-    $content = ob_get_clean();
-    layout($db, $user, 'organise', $content, '/organise');
+TOOLS;
 }
 
-// ─── Terms & Conditions ─────────────────────────────────────────────
+// ─── Organise investment types ──────────────────────────────────────
+// The twin of renderOrganise(), for the other side of the ledger. Same shape on purpose: one
+// card per top-level type, sub-types on a spine beneath it, then nest / add / move.
+//
+// The one real difference is underneath. An expense names its category by id; an investment
+// names its type by the type's *name*, so every tool here works on strings — moving entries
+// rewrites `investments.type`, and renaming cascades. That is also why two types may not share
+// a name (typeNameTaken), which categories never had to care about.
+function renderOrganiseInvest(PDO $db, array $user): void {
+    $hid = (int)$user['household_id'];
+    $types = $db->prepare("SELECT * FROM investment_types WHERE household_id = ? ORDER BY archived, id");
+    $types->execute([$hid]); $types = $types->fetchAll();
+    $tree = categoryTree($types);   // id/parent_id only — the shape is identical
 
-// Shared prose block — no chrome; both the authed and public wrappers embed this.
-// ────────────────────────────────────────────────────────────────────
-// /ledgers — pick which ledger you are looking at, and share it.
-// This is also where sign-in lands anyone who belongs to more than one.
-// ────────────────────────────────────────────────────────────────────
+    // Entry counts drive the "Move 23 investments" label, so the tap is never blind. Keyed by
+    // name, because that is the column an investment actually holds.
+    $s = $db->prepare("SELECT type, COUNT(*) n FROM investments WHERE household_id = ? GROUP BY type");
+    $s->execute([$hid]); $counts = array_column($s->fetchAll(), 'n', 'type');
+    // Recurring items matter here too: they keep posting into whatever name they hold.
+    $r = $db->prepare("SELECT type, COUNT(*) n FROM recurring WHERE household_id = ? AND kind = 'investment' GROUP BY type");
+    $r->execute([$hid]); $recCounts = array_column($r->fetchAll(), 'n', 'type');
+    // Same predicate the move tool uses, so the number on screen is exactly what it touches.
+    $u = $db->prepare("SELECT COUNT(*) FROM investments WHERE " . unknownTypeWhere());
+    $u->execute([$hid, $hid]); $nUnknown = (int)$u->fetchColumn();
+
+    $currency = $_SESSION['currency'] ?? '₹';
+    $kids = [];
+    foreach ($types as $t) if (!empty($t['parent_id'])) $kids[(int)$t['parent_id']][] = $t;
+    $kidCount = array_map('count', $kids);
+    $tops = array_values(array_filter($types, fn($t) => empty($t['parent_id'])));
+    // Types that actually have sub-types lead, so the hierarchy is the first thing on the page.
+    usort($tops, fn($a, $b) => ($kidCount[(int)$b['id']] ?? 0) <=> ($kidCount[(int)$a['id']] ?? 0));
+    $canDelete = count($types) > 1;
+
+    ob_start();
+    ?>
+    <div class="month-switch">
+      <a href="/#profile" class="btn btn-icon" aria-label="Back"><?= icon('chevron-left', 20) ?></a>
+      <div class="label" style="font-size:16px;">Organise investment types</div>
+      <span class="btn btn-icon" style="opacity:0; pointer-events:none;"><?= icon('chevron-right', 20) ?></span>
+    </div>
+
+    <div class="muted" style="font-size:12px; margin: 0 2px;">
+      Rename, set a target per month, nest, archive and delete — everything about investment
+      types lives here. A sub-type's money rolls up into its parent's bar and target, so only
+      parents carry one. Archive a type when a scheme ends: its entries stay logged and drop
+      out of the active view.
+    </div>
+
+    <div class="stack">
+      <?php foreach ($tops as $t):
+        $list  = $kids[(int)$t['id']] ?? [];
+        $nAll  = (int)($counts[$t['name']] ?? 0);
+        foreach ($list as $k) $nAll += (int)($counts[$k['name']] ?? 0);
+        $isArch = (int)$t['archived'] === 1;
+        $nRec   = (int)($recCounts[$t['name']] ?? 0);
+      ?>
+        <div class="card tree-node<?= $isArch ? ' archived' : '' ?>">
+          <div class="tree-head">
+            <form method="post" action="/investment-types/update" class="tree-row">
+              <?= csrfInput() ?>
+              <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+              <input type="hidden" name="back" value="/organise-invest">
+              <span class="tree-ico"><?= icon($isArch ? 'archive' : 'trending-up', 16) ?></span>
+              <input class="input" name="name" value="<?= h($t['name']) ?>" maxlength="40" aria-label="Type name">
+              <input class="input budget-in" name="target" type="text" inputmode="decimal"
+                     pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+                     value="<?= (float)$t['target'] > 0 ? h(rtrim(rtrim(number_format((float)$t['target'], 2, '.', ''), '0'), '.')) : '' ?>"
+                     placeholder="<?= h($currency) ?>" aria-label="Target per month for <?= h($t['name']) ?>">
+              <button class="icon-btn" type="submit" aria-label="Save <?= h($t['name']) ?>"><?= icon('check', 15) ?></button>
+            </form>
+            <?php if ($isArch): ?>
+              <?php /* Restoring only widens what is visible, so it goes straight through. */ ?>
+              <form method="post" action="/investment-types/archive" style="margin:0; display:inline-flex;">
+                <?= csrfInput() ?>
+                <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+                <input type="hidden" name="back" value="/organise-invest">
+                <button class="icon-btn" type="submit" aria-label="Restore <?= h($t['name']) ?>"
+                        title="Restore to active"><?= icon('archive-restore', 15) ?></button>
+              </form>
+            <?php else: ?>
+              <button type="button" class="icon-btn" title="Archive" aria-label="Archive <?= h($t['name']) ?>"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/investment-types/archive",
+                          "id"     => (int)$t['id'],
+                          "back"   => "/organise-invest",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Archive " . $t['name'] . "?",
+                          "body"   => ($nAll === 1 ? '1 investment moves' : "$nAll investments move")
+                                      . ' out of the active view. Nothing is deleted — you can restore it any time.'
+                                      // The genuine surprise: a recurring item keeps posting after archiving.
+                                      . ($nRec > 0 ? ' Heads up: ' . ($nRec === 1 ? '1 recurring item' : "$nRec recurring items")
+                                          . ' still post into this type, so new entries will keep arriving as archived.'
+                                          . ' Delete them on the Recurring tab to stop that.' : ''),
+                          "ok"     => "Archive",
+                          "danger" => false,
+                      ])) ?>)'><?= icon('archive', 15) ?></button>
+            <?php endif; ?>
+            <?php if ($canDelete): ?>
+              <button type="button" class="icon-btn" aria-label="Delete <?= h($t['name']) ?>"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/investment-types/delete",
+                          "id"     => (int)$t['id'],
+                          "back"   => "/organise-invest",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Delete " . $t['name'] . "?",
+                          // Deletion is refused server-side while anything still names the type,
+                          // so the dialog says which it will be rather than promising either.
+                          "body"   => ($nAll === 0
+                                        ? 'Nothing is logged under it.'
+                                        : "It still holds $nAll entr" . ($nAll === 1 ? 'y' : 'ies')
+                                          . ', so this will be refused — move them into another type first.')
+                                      . ($list ? ' Its ' . (count($list) === 1 ? 'sub-type moves' : count($list) . ' sub-types move')
+                                               . ' back to top level.' : ''),
+                          "ok"     => "Delete",
+                      ])) ?>)'><?= icon('trash-2', 14) ?></button>
+            <?php endif; ?>
+          </div>
+          <div class="tree-metaline">
+            <?php if ((float)$t['target'] > 0): ?><?= h(fmtShort((float)$t['target'])) ?> a month · <?php endif; ?>
+            <?= $nAll ?> <?= $nAll === 1 ? 'entry' : 'entries' ?><?= $list ? ' incl. sub' : '' ?>
+            <?= $isArch ? ' · archived' : '' ?>
+          </div>
+
+          <?php foreach ($list as $i => $k): $nK = (int)($counts[$k['name']] ?? 0); ?>
+            <div class="tree-kid<?= $i === count($list) - 1 ? ' last' : '' ?>">
+              <form method="post" action="/investment-types/update" class="tree-row">
+                <?= csrfInput() ?>
+                <input type="hidden" name="id" value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="back" value="/organise-invest">
+                <!-- No target field: /investment-types/update reads a missing `target` as blank,
+                     which parseBudget turns into 0 — exactly what a sub-type must hold. -->
+                <span class="tree-ico"><?= icon('trending-up', 14) ?></span>
+                <input class="input" name="name" value="<?= h($k['name']) ?>" maxlength="40" aria-label="Sub-type name">
+                <span class="tree-meta"><?= $nK ?></span>
+                <button class="icon-btn" type="submit" aria-label="Save <?= h($k['name']) ?>"><?= icon('check', 15) ?></button>
+              </form>
+              <button type="button" class="icon-btn" title="Move out to top level"
+                      aria-label="Move <?= h($k['name']) ?> out of <?= h($t['name']) ?>"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/investment-types/parent",
+                          "id"     => (int)$k['id'],
+                          "back"   => "/organise-invest",
+                          "csrf"   => csrfToken(),
+                          "title"  => "Move " . $k['name'] . " out?",
+                          "body"   => $k['name'] . ' becomes a top-level type again'
+                                      . ($nK ? ", keeping its $nK entr" . ($nK === 1 ? 'y' : 'ies') : '')
+                                      . '. Its money stops rolling up into ' . $t['name']
+                                      . ', so it no longer counts towards that target — and it can carry one of its own again.',
+                          "ok"     => "Move out",
+                          "danger" => false,
+                      ])) ?>)'><?= icon('corner-left-up', 14) ?></button>
+              <?php if ($canDelete): ?>
+                <button type="button" class="icon-btn" aria-label="Delete <?= h($k['name']) ?>"
+                        onclick='askConfirm(<?= h(json_encode([
+                            "action" => "/investment-types/delete",
+                            "id"     => (int)$k['id'],
+                            "back"   => "/organise-invest",
+                            "csrf"   => csrfToken(),
+                            "title"  => "Delete " . $k['name'] . "?",
+                            "body"   => $nK === 0 ? 'Nothing is logged under it.'
+                                      : "It still holds $nK entr" . ($nK === 1 ? 'y' : 'ies')
+                                        . ', so this will be refused — move them into another type first.',
+                            "ok"     => "Delete",
+                        ])) ?>)'><?= icon('trash-2', 14) ?></button>
+              <?php endif; ?>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endforeach; ?>
+    </div>
+
+    <form method="post" action="/investment-types" class="row-form" style="margin-top:2px;">
+      <?= csrfInput() ?>
+      <input type="hidden" name="back" value="/organise-invest">
+      <input class="input" name="name" placeholder="New type" maxlength="40">
+      <input class="input budget-in" name="target" type="text" inputmode="decimal"
+             pattern="\d{0,10}(\.\d{1,2})?" maxlength="13"
+             placeholder="<?= h($currency) ?>" aria-label="Target per month">
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+
+    <?php
+    // Only a type with no sub-types of its own can become one — one level, enforced server-side.
+    $nestable = array_values(array_filter($types, fn($t) => ($kidCount[(int)$t['id']] ?? 0) === 0));
+    ?>
+    <?php if ($nestable && count($tops) > 1): ?>
+      <div class="day-hdr">Nest a type</div>
+      <form method="post" action="/investment-types/parent" class="card stack" id="nest-form"
+            style="padding:var(--space-4); gap:10px;" onsubmit="return askNest(event)">
+        <?= csrfInput() ?>
+        <input type="hidden" name="back" value="/organise-invest">
+        <div class="field-row" style="align-items:center; gap:6px;">
+          <select class="select" name="id" id="nest-id" onchange="syncNest()">
+            <?php foreach ($nestable as $t): ?>
+              <!-- data-budget drives the confirmation: nesting zeroes a target, and that value
+                   is the one thing here you can't get back with a second tap. -->
+              <option value="<?= (int)$t['id'] ?>" data-budget="<?= h((float)$t['target'] > 0 ? fmt((float)$t['target']) : '') ?>"><?= h($t['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="muted" style="flex:0 0 auto; font-size:12px;">under</span>
+          <select class="select" name="parent_id" id="nest-parent" onchange="syncNest()">
+            <?php foreach ($tops as $p): ?>
+              <option value="<?= (int)$p['id'] ?>"><?= h($p['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="muted" style="font-size:11.5px;" id="nest-note"></div>
+        <button class="btn btn-primary btn-block" type="submit" id="nest-btn">Nest</button>
+      </form>
+    <?php endif; ?>
+
+    <div class="day-hdr">Move entries</div>
+    <form method="post" action="/investment-types/move" id="move-form" class="card stack"
+          style="padding:var(--space-4); gap:10px;" onsubmit="return askMove(event)">
+      <?= csrfInput() ?>
+      <input type="hidden" name="back" value="/organise-invest">
+      <div class="muted" style="font-size:12px;">Merge one type into another. Every investment moves, and so does any recurring item that posts into it. The emptied type stays — delete it above once you're done with it.</div>
+      <label class="muted" style="font-size:11px;">From</label>
+      <select class="select" name="from_id" id="move-from" onchange="syncMove()">
+        <?php if ($nUnknown > 0): ?>
+          <!-- id 0 is the pseudo-type; the handler maps it to unknownTypeWhere(). -->
+          <option value="0" data-n="<?= $nUnknown ?>" data-name="Unrecognised">Unrecognised (<?= $nUnknown ?>)</option>
+        <?php endif; ?>
+        <?php foreach ($tree as $t): $n = (int)($counts[$t['name']] ?? 0); ?>
+          <option value="<?= (int)$t['id'] ?>" data-n="<?= $n ?>" data-name="<?= h($t['name']) ?>">
+            <?= $t['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($t['name']) ?> (<?= $n ?>)
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <label class="muted" style="font-size:11px;">To</label>
+      <select class="select" name="to_id" id="move-to" onchange="syncMove()">
+        <?php foreach ($tree as $t): ?>
+          <option value="<?= (int)$t['id'] ?>" data-name="<?= h($t['name']) ?>">
+            <?= $t['depth'] ? '&nbsp;&nbsp;↳ ' : '' ?><?= h($t['name']) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <button class="btn btn-primary btn-block" type="submit" id="move-btn">Move entries</button>
+    </form>
+
+    <?php if ($nUnknown > 0): ?>
+      <div class="card cat-bar">
+        <div class="top">
+          <div class="name"><?= icon('more-horizontal', 18) ?> Unrecognised</div>
+          <div><span class="amt"><?= $nUnknown ?> <?= $nUnknown === 1 ? 'entry' : 'entries' ?></span></div>
+        </div>
+        <div class="muted" style="font-size:11.5px; margin-top:6px;">
+          Investments naming a type this ledger no longer has. They are invisible in every
+          by-type view until you file them somewhere with <strong>Move entries</strong> above —
+          "Unrecognised" is the first option in the From list.
+        </div>
+      </div>
+    <?php endif; ?>
+    <?= organiseTools('investment', 'type', 'target', 'money') ?>
+    <?php
+    $content = ob_get_clean();
+    layout($db, $user, 'organise', $content, '/organise-invest');
+}
+
 // The "who?" select, shared by every add and edit dialog outside the Add tab (which has its
 // own chips). A ledger with one member has nothing to choose, so this emits nothing at all
 // and the entry simply carries no member — same as before sharing existed.

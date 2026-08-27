@@ -193,6 +193,26 @@ if (PHP_SAPI === 'cli') {
         assert(memberLabel($appa, 7) === 'Appa');     // nobody signs in as Appa, so the household names him
         assert(memberLabel($appa, 9) === 'Appa');
 
+        // Investment types roll up by NAME, because that is what an investment stores. A child
+        // only folds into a parent the current filter can actually show, or an "active" view
+        // would print an archived type's name over somebody else's money.
+        $tt = [
+            'SIP'    => ['id' => 1, 'name' => 'SIP',    'target' => 5000, 'parent_id' => null],
+            'Nifty'  => ['id' => 2, 'name' => 'Nifty',  'target' => 0,    'parent_id' => 1],
+            'Gold'   => ['id' => 3, 'name' => 'Gold',   'target' => 0,    'parent_id' => null],
+        ];
+        $rows = [['type' => 'SIP', 'n' => 1, 'amt' => 2000], ['type' => 'Nifty', 'n' => 2, 'amt' => 2400],
+                 ['type' => 'Gold', 'n' => 1, 'amt' => 900]];
+        $vis  = ['SIP' => 1, 'Nifty' => 1, 'Gold' => 1];
+        $roll = array_column(rollupTypes($rows, $tt, $vis), null, 'name');
+        assert($roll['SIP']['amt'] === 4400.0);                 // parent carries its children's money
+        assert($roll['SIP']['target'] === 5000.0);              // …against the parent's target
+        assert(count($roll['SIP']['children']) === 1);
+        assert(!isset($roll['Nifty']));                         // a child never gets a bar of its own
+        // Parent filtered out (archived, say): the child stands alone rather than vanishing.
+        $solo = array_column(rollupTypes($rows, $tt, ['Nifty' => 1, 'Gold' => 1]), null, 'name');
+        assert($solo['Nifty']['amt'] === 2400.0 && $solo['Nifty']['children'] === []);
+
         // monthsSpan is the inverse of splitPlan's end date, and editing a split depends on it
         // round-tripping: the dialog re-derives "how many months" from the dates it stored.
         foreach ([2, 6, 12, 18, 24, 36, 120] as $n) {
@@ -905,6 +925,7 @@ if (PHP_SAPI === 'cli') {
                 'recurring' => ['renderRecurring', [$db, $stub, true]],
                 'year'      => ['renderYear',      [$db, $stub, (int)date('Y'), 'cal', 'all']],
                 'organise'  => ['renderOrganise',  [$db, $stub]],
+                'orginvest' => ['renderOrganiseInvest', [$db, $stub]],
                 'ledgers'   => ['renderLedgers',   [$db, $stub]],
                 'terms'     => ['renderTerms',     [$db, $stub]],
             ] as $name => [$fn, $args]) {
@@ -2054,7 +2075,8 @@ if ($method === 'POST') {
                 redirect($_POST['back'] ?? '/organise');
 
             case '/investment-types':
-                $name = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
+                $name   = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
+                $target = parseBudget((string)($_POST['target'] ?? ''), $config, 'Target');
                 assertUnderLimit(
                     $db,
                     "SELECT COUNT(*) FROM investment_types WHERE household_id = ?",
@@ -2062,29 +2084,39 @@ if ($method === 'POST') {
                     30,
                     'Investment types'
                 );
-                $db->prepare("INSERT INTO investment_types (household_id, name) VALUES (?, ?)")
-                   ->execute([$hid, $name]);
+                if (typeNameTaken($db, $hid, $name)) throw new UserErr('There is already a type called ' . $name . '.');
+                $db->prepare("INSERT INTO investment_types (household_id, name, target) VALUES (?, ?, ?)")
+                   ->execute([$hid, $name, $target]);
                 flash('success', 'Investment type added');
                 redirect($_POST['back'] ?? '/');
 
             case '/investment-types/update':
                 $id      = (int)($_POST['id'] ?? 0);
                 $newName = requireStr((string)($_POST['name'] ?? ''), 40, 'Investment type');
-                // Fetch the old name so we can cascade-rename existing investments.
+                // A missing `target` reads as blank, which parseBudget turns into 0 — exactly
+                // what a sub-type must hold, and the sub-type rows post no field at all.
+                $target  = parseBudget((string)($_POST['target'] ?? ''), $config, 'Target');
                 $old = $db->prepare("SELECT name FROM investment_types WHERE id = ? AND household_id = ?");
                 $old->execute([$id, $hid]);
                 $oldName = (string)$old->fetchColumn();
-                if ($oldName !== '' && $oldName !== $newName) {
-                    $db->beginTransaction();
-                    try {
-                        $db->prepare("UPDATE investment_types SET name = ? WHERE id = ? AND household_id = ?")
-                           ->execute([$newName, $id, $hid]);
+                if ($oldName === '') throw new UserErr('Unknown investment type.');
+                if (typeNameTaken($db, $hid, $newName, $id)) throw new UserErr('There is already a type called ' . $newName . '.');
+                $db->beginTransaction();
+                try {
+                    $db->prepare("UPDATE investment_types SET name = ?, target = ? WHERE id = ? AND household_id = ?")
+                       ->execute([$newName, $target, $id, $hid]);
+                    if ($oldName !== $newName) {
+                        // Both tables key on the name, so both have to follow it. recurring was
+                        // missed until now: renaming a type left its recurring items posting
+                        // into a name nothing recognised, and the entries went unrecognised too.
                         $db->prepare("UPDATE investments SET type = ? WHERE household_id = ? AND type = ?")
                            ->execute([$newName, $hid, $oldName]);
-                        $db->commit();
-                    } catch (Throwable $e) { $db->rollBack(); throw $e; }
-                }
-                flash('success', 'Investment type renamed');
+                        $db->prepare("UPDATE recurring SET type = ? WHERE household_id = ? AND type = ? AND kind = 'investment'")
+                           ->execute([$newName, $hid, $oldName]);
+                    }
+                    $db->commit();
+                } catch (Throwable $e) { $db->rollBack(); throw $e; }
+                flash('success', 'Investment type saved');
                 redirect($_POST['back'] ?? '/');
 
             case '/investment-types/archive':
@@ -2119,10 +2151,91 @@ if ($method === 'POST') {
                         redirect($_POST['back'] ?? '/');
                     }
                 }
-                $db->prepare("DELETE FROM investment_types WHERE id = ? AND household_id = ?")
-                   ->execute([$id, $hid]);
+                $db->beginTransaction();
+                try {
+                    // Sub-types outlive their parent at top level, or their money would roll up
+                    // into a row that no longer exists.
+                    $db->prepare("UPDATE investment_types SET parent_id = NULL WHERE parent_id = ? AND household_id = ?")
+                       ->execute([$id, $hid]);
+                    $db->prepare("DELETE FROM investment_types WHERE id = ? AND household_id = ?")
+                       ->execute([$id, $hid]);
+                    $db->commit();
+                } catch (Throwable $e) { $db->rollBack(); throw $e; }
                 flash('success', 'Investment type removed');
                 redirect($_POST['back'] ?? '/');
+
+            case '/investment-types/parent':
+                // Assign or clear a type's parent. One level only, the same rule categories
+                // follow: the target must be top-level and the type being moved must have no
+                // sub-types of its own.
+                $id     = (int)($_POST['id'] ?? 0);
+                $parent = (int)($_POST['parent_id'] ?? 0);
+                if (!ownedId($db, 'investment_types', $hid, $id)) throw new UserErr('Unknown investment type.');
+
+                $kids = $db->prepare("SELECT COUNT(*) FROM investment_types WHERE parent_id = ? AND household_id = ?");
+                $kids->execute([$id, $hid]);
+                if ($parent && (int)$kids->fetchColumn() > 0) {
+                    throw new UserErr('This type already has sub-types, so it cannot become one itself.');
+                }
+                if ($parent) {
+                    if ($parent === $id) throw new UserErr('A type cannot be its own parent.');
+                    $p = $db->prepare("SELECT parent_id FROM investment_types WHERE id = ? AND household_id = ?");
+                    $p->execute([$parent, $hid]);
+                    $row = $p->fetch();
+                    if (!$row) throw new UserErr('Unknown parent type.');
+                    if (!empty($row['parent_id'])) throw new UserErr('Sub-types only go one level deep — pick a top-level type.');
+                }
+
+                // A child never carries its own target, or the household total counts it twice.
+                $cur = $db->prepare("SELECT name, target FROM investment_types WHERE id = ? AND household_id = ?");
+                $cur->execute([$id, $hid]);
+                $me = $cur->fetch();
+                $clearing = $parent && (float)$me['target'] > 0;
+                $db->prepare("UPDATE investment_types SET parent_id = ?, target = ? WHERE id = ? AND household_id = ?")
+                   ->execute([$parent ?: null, $parent ? 0 : (float)$me['target'], $id, $hid]);
+                flash('success', $parent
+                    ? $me['name'] . ' is now a sub-type'
+                      . ($clearing ? ' — its ' . fmt((float)$me['target']) . ' target was cleared, the parent target now covers it' : '')
+                    : $me['name'] . ' moved back to top level');
+                redirect($_POST['back'] ?? '/organise-invest');
+
+            case '/investment-types/move':
+                // Bulk re-file: every investment of $from becomes $to, and so does any recurring
+                // item that posts into it — otherwise the next sweep puts the old name straight
+                // back. from_id 0 is the pseudo-type "Unrecognised": entries naming a type this
+                // household no longer has, which no by-type view can otherwise reach.
+                $fromRaw = (int)($_POST['from_id'] ?? 0);
+                $toId    = ownedId($db, 'investment_types', $hid, (int)($_POST['to_id'] ?? 0));
+                if (!$toId) throw new UserErr('Pick a type to move into.');
+                $toName = $db->prepare("SELECT name FROM investment_types WHERE id = ? AND household_id = ?");
+                $toName->execute([$toId, $hid]);
+                $to = (string)$toName->fetchColumn();
+                $db->beginTransaction();
+                try {
+                    if ($fromRaw === 0) {
+                        $movI = $db->prepare("UPDATE investments SET type = ? WHERE " . unknownTypeWhere());
+                        $movI->execute([$to, $hid, $hid]);
+                        $nI = $movI->rowCount(); $nR = 0;
+                    } else {
+                        $fromId = ownedId($db, 'investment_types', $hid, $fromRaw);
+                        if (!$fromId)         throw new UserErr('Unknown investment type.');
+                        if ($fromId === $toId) throw new UserErr('Pick two different types.');
+                        $fn = $db->prepare("SELECT name FROM investment_types WHERE id = ? AND household_id = ?");
+                        $fn->execute([$fromId, $hid]);
+                        $from = (string)$fn->fetchColumn();
+                        $movI = $db->prepare("UPDATE investments SET type = ? WHERE household_id = ? AND type = ?");
+                        $movI->execute([$to, $hid, $from]);
+                        $movR = $db->prepare("UPDATE recurring SET type = ? WHERE household_id = ? AND type = ? AND kind = 'investment'");
+                        $movR->execute([$to, $hid, $from]);
+                        $nI = $movI->rowCount(); $nR = $movR->rowCount();
+                    }
+                    $db->commit();
+                } catch (Throwable $t) { $db->rollBack(); throw $t; }
+                flash('success', $nI === 0 && $nR === 0
+                    ? 'Nothing to move'
+                    : "Moved $nI " . ($nI === 1 ? 'investment' : 'investments')
+                      . ($nR ? " and $nR recurring " . ($nR === 1 ? 'item' : 'items') : ''));
+                redirect($_POST['back'] ?? '/organise-invest');
 
             case '/members':
                 $name = requireStr((string)($_POST['name'] ?? ''), 60, 'Member name');
@@ -2184,6 +2297,7 @@ switch ($path) {
     case '/invest':    renderInvest($db, $user, isset($_GET['new']), (string)($_GET['f'] ?? 'active')); break;
     case '/earn':      renderEarn($db, $user, isset($_GET['new'])); break;
     case '/organise':  renderOrganise($db, $user); break;
+    case '/organise-invest': renderOrganiseInvest($db, $user); break;
     case '/recurring': renderRecurring($db, $user, isset($_GET['new'])); break;
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;

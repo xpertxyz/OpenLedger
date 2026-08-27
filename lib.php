@@ -138,11 +138,16 @@ const SCHEMA_STATEMENTS = [
         INDEX ix_window (window_end)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
+    // `target` is the monthly figure this household means to put in — the investment side of
+    // a category budget, and it hangs off the parent for the same reason: a sub-type's money
+    // rolls up, so two targets on one branch would count the same rupee twice.
     "CREATE TABLE IF NOT EXISTS investment_types (
         id INT AUTO_INCREMENT PRIMARY KEY,
         household_id INT NOT NULL,
         name VARCHAR(40) NOT NULL,
         archived TINYINT(1) NOT NULL DEFAULT 0,
+        target DECIMAL(12,2) NOT NULL DEFAULT 0,
+        parent_id INT NULL,
         INDEX ix_household (household_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 
@@ -243,12 +248,17 @@ const MIGRATIONS = [
     // is_dark already worked that way, and the pair together is the whole choice. An
     // unknown value renders as 'organic', so this can never leave a page unstyled.
     "ALTER TABLE users ADD COLUMN theme VARCHAR(16) NOT NULL DEFAULT 'organic'",
+    // v19 — investment types get the two things expense categories always had: somewhere to
+    // nest, and a figure to aim at. "Target" rather than "budget" because the number means the
+    // opposite thing — a budget is a ceiling you would rather stay under, a target is a floor.
+    "ALTER TABLE investment_types ADD COLUMN target DECIMAL(12,2) NOT NULL DEFAULT 0",
+    "ALTER TABLE investment_types ADD COLUMN parent_id INT NULL",
 ];
 
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v18';
+const SCHEMA_SENTINEL = '.schema-ok-v19';
 
 // A ledger is a household; these are the only two roles it has. The owner is whoever created
 // it — they can edit every entry, invite people and remove them. Everyone else edits their own.
@@ -1157,13 +1167,15 @@ function validInvestmentType(PDO $db, int $hid, string $type): string {
 }
 
 // Budgets are optional and 0 means "no budget", so this can't reuse parseAmount (which
-// rejects 0). Blank input is also 0 — clearing the field removes the budget.
-function parseBudget(string $raw, array $cfg): float {
+// rejects 0). Blank input is also 0 — clearing the field removes the budget. $label is what
+// the error calls it: investment types set a "target", which is the same field with the
+// opposite meaning.
+function parseBudget(string $raw, array $cfg, string $label = 'Budget'): float {
     $raw = trim($raw);
     if ($raw === '') return 0.0;
-    if (!preg_match('/^\d{1,10}(\.\d{1,2})?$/', $raw)) throw new UserErr('Invalid budget.');
+    if (!preg_match('/^\d{1,10}(\.\d{1,2})?$/', $raw)) throw new UserErr('Invalid ' . strtolower($label) . '.');
     $b = round((float)$raw, 2);
-    if ($b > $cfg['limits']['amount_max']) throw new UserErr('Budget too large.');
+    if ($b > $cfg['limits']['amount_max']) throw new UserErr($label . ' too large.');
     return $b;
 }
 
@@ -1174,6 +1186,59 @@ function archivedTypeNames(PDO $db, int $hid): array {
     $s = $db->prepare("SELECT name FROM investment_types WHERE household_id = ? AND archived = 1");
     $s->execute([$hid]);
     return $s->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// The investments twin of uncategorisedWhere(). `investments.type` is a name, not an FK, so
+// a row can name a type this household no longer has — deleting one is refused while it is in
+// use, but a restore from an older backup can land entries whose type went away. Those are
+// invisible in every by-type view until something offers to re-file them.
+function unknownTypeWhere(): string {
+    return "household_id = ? AND type NOT IN (SELECT name FROM investment_types WHERE household_id = ?)";
+}
+
+// Fold per-type money into parent buckets — the investment twin of rollupCategories(), but
+// keyed on names because that is what an investment stores. $rows are [type, n, amt]; $types
+// is the household's type rows by name. A child only folds into a parent that is itself in
+// $visible, so the archived/active filter can never pull a hidden name onto the screen.
+function rollupTypes(array $rows, array $types, array $visible): array {
+    $out = [];
+    foreach ($rows as $r) {
+        $name  = (string)$r['type'];
+        $me    = $types[$name] ?? null;
+        $par   = null;
+        if ($me && !empty($me['parent_id'])) {
+            foreach ($types as $t) {
+                if ((int)$t['id'] === (int)$me['parent_id'] && isset($visible[$t['name']])) { $par = $t; break; }
+            }
+        }
+        $key = $par ? (string)$par['name'] : $name;
+        if (!isset($out[$key])) {
+            $out[$key] = [
+                'name'     => $key,
+                'target'   => (float)($par['target'] ?? $me['target'] ?? 0),
+                'amt'      => 0.0,
+                'n'        => 0,
+                'children' => [],
+            ];
+        }
+        $out[$key]['amt'] += (float)$r['amt'];
+        $out[$key]['n']   += (int)$r['n'];
+        if ($par) $out[$key]['children'][] = ['name' => $name, 'amt' => (float)$r['amt']];
+    }
+    foreach ($out as $k => $b) {
+        if ($b['children']) usort($out[$k]['children'], fn($a, $c) => $c['amt'] <=> $a['amt']);
+    }
+    usort($out, fn($a, $b) => $b['amt'] <=> $a['amt']);
+    return array_values($out);
+}
+
+// Names are the join key between investment_types and investments, so two types sharing one
+// would make "which type is this?" unanswerable — the rollup, the archive filter and the
+// rename cascade all match on the string.
+function typeNameTaken(PDO $db, int $hid, string $name, int $exceptId = 0): bool {
+    $s = $db->prepare("SELECT COUNT(*) FROM investment_types WHERE household_id = ? AND name = ? AND id <> ?");
+    $s->execute([$hid, $name, $exceptId]);
+    return (int)$s->fetchColumn() > 0;
 }
 
 // Type-scoping clause for an investment list: returns [sqlFragment, params] to append to
