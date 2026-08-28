@@ -1662,6 +1662,10 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
           </div>
         </section>
 
+        <?php /* Nothing to sign out of in the local build. There is no account, and the one
+                 local user is resolved again on the very next request (index.php), so this was
+                 a confirmation dialog that put you back exactly where you already were. */ ?>
+        <?php if (FEATURE_SIGNIN): ?>
         <section>
           <button class="btn btn-danger btn-block" type="button"
                   onclick='askConfirm(<?= h(json_encode([
@@ -1672,6 +1676,7 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                       "ok"     => "Sign out",
                   ])) ?>)'>Sign out</button>
         </section>
+        <?php endif; ?>
       </div>
     </aside>
     <?php
@@ -5628,6 +5633,10 @@ function renderLedgers(PDO $db, array $user): void {
     </div>
 
     <div class="card elev-sm" style="padding:14px; margin-top:10px;">
+      <?php /* Accounts, not people. Without sign-in there are none — one local user, no
+               second device to let in — so the local build opens this card straight onto the
+               names entries are actually filed under. */ ?>
+      <?php if (FEATURE_SIGNIN): ?>
       <h4 style="margin:0 0 2px;">Signed in (<?= count($people) ?> of <?= HOUSEHOLD_USERS_MAX ?>)</h4>
       <div class="muted" style="font-size:12px; margin-bottom:8px;">People who can open this ledger.</div>
       <?php foreach ($people as $p): ?>
@@ -5652,17 +5661,24 @@ function renderLedgers(PDO $db, array $user): void {
           <?php endif; ?>
         </div>
       <?php endforeach; ?>
+      <hr style="margin:12px 0 8px;">
+      <?php endif; ?>
 
       <?php /* Adding and renaming are everyone's job — neither loses anything. Removing takes
                away a name the rest of the household files entries under, so that stays with
                the owner. The server enforces the same split; this only reflects it. */ ?>
-        <hr style="margin:12px 0 8px;">
         <h4 style="margin:0 0 2px;">Names on entries</h4>
         <div class="muted" style="font-size:12px; margin-bottom:8px;">
-          What each person is called on an entry and on the filter. Add a name for someone who
-          does not sign in: a child, a parent, a shared card — rename those freely, entries stay
-          attached to the person and not to the spelling. A name gets no access; only an invite
-          does. Anyone who signs in brings their own name and reads as "Me" in their own login.
+          What each person is called on an entry and on the filter.
+          <?php if (FEATURE_SIGNIN): ?>
+            Add a name for someone who does not sign in: a child, a parent, a shared card —
+            rename those freely, entries stay attached to the person and not to the spelling.
+            A name gets no access; only an invite does. Anyone who signs in brings their own
+            name and reads as "Me" in their own login.
+          <?php else: ?>
+            Add one for everybody who spends: a child, a parent, a shared card. Rename them
+            freely — entries stay attached to the person, not to the spelling.
+          <?php endif; ?>
         </div>
         <?php foreach ($labels as $m): $linked = !empty($m['user_id']); ?>
           <div class="row-form" style="margin-bottom:6px; align-items:center;">
