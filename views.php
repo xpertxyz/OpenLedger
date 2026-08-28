@@ -5820,7 +5820,7 @@ function termsBody(): string {
     ?>
     <div class="card" style="padding: var(--space-6) var(--space-4); gap: var(--space-4); line-height:1.55;">
       <h2 style="margin:0; font-family:var(--font-heading); font-size:24px;">Terms &amp; conditions</h2>
-      <div style="font-size:12px; color:var(--color-neutral-800);">Last updated 3 Aug 2026</div>
+      <div style="font-size:12px; color:var(--color-neutral-800);">Last updated 28 Aug 2026</div>
 
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Open source</h3>
@@ -5849,11 +5849,31 @@ function termsBody(): string {
           storing this way. If that isn't OK for you, self-host so the database is yours.</p>
       </div>
 
+      <?php /* This page is the privacy policy the OAuth consent screen links to, and that link
+               is public — so the Drive permission has to be described *here*, on the website,
+               not only in the copy below that renders inside the phone. A reviewer and a user
+               reading the policy both arrive at this URL, and neither of them can see the
+               Android build's version of this page. */ ?>
+      <div>
+        <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">The Android app can back up to your Google&nbsp;Drive</h3>
+        <p style="margin:0; font-size:14px;">Open Ledger also ships as an Android app, which keeps its ledger in a
+          single file on the phone with no account and no server. If you switch backup on there, the app copies that
+          file into <strong>your own Google Drive</strong> — specifically the application data folder, a private area
+          only this app can see, which no other app and no website can read. It does not pass through us and we never
+          receive a copy of it. The app asks Google for exactly one permission to do that,
+          <strong>drive.appdata</strong>, which reaches that folder and nothing else in your Drive: it cannot see,
+          list or touch your own files. Set a passphrase and the file is encrypted on the phone before it leaves, so
+          not even Google can read it — but if you forget that passphrase, nobody can recover the backup, including
+          us. Disconnect the account from inside the app at any time, or revoke it yourself at
+          <a href="https://myaccount.google.com/permissions" style="color:var(--color-accent-700);">myaccount.google.com/permissions</a>.</p>
+      </div>
+
       <div>
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">What we don't do</h3>
-        <p style="margin:0; font-size:14px;">We do not sell, share, or otherwise transfer your data to third parties.
-          No analytics tracker, no advertising, no third-party integrations receive your data. The only outbound
-          request is Google's sign-in endpoint (for verifying your ID token at login).</p>
+        <p style="margin:0; font-size:14px;">We do not sell, share, or otherwise transfer your data to third parties,
+          and nothing taken from your Google Drive is used for advertising or sold to anyone. No analytics tracker,
+          no advertising, no third-party integrations receive your data. The only outbound request this website makes
+          is to Google's sign-in endpoint, to verify your ID token at login.</p>
       </div>
       <?php else: ?>
       <div>
@@ -5875,8 +5895,12 @@ function termsBody(): string {
         <h3 style="font-family:var(--font-heading); font-size:17px; margin: 0 0 6px;">Backups go to your Drive, not ours</h3>
         <p style="margin:0; font-size:14px;">If you turn on backup, the app copies that one database file into
           <strong>your own Google Drive</strong>, into a private folder only this app can see. It does not pass
-          through us. Set a passphrase and the file is encrypted on this phone before it leaves, so not even Google
-          can read it — but if you forget that passphrase, nobody can recover the backup, including us.</p>
+          through us. The app asks Google for exactly one permission to do it, <strong>drive.appdata</strong>, which
+          reaches that folder and nothing else in your Drive — it cannot see or touch your own files. Set a passphrase
+          and the file is encrypted on this phone before it leaves, so not even Google can read it — but if you forget
+          that passphrase, nobody can recover the backup, including us. Disconnect the account from the profile drawer
+          at any time, or revoke it at
+          <a href="https://myaccount.google.com/permissions" style="color:var(--color-accent-700);">myaccount.google.com/permissions</a>.</p>
       </div>
       <?php endif; ?>
 
