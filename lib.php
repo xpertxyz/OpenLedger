@@ -574,7 +574,22 @@ function safeRedirectTarget(string $to): string {
     }
     return $to;
 }
-function redirect(string $to): never { header('Location: ' . safeRedirectTarget($to)); exit; }
+// A POST that carries X-PRG was sent by layout()'s submit handler with fetch(), not by the
+// browser navigating. Handing it the target instead of sending it there lets the page replace
+// the history entry it is standing on rather than push a second copy of the same screen —
+// five saves on one tab used to cost five taps of the system Back button to get out of it.
+// The fragment matters here: fetch() strips it from response.url, so #profile only survives
+// because it comes back in a header of our own.
+function redirect(string $to): never {
+    $to = safeRedirectTarget($to);
+    if (($_SERVER['HTTP_X_PRG'] ?? '') === '1') {
+        header('X-Location: ' . $to);
+        http_response_code(204);
+        exit;
+    }
+    header('Location: ' . $to);
+    exit;
+}
 function today(): string { return date('Y-m-d'); }
 // The wall clock, in the app's timezone, as the databases spell it. Every NOW() and CURDATE()
 // this app used to send is now one of these two, computed here and bound as a parameter —

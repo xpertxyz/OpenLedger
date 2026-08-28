@@ -61,6 +61,7 @@
 - **Three themes, each in light and dark** — *Organic* (terracotta and sage on cream), *Harbor* (deep azure and teal on cool paper), *Plum* (berry and emerald on blush). Picked from the **Theme** panel in the side menu, applied the instant you tap — no reload, and the panel repaints under your thumb. Per-user, persisted, and remembered for the signed-out pages too.
 - **CSRF-guarded**, rate-limited (10 sign-ins / 15 min, 60 POSTs / min per IP), data-caps enforced server-side.
 - **Pagination** on expenses, earnings + investments, with SQL-side aggregates so month/all-time totals stay cheap.
+- **In-app updates, in the app's own skin** — the Android build offers, downloads and installs its own updates through Play's flexible flow, with the offer card, the progress bar and the restart prompt drawn from the design tokens rather than by a Google-blue system sheet. The download runs in the background; the ledger stays usable throughout.
 - **Runs offline as an Android app** — the same `index.php`, `lib.php` and `views.php`, served to a WebView by a PHP interpreter bundled in the APK, against a SQLite file in the app's private storage. No account, no server, nothing leaves the device. See [Android app](#android-app).
 - **No build step, no npm, no composer** — just PHP + MySQL + a stylesheet.
 

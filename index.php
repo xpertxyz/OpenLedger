@@ -1143,6 +1143,33 @@ if (PHP_SAPI === 'cli') {
                           . ' — every <select> there opens the OS popup instead')
             : $line('OK',   'every tab ships the themed dropdown (CSS + the sweep that wraps each select)');
 
+        // The one delegated submit handler is the whole reason the system Back button leaves a
+        // screen in one tap. Lose it and every page still saves — by navigating, which is what
+        // stacked a second copy of the same screen in history per save, and cost a tap of Back
+        // each to get back out of a tab you had done four things on. Nothing looks broken.
+        $noPrg = [];
+        foreach ($pages as $name => $html) {
+            if (!str_contains($html, "headers: { 'X-PRG': '1' }")
+                || !str_contains($html, 'function goReplace(to)')) $noPrg[] = $name;
+        }
+        $pages && $noPrg
+            ? $line('FAIL', 'the fetch-submit handler is missing on: ' . implode(', ', $noPrg)
+                          . ' — every save there pushes another history entry')
+            : $line('OK',   'every tab posts its forms through fetch (Back leaves the screen, not the last save)');
+        // form.submit() fires no submit event, so it walks straight past that handler.
+        $rawSubmit = array_keys(array_filter($pages, fn($h) => str_contains($h, '.submit()')));
+        $rawSubmit
+            ? $line('FAIL', 'form.submit() bypasses the fetch handler on: ' . implode(', ', $rawSubmit)
+                          . ' — call requestSubmit() instead')
+            : $line('OK',   'no page submits a form behind the fetch handler\'s back');
+        // The Android update bar. It draws itself only where the bridge exists, so on the web
+        // this is the only thing that can prove it is still shipped at all.
+        $noUpd = array_keys(array_filter($pages, fn($h) =>
+            !str_contains($h, 'if (!window.HLUpdate) return;') || !str_contains($h, '.upd {')));
+        $pages && $noUpd
+            ? $line('FAIL', 'the in-app update bar lost its script or its CSS on: ' . implode(', ', $noUpd))
+            : $line('OK',   'every tab ships the in-app update bar (Android draws it, the web ignores it)');
+
         echo "\nIcons:\n";
         // A name with no matching <symbol> renders a blank box — no error, nothing in the log.
         preg_match_all('~<symbol id="icon-([a-z0-9-]+)"~', SVG_SPRITE, $sym);

@@ -3,6 +3,9 @@ package com.xpertxyz.ledger
 import android.app.Activity
 import android.content.Context
 import android.webkit.JavascriptInterface
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -57,12 +60,17 @@ class BackupBridge(private val activity: Activity, private val server: PhpServer
     @JavascriptInterface
     fun clearPassphrase() = BackupCrypto.disable(ctx)
 
-    /** Opens Google's account chooser. Result handled in MainActivity. */
+    /** Opens Google's account chooser. */
     @JavascriptInterface
     fun connect() {
         if (!DriveAuth.isConfigured) return
-        activity.runOnUiThread {
-            activity.startActivityForResult(DriveAuth.signInIntent(ctx), MainActivity.RC_DRIVE_SIGN_IN)
+        (activity as? FragmentActivity)?.let { fa ->
+            fa.lifecycleScope.launch {
+                val email = DriveAuth.signIn(ctx)
+                if (email != null) {
+                    DriveAuth.authorize(ctx, fa)
+                }
+            }
         }
     }
 

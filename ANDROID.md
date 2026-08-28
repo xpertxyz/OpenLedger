@@ -292,6 +292,23 @@ debug fingerprint has to be registered too.
 The id is not a secret: it is a public identifier, and an attacker holding it still cannot
 impersonate the app without the signing key. It is fine in the repository.
 
+**When Drive works in debug and not from Play**, it is this and not something subtler: Play
+re-signs the upload with its own app signing key, so the build on the tester's phone carries a
+fingerprint that no `keytool` run against a local keystore will ever print. Ask the installed
+build itself rather than guessing:
+
+```bash
+adb shell pm path com.xpertxyz.ledger          # → package:/data/app/.../base.apk
+adb pull <that path> /tmp/installed.apk
+$ANDROID_HOME/build-tools/*/apksigner verify --print-certs /tmp/installed.apk | grep SHA-1
+```
+
+`apksigner`, not `keytool -printcert -jarfile`: these APKs carry no v1 JAR signature, so keytool
+answers "Not a signed jar file" and tells you nothing. Whatever that SHA-1 is has to be on an
+Android OAuth client for `com.xpertxyz.ledger`; a client holds one fingerprint, so debug, upload
+and Play app signing keys need one client each. The app now writes the reason into the backup
+panel itself, so the phone names this rather than reloading in silence.
+
 ### Passphrase encryption
 
 "We never see your data" is true — there is no server. But Google can read an unencrypted
@@ -354,6 +371,30 @@ numbers, atomic swap, and rollback on failed boot.
 
 `PhpServer.syncAppCode()` re-copies the PHP out of assets whenever `versionCode` changes, so an
 app update always brings its code with it.
+
+### The in-app update bar
+
+`UpdateBridge` (`AppUpdate.kt`) drives Play's **flexible** update flow. Not the immediate one:
+that is a full-screen Google-blue sheet that cannot be themed and blocks the ledger until it
+finishes. Flexible downloads in the background and leaves the UI to us, so the offer, the
+progress bar and the restart prompt are drawn by `layout()` out of the same tokens as the rest
+of the app — the same arrangement as the backup panel. The one screen Google keeps is the
+single dialog asking permission to download, which is not ours to skip.
+
+The bridge is exposed to JavaScript as `HLUpdate` with `status()` / `begin()` / `install()` /
+`dismiss()`. The page polls `status()` and draws nothing at all when `state` is empty, so the
+web build — which has no bridge — never sees any of it. `refresh()` runs on every `onResume`,
+because a download that finished while the app was in the background sends no callback to a
+process that was not listening.
+
+"Later" is deliberately session-only: the offer comes back the next time the app is opened,
+rather than never.
+
+**It cannot be tested from a debug build.** Play answers `appUpdateInfo` only for an app it
+installed itself, with a higher `versionCode` live on a track the tester is on. From anything
+else the check fails, the state stays empty, and nothing is drawn — which is the correct
+behaviour, not a bug. To see it: install from internal testing, then upload a build with a
+higher `versionCode` and wait for Play to notice.
 
 ---
 

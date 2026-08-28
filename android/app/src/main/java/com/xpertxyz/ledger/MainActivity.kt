@@ -1,6 +1,7 @@
 package com.xpertxyz.ledger
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -14,6 +15,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -25,6 +29,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
+import com.google.android.gms.auth.api.identity.AuthorizationResult
+import com.google.android.gms.auth.api.identity.Identity
 
 /**
  * The whole UI: one WebView pointed at the PHP process running inside this app.
@@ -36,13 +42,16 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val RC_DRIVE_SIGN_IN = 4001
+        const val RC_APP_UPDATE    = 4002
         private const val PREFS = "ui"
         private const val BAR_COLOR = "bar_color"
     }
 
     private lateinit var server: PhpServer
+    private lateinit var updates: UpdateBridge
     private lateinit var web: WebView
     private lateinit var shell: FrameLayout
+    private lateinit var authorizeLauncher: ActivityResultLauncher<IntentSenderRequest>
 
     private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
 
@@ -79,6 +88,20 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         server = PhpServer(this)
+        updates = UpdateBridge(this).also { it.start() }
+
+        authorizeLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                try {
+                    val authResult = Identity.getAuthorizationClient(this)
+                        .getAuthorizationResultFromIntent(result.data)
+                    DriveAuth.noteAuthorizationResult(this, authResult)
+                    onDriveAuthSuccess()
+                } catch (e: Exception) {
+                    logErr("Authorization result extraction failed", e)
+                }
+            }
+        }
 
         web = WebView(this).apply {
             settings.javaScriptEnabled = true          // the app's own inline JS, nothing remote
@@ -122,6 +145,9 @@ class MainActivity : FragmentActivity() {
             // from loopback behind a per-process token.
             addJavascriptInterface(BackupBridge(this@MainActivity, server), "HLBackup")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
+            // Same arrangement for the update bar: Play does the downloading, views.php draws
+            // every part of it the user actually sees.
+            addJavascriptInterface(updates, "HLUpdate")
         }
 
         // The insets go on a container, not on the WebView. A WebView accepts setPadding and
@@ -263,29 +289,26 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         serve()
+        // Also the only way to notice a download that finished while the app was away: Play
+        // sends no callback to a process that was not listening at the time.
+        updates.refresh()
     }
 
     /**
-     * Google's account chooser coming back. Reloading is enough: the backup panel reads its
-     * state from HLBackup.status() on render, so the newly connected account just appears.
+     * Google's account chooser coming back.
      */
-    @Deprecated("startActivityForResult is what GoogleSignIn still hands back")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != RC_DRIVE_SIGN_IN) return
+        if (requestCode == RC_APP_UPDATE) { updates.onFlowResult(resultCode); return }
+    }
 
-        // Connecting an account is the user saying "keep a copy". Leaving the schedule on
-        // "Manual only" would honour the letter of that and not the intent: they would come
-        // back in six months to one backup from setup day. Daily from here, changeable in the
-        // same panel — and only when they have not already chosen, so reconnecting a dropped
-        // account never quietly overwrites a deliberate "weekly" or "off".
-        //
-        // Deliberately no backup right now. Connecting an account is also the first step of
-        // restoring one — new phone, or app data cleared — and at that moment the ledger is
-        // empty. Backing up on connect uploaded those zero entries over the copy the user was
-        // about to restore, twenty seconds before they tapped Restore. The schedule's first run
-        // is a day out (see BackupScheduler), which leaves room to restore first, and "Back up
-        // now" is right there for anyone who wants a copy immediately.
+    fun launchAuthorization(result: AuthorizationResult) {
+        val pendingIntent = result.pendingIntent ?: return
+        authorizeLauncher.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+    }
+
+    fun onDriveAuthSuccess() {
+        // Connecting an account is the user saying "keep a copy".
         if (DriveAuth.connectedAccount(this) != null && BackupScheduler.frequency(this) == "off") {
             BackupScheduler.apply(this, "daily")
         }
@@ -303,6 +326,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        updates.stop()
         server.stop()
         super.onDestroy()
     }

@@ -17,6 +17,11 @@
 -keep class com.google.gson.** { *; }
 -keepattributes Signature, *Annotation*, EnclosingMethod, InnerClasses
 
+# The in-app update client talks to Play over a bound service and ships no consumer rules of
+# its own — the same failure mode as the Drive client above: builds clean, does nothing on a
+# phone, and only in release.
+-keep class com.google.android.play.core.** { *; }
+
 # Play Services resolves these by name.
 -keep class com.google.android.gms.auth.** { *; }
 -keep class com.google.android.gms.common.** { *; }

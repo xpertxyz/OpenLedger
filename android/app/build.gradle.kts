@@ -10,8 +10,8 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.4"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.
@@ -151,16 +151,24 @@ androidComponents {
 dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.fragment.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
     // The app lock. Also what pulls in androidx.fragment, which BiometricPrompt needs a
     // FragmentActivity for — hence MainActivity's base class.
     implementation(libs.androidx.biometric)
     // No appcompat: the activity is a ComponentActivity and the theme extends the platform's
     // Material, so it only ever contributed dex and ~80 translated app-name strings.
     implementation(libs.androidx.work.runtime.ktx)
+    // Play's flexible in-app update. The download and the install are Play's; every piece of
+    // UI around them is views.php, so an update offer looks like the rest of the app.
+    implementation(libs.play.app.update)
     // Drive backup, appDataFolder scope only — see ANDROID.md for why not full `drive`.
     implementation(libs.play.services.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
     implementation(libs.google.api.client.android)
     implementation(libs.google.api.services.drive)
+    implementation(libs.kotlinx.coroutines.play.services)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

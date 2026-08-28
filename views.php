@@ -211,8 +211,9 @@ function swipeNavScript(?string $older, ?string $newer): string {
         // Horizontal-dominant only, so vertical scrolling is never hijacked.
         if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
 
-        if (dx > 0) { if (OLDER) location.href = OLDER; }
-        else if (NEWER) location.href = NEWER;
+        // Same screen, one month over — replace, exactly as the arrows above it do.
+        if (dx > 0) { if (OLDER) location.replace(OLDER); }
+        else if (NEWER) location.replace(NEWER);
       }, { passive: true });
     })();
     </script>
@@ -653,6 +654,21 @@ $boot
   .toast { position:fixed; left:50%; top: calc(env(safe-area-inset-top, 0px) + 12px); transform:translateX(-50%); padding:10px 18px; border-radius:999px; font-size:13px; z-index:250; max-width: calc(100% - 32px); text-align:center; box-shadow: var(--shadow-md); animation: toast-life 2.2s forwards; }
   .toast.success { background:var(--color-accent-2-700); color:var(--color-bg); }
   .toast.error   { background:var(--color-accent-700); color:var(--color-bg); animation: toast-life-long 3.6s forwards; }
+
+  /* In-app update, Android only — drawn here rather than by Play so an update offer looks
+     like the rest of the app instead of a blue system sheet. Sits above the tab bar, below
+     the drawer (200) and the toasts (250), because neither should ever end up behind it. */
+  .upd { position:fixed; left:50%; transform:translateX(-50%); width:calc(100% - 32px); max-width:448px;
+         z-index:150; background:var(--color-surface); border-radius:var(--radius-md);
+         box-shadow:var(--shadow-lg); padding:12px 14px; display:flex; flex-direction:column; gap:10px;
+         animation: upd-in .22s ease both; }
+  @keyframes upd-in { from { opacity:0; transform:translate(-50%, 12px); } to { opacity:1; transform:translate(-50%, 0); } }
+  .upd-acts { display:flex; justify-content:flex-end; gap:8px; }
+  .upd-ttl { font-family:var(--font-heading); font-size:14px; }
+  .upd-sub { color:var(--color-neutral-800); font-size:12px; margin-top:1px; }
+  .upd .btn { padding-block:6px; font-size:13px; white-space:nowrap; }
+  .upd-track { height:5px; border-radius:999px; background:var(--color-neutral-300); overflow:hidden; }
+  .upd-fill { height:100%; width:0; border-radius:999px; background:var(--color-accent); transition:width .3s ease; }
   @keyframes toast-life {
     0%{opacity:0;transform:translate(-50%,-10px);} 10%{opacity:1;transform:translate(-50%,0);}
     80%{opacity:1;transform:translate(-50%,0);} 100%{opacity:0;transform:translate(-50%,-10px);}
@@ -845,13 +861,82 @@ function askConfirm(opts) {
   }
   document.getElementById('confirm-dlg').showModal();
 }
+// The system Back button should leave the screen, not undo the last save. A form posted the
+// ordinary way is a navigation, so every save, edit and delete left another copy of the same
+// page behind it in history: four entries deep on one tab, four taps to get off that tab.
+// Posting through fetch() and replacing the entry we are standing on leaves none behind.
+// redirect() answers a POST carrying X-PRG with 204 + X-Location instead of a 302, so the page
+// underneath is still rendered exactly once — no worse than before — and the fragment survives.
+function toast(msg, kind) {
+  var t = document.createElement('div');
+  t.className = 'toast ' + (kind || 'success');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function () { t.remove(); }, 4000);
+}
+function goReplace(to) {
+  var u = new URL(to, location.href);
+  if (u.pathname + u.search === location.pathname + location.search) {
+    // Same document: location.replace() would move the fragment and never reload, leaving the
+    // row that was just saved off the screen. replaceState + reload does both, still in place.
+    if (u.hash !== location.hash) history.replaceState(null, '', u.href);
+    location.reload();
+  } else {
+    location.replace(u.href);
+  }
+}
+document.addEventListener('submit', function (e) {
+  var f = e.target;
+  // method="dialog" closes a dialog and posts nothing; a handler that already called
+  // preventDefault() is holding the form back for a confirmation. Without fetch there is no
+  // way to post without navigating, and a screen that saves beats a tidy history.
+  if (f.method !== 'post' || e.defaultPrevented || !window.fetch) return;
+  e.preventDefault();
+  // Navigating away used to end the page's own ability to submit again. It no longer does, so
+  // a double tap — or Enter twice, which names no button to disable — is now a second expense.
+  if (f.dataset.busy) return;
+  f.dataset.busy = '1';
+  var btn = e.submitter, body;
+  try { body = new FormData(f, btn); } catch (err) { body = new FormData(f); }
+  if (btn) btn.disabled = true;                       // no second save while this one is away
+  var free = function () { delete f.dataset.busy; if (btn) btn.disabled = false; };
+  fetch(f.action, { method: 'POST', body: body, headers: { 'X-PRG': '1' } })
+    .then(function (r) {
+      var to = r.headers.get('X-Location');
+      if (to) { goReplace(to); return; }
+      // Anything that is not a redirect is the server refusing — a rate limit, a dead route.
+      // Say so where the user is, instead of replacing the screen with a bare error page.
+      return r.text().then(function (t) {
+        toast(t.slice(0, 140) || ('Could not save (' + r.status + ')'), 'error');
+        free();
+      });
+    })
+    .catch(function () {
+      toast('Could not save. Check your connection.', 'error');
+      free();
+    });
+});
+// The same reasoning, for the controls that are links rather than script: a month arrow, a
+// filter pill, a view toggle. Same path, different query string means a control on the screen
+// you are already on, so replace the entry rather than stack another copy of that screen. A
+// link to a different path is a real move and still stacks — Back walks back tab by tab.
+document.addEventListener('click', function (e) {
+  var a = e.target.closest && e.target.closest('.month-switch a, .pill-row a, .seg a');
+  if (!a || a.target || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  var u = new URL(a.href, location.href);
+  if (u.origin !== location.origin || u.pathname !== location.pathname || u.hash) return;
+  e.preventDefault();
+  location.replace(u.href);
+});
 // Keeps every other query string the page is carrying — month, invest filter, year, mode —
 // and drops only the row offset, because page 3 of "everyone" is not page 3 of one person.
+// replace(), not href: picking a filter narrows the screen you are on, so Back should leave
+// the tab rather than walk back out through every filter you tried.
 function setWho(v) {
   var u = new URL(location.href);
   if (v && v !== '0') u.searchParams.set('who', v); else u.searchParams.delete('who');
   u.searchParams.delete('o');
-  location.href = u.toString();
+  location.replace(u.toString());
 }
 // Theme changes are applied by rewriting the two attributes on <html>: every palette in both
 // modes is already in the page's CSS, so the repaint is immediate and nothing reloads. The
@@ -973,6 +1058,88 @@ document.addEventListener('keydown', function (e) {
 }, true);
 addEventListener('scroll', function (e) { if (selPop && !selPop.contains(e.target)) closeSelect(); }, true);
 addEventListener('resize', closeSelect);
+
+/*
+ * The in-app update bar. Defined only where the bridge is — the web build has no HLUpdate and
+ * this whole block returns on its first line.
+ *
+ * Play's flexible flow hands us the download and asks us to draw everything around it, which is
+ * the point: the alternative is its own full-screen sheet, in Google's colours, over a ledger
+ * the user was reading. State comes from one poll rather than a callback, because the bridge
+ * cannot call into JavaScript and the numbers only move while someone is looking anyway.
+ */
+(function () {
+  if (!window.HLUpdate) return;
+  var el = null, painted = null;
+
+  // Play's failure text is the only string here that did not come from this file.
+  function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+  function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+  function pct(s) { return s.total > 0 ? Math.min(100, Math.round(s.bytes * 100 / s.total)) : 0; }
+
+  function bar() {
+    if (el) return el;
+    el = document.createElement('div');
+    el.className = 'upd';
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act]');
+      if (!b) return;
+      if (b.dataset.act === 'later')   { HLUpdate.dismiss(); }
+      if (b.dataset.act === 'begin')   { HLUpdate.begin(); }
+      if (b.dataset.act === 'install') { HLUpdate.install(); }
+      painted = null;
+      render();
+    });
+    document.body.appendChild(el);
+    // Above the tab bar, measured rather than guessed: the pill is a different height on the
+    // screens that have no tab bar at all, where this falls back to sitting on the margin.
+    var nav = document.querySelector('.tabnav');
+    el.style.bottom = (nav ? nav.offsetHeight + 32 : 16) + 'px';
+    return el;
+  }
+
+  function render() {
+    var s;
+    try { s = JSON.parse(HLUpdate.status()); } catch (e) { return; }
+    var key = s.state + ':' + pct(s) + ':' + s.error;
+    if (key === painted) return;
+    painted = key;
+    if (!s.state) { if (el) { el.remove(); el = null; } return; }
+
+    var size = s.total > 0 ? mb(s.total) : '';
+    // One shape for every state: a heading, a line under it, then the two optional pieces.
+    // Buttons get a row of their own — sharing one with the text squeezed both at 320px.
+    var card = function (title, sub, track, acts) {
+      return '<div><div class="upd-ttl">' + title + '</div>'
+           + '<div class="upd-sub">' + sub + '</div></div>'
+           + (track ? '<div class="upd-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"'
+                    + ' aria-valuenow="' + pct(s) + '"><div class="upd-fill" style="width:'
+                    + pct(s) + '%"></div></div>' : '')
+           + (acts ? '<div class="upd-acts">' + acts + '</div>' : '');
+    };
+    var later   = '<button class="btn btn-ghost" data-act="later">Later</button>';
+    var html;
+    if (s.state === 'available') {
+      html = card('Update available', size || 'A newer version is ready to install.', false,
+                  later + '<button class="btn btn-primary" data-act="begin">Update</button>');
+    } else if (s.state === 'downloading') {
+      html = card('Downloading update',
+                  pct(s) + '%' + (size ? ' of ' + size : '') + ' — carry on, this runs in the background.',
+                  true, '');
+    } else if (s.state === 'downloaded') {
+      html = card('Update ready', 'Restart to finish installing it.', false,
+                  later + '<button class="btn btn-primary" data-act="install">Restart</button>');
+    } else {
+      html = card('Update failed', esc(s.error || 'Play could not download it.'), false,
+                  '<button class="btn btn-ghost" data-act="later">Dismiss</button>'
+                  + '<button class="btn btn-primary" data-act="begin">Try again</button>');
+    }
+    bar().innerHTML = html;
+  }
+
+  render();
+  setInterval(render, 900);
+})();
 </script>
 </body></html>
 DLG;
@@ -1302,8 +1469,15 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
               return;
             }
             if (!s.account) {
+              // Why the last attempt came back without an account. Every reason is a setting
+              // in the Google console rather than anything the phone can fix, and none of them
+              // is guessable from a chooser that closed and a page that reloaded — which is
+              // all this said before, whichever of them it was.
               el.innerHTML = '<p class="muted" style="margin:0 0 8px;">Your ledger stays on this phone. '
                 + 'Connect Google Drive to keep an encrypted-at-rest copy in your own account.</p>'
+                + (s.lastError
+                    ? '<p style="margin:0 0 8px;color:#c0392b;font-size:13px;">' + esc(s.lastError) + '</p>'
+                    : '')
                 + '<button class="btn btn-primary btn-block" id="bk-connect">Connect Google Drive</button>';
               document.getElementById('bk-connect').onclick = function () { HLBackup.connect(); };
               return;
@@ -2798,7 +2972,7 @@ function renderHistory(PDO $db, array $user, int $offset): void {
       if (v) u.searchParams.set('cat', v); else u.searchParams.delete('cat');
       u.searchParams.delete('o');
       sessionStorage.setItem('hlScroll', scrollY);
-      location.href = u.toString();
+      location.replace(u.toString());
     }
     (function () {
       var s = sessionStorage.getItem('hlScroll');
@@ -3448,7 +3622,7 @@ function renderInvestMonth(PDO $db, array $user, bool $showForm, string $filter,
       if (v) u.searchParams.set('ty', v); else u.searchParams.delete('ty');
       u.searchParams.delete('o');
       sessionStorage.setItem('hlScroll', scrollY);
-      location.href = u.toString();
+      location.replace(u.toString());
     }
     (function () {
       var s = sessionStorage.getItem('hlScroll');
@@ -4941,6 +5115,8 @@ function organiseTools(string $entry, string $thing, string $limit, string $mone
                      : 'Move ' + n + ' ' + (n === 1 ? ORG.entry : ORG.entries);
     }
     function askMove(e) {
+      // Second time round — doMove() already asked — let it through to the submit handler.
+      if (e.target.dataset.ok) { delete e.target.dataset.ok; return true; }
       e.preventDefault();
       var f = document.getElementById('move-from'), t = document.getElementById('move-to');
       document.getElementById('move-body').textContent =
@@ -4952,7 +5128,9 @@ function organiseTools(string $entry, string $thing, string $limit, string $mone
     }
     function doMove() {
       document.getElementById('move-dlg').close();
-      document.getElementById('move-form').submit();
+      var f = document.getElementById('move-form');
+      f.dataset.ok = '1';
+      f.requestSubmit();
     }
     function syncNest() {
       var c = document.getElementById('nest-id'), p = document.getElementById('nest-parent');
@@ -4967,6 +5145,7 @@ function organiseTools(string $entry, string $thing, string $limit, string $mone
           + p.selectedOptions[0].text + ' from then on.';
     }
     function askNest(e) {
+      if (e.target.dataset.ok) { delete e.target.dataset.ok; return true; }
       e.preventDefault();
       var c = document.getElementById('nest-id'), p = document.getElementById('nest-parent');
       var kid = c.selectedOptions[0].text, par = p.selectedOptions[0].text;
@@ -4983,7 +5162,9 @@ function organiseTools(string $entry, string $thing, string $limit, string $mone
     }
     function doNest() {
       document.getElementById('nest-dlg').close();
-      document.getElementById('nest-form').submit();
+      var f = document.getElementById('nest-form');
+      f.dataset.ok = '1';
+      f.requestSubmit();
     }
     syncMove(); syncNest();
     </script>
