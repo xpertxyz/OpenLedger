@@ -1,5 +1,9 @@
 [versions]
 agp = "9.3.2"
+# Must match the Kotlin that AGP bundles (android.builtInKotlin) exactly, or the Compose
+# compiler and the Kotlin compiler disagree about the IR they are passing each other.
+# Read it off the AGP pom: com.android.tools.build:gradle:<agp> -> kotlin-stdlib.
+kotlin = "2.2.10"
 fragment = "1.9.0"
 activity = "1.13.0"
 biometric = "1.1.0"
@@ -11,9 +15,19 @@ googleid = "1.2.0"
 appUpdate = "2.1.0"
 googleApiClientAndroid = "2.9.0"
 googleApiServicesDrive = "v3-rev20240914-2.0.0"
+junit4 = "4.13.2"
 junitExt = "1.3.0"
 testRunner = "1.7.0"
 kotlinxCoroutines = "1.11.0"
+# The watch. wear-compose ships foundation/material3/navigation on one version; protolayout
+# (what a Tile is drawn with) is on its own and does NOT track it.
+composeBom = "2026.08.00"
+wearCompose = "1.6.2"
+wearTiles = "1.6.2"
+protolayout = "1.4.2"
+activityCompose = "1.13.0"
+wearInput = "1.2.0"
+concurrentFutures = "1.3.0"
 
 [libraries]
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
@@ -28,9 +42,25 @@ googleid = { group = "com.google.android.libraries.identity.googleid", name = "g
 play-app-update = { group = "com.google.android.play", name = "app-update", version.ref = "appUpdate" }
 google-api-client-android = { group = "com.google.api-client", name = "google-api-client-android", version.ref = "googleApiClientAndroid" }
 google-api-services-drive = { group = "com.google.apis", name = "google-api-services-drive", version.ref = "googleApiServicesDrive" }
+junit = { group = "junit", name = "junit", version.ref = "junit4" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitExt" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "testRunner" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 
+# ── Wear OS ──────────────────────────────────────────────────────────────────
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearCompose" }
+wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
+androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrentFutures" }
+wear-input = { group = "androidx.wear", name = "wear-input", version.ref = "wearInput" }
+wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version.ref = "wearTiles" }
+wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout", version.ref = "protolayout" }
+wear-protolayout-material3 = { group = "androidx.wear.protolayout", name = "protolayout-material3", version.ref = "protolayout" }
+wear-protolayout-expression = { group = "androidx.wear.protolayout", name = "protolayout-expression", version.ref = "protolayout" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

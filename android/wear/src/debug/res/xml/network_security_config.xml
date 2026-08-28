@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only. The release APK carries no cleartext exemption whatsoever and talks to
+  https://ledger.xpertxyz.com and nothing else.
+
+  This exists so a watch can be pointed at a dev server on the LAN:
+
+      ./gradlew :wear:installDebug -PledgerUrl=http://192.168.1.5:8477
+
+  Blanket rather than scoped to the LAN, because network-security-config matches host names
+  and has no way to express "any private address" — a list of <domain> entries would just be a
+  list of one developer's router settings, wrong on the next machine and silently so.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

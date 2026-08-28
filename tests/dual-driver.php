@@ -120,6 +120,93 @@ try {
     printf("  posted=%d (from %d), second sweep added=%d (expect 0), next_date>today=%s\n",
         $after1 - $before, $before, $after2 - $after1, $nd > today() ? 'yes' : 'NO');
 
+    // ── The watch: pairing, the bearer token, and the one summary query it lives on.
+    //
+    // Deltas rather than absolutes, because the sections above have already put expenses on
+    // today's date and the totals would then depend on when this is run. A delta is the same
+    // number on both drivers and on any day.
+    echo "\n[watch]\n";
+    $code = mintDevicePairing($db, $hid, $hid);
+    $livePair = liveDevicePairing($db, $hid);
+    printf("  code digits=%s live=%s wrong_code_redeems=%s\n",
+        preg_match('/^\d{6}$/', $code) ? 'yes' : 'NO',
+        ($livePair && $livePair['pair_code'] === $code) ? 'yes' : 'NO',
+        redeemDevicePairing($db, '000000' === $code ? '111111' : '000000', 'Nope', DEVICE_SCOPE_API) ? 'YES' : 'no');
+
+    // The default scope, unstated, must be the narrow one.
+    printf("  default scope=%s\n", $livePair['scope'] ?? 'MISSING');
+
+    $claim = redeemDevicePairing($db, $code, 'Galaxy Watch', DEVICE_SCOPE_API);
+    // The second redeem is the whole reason claimed_at and pair_code are both cleared. A code
+    // that still worked after being spent would mint a second token for anyone who saw it.
+    $replay = redeemDevicePairing($db, $code, 'Replay', DEVICE_SCOPE_API);
+    printf("  token len=%d replay_redeems=%s garbage_token=%s\n",
+        $claim ? strlen($claim['token']) : 0,
+        $replay ? 'YES' : 'no',
+        deviceFromToken($db, str_repeat('f', 64)) ? 'YES' : 'no');
+
+    $dev = $claim ? deviceFromToken($db, $claim['token']) : null;
+    printf("  resolves hid=%s uid=%s role=%s\n",
+        $dev ? ($dev['household_id'] === $hid ? 'ok' : 'WRONG') : 'NULL',
+        $dev ? ($dev['user_id'] === $hid ? 'ok' : 'WRONG') : 'NULL',
+        $dev['role'] ?? 'NULL');
+
+    $before = watchSummary($db, $hid);
+    // Through createExpense(), not a raw INSERT — this is the path the watch actually takes,
+    // and a driver difference in the daily-cap COUNT would surface right here.
+    createExpense($db, $config, $hid, $hid, ROLE_OWNER, ['amount' => '250.50', 'category_id' => $hid, 'note' => 'from the wrist']);
+    createExpense($db, $config, $hid, $hid, ROLE_OWNER, ['amount' => '99.50',  'category_id' => $hid, 'note' => '']);
+    $after = watchSummary($db, $hid);
+    printf("  d_today=%s d_month=%s d_count=%d top_n=%d recent_top=%s|%s\n",
+        number_format($after['today'] - $before['today'], 2, '.', ''),
+        number_format($after['month'] - $before['month'], 2, '.', ''),
+        $after['month_count'] - $before['month_count'],
+        count($after['top']),
+        $after['recent'][0]['category'] ?? '-',
+        number_format((float)($after['recent'][0]['amount'] ?? 0), 2, '.', ''));
+
+    // A full-scope pairing — what a browser redeems at /pair. The scope has to survive the
+    // round trip intact, because /pair is what turns it into a session with delete in it.
+    $fullCode  = mintDevicePairing($db, $hid, $hid, DEVICE_SCOPE_FULL);
+    $fullClaim = redeemDevicePairing($db, $fullCode, deviceLabelFromAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36'
+    ), DEVICE_SCOPE_FULL);
+    // A full code offered to the watch endpoint must not be redeemable there either, and must
+    // survive the attempt unspent.
+    $crossCode = mintDevicePairing($db, $hid, $hid, DEVICE_SCOPE_FULL);
+    $cross = redeemDevicePairing($db, $crossCode, 'Watch', DEVICE_SCOPE_API) ? 'REDEEMED' : 'refused';
+    $stillLive = liveDevicePairing($db, $hid);
+    printf("  cross-scope redeem -> %s ; code survives = %s\n",
+        $cross, ($stillLive && $stillLive['pair_code'] === $crossCode) ? 'yes' : 'NO');
+    $fullDev = $fullClaim ? deviceFromToken($db, $fullClaim['token']) : null;
+    printf("  full: minted=%s claimed_scope=%s resolved_scope=%s label=%s\n",
+        preg_match('/^\d{6}$/', $fullCode) ? 'yes' : 'NO',
+        $fullClaim['scope'] ?? 'NULL',
+        $fullDev['scope'] ?? 'NULL',
+        $fullClaim ? 'ok' : 'NULL');
+
+    // A scope nobody defined must be refused, not coerced. This is the assertion that stops a
+    // typo in a form field from quietly becoming full access.
+    try { mintDevicePairing($db, $hid, $hid, 'admin'); $bogus = 'ACCEPTED'; }
+    catch (UserErr $e) { $bogus = 'refused'; }
+    printf("  unknown scope -> %s\n", $bogus);
+
+    // Session revocation: the row is what keeps a paired browser signed in.
+    $_SESSION = ['device_id' => $fullClaim['id'] ?? 0];
+    $before = deviceSessionValid($db) ? 'valid' : 'invalid';
+    $db->prepare("DELETE FROM device_tokens WHERE id = ?")->execute([(int)($fullClaim['id'] ?? 0)]);
+    $after = deviceSessionValid($db) ? 'STILL VALID' : 'ended';
+    // A Google session carries no device_id and must never be touched by any of this.
+    $_SESSION = [];
+    printf("  paired session: %s -> after disconnect %s ; google session %s\n",
+        $before, $after, deviceSessionValid($db) ? 'unaffected' : 'BROKEN');
+
+    // An amount the ledger must refuse. The watch shows this message verbatim, so it has to
+    // be a UserErr and not a PDOException about a NOT NULL column.
+    try { createExpense($db, $config, $hid, $hid, ROLE_OWNER, ['amount' => '0', 'category_id' => $hid]); $bad = 'ACCEPTED'; }
+    catch (UserErr $e) { $bad = $e->getMessage(); }
+    printf("  zero amount -> %s\n", $bad);
+
     // ── Author/permission columns survive the round trip as integers, not strings.
     echo "\n[types]\n";
     $r = $db->query("SELECT created_by, member_id, amount FROM expenses WHERE recurring_id = $hid LIMIT 1")->fetch();

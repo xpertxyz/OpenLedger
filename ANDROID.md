@@ -28,6 +28,16 @@ unless the user turns on Drive backup, and then it goes to their own Drive.
 
 ---
 
+### The watch is not part of this
+
+There is a Wear OS module at `android/wear`, and it has nothing to do with the app described
+above. It is an HTTPS client of the **website**, so it reads and writes the MySQL ledger, not
+the SQLite file on this phone. The two share a Play listing, a package name and a palette, and
+no data at all. See [WEAR.md](WEAR.md).
+
+That is also why there is no Data Layer code anywhere in `android/app`: Wear OS proxies TCP
+through the paired phone by itself, so the watch reaches the website with no help from us.
+
 ## Build
 
 ### 1. The interpreter

@@ -23,11 +23,17 @@ RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
+# The watch sends `Authorization: Bearer <token>`, and CGI/FastCGI strips that header before
+# PHP runs — api.php would answer "Missing token" to a device that is plainly sending one.
+# This hands it through as an environment variable instead. api.php also accepts
+# X-Ledger-Token, for hosts where even this does not survive.
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
 # Everything else -> index.php
 RewriteRule ^ index.php [L]
 
 # Belt & braces: block direct fetches of app internals (all still `require`-able from PHP).
-<FilesMatch "^(config\.php|views\.php|lib\.php|router\.php|CLAUDE\.md|README\.md|Home\ Expense\ Tracker\.dc\.html)$">
+<FilesMatch "^(config\.php|views\.php|lib\.php|router\.php|api\.php|CLAUDE\.md|README\.md|Home\ Expense\ Tracker\.dc\.html)$">
     Require all denied
 </FilesMatch>
 

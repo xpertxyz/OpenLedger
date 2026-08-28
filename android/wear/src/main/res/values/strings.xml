@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Open Ledger</string>
+    <string name="tile_label">Open Ledger</string>
+    <string name="tile_description">Today\'s spend, and one tap to add an expense.</string>
+</resources>

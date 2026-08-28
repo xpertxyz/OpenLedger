@@ -89,7 +89,7 @@ android {
  * web app it is not in the phone app.
  */
 val phpAppFiles = listOf(
-    "index.php", "lib.php", "views.php", "config.php", "router.php",
+    "index.php", "lib.php", "views.php", "config.php", "router.php", "api.php",
     "manifest.webmanifest"
 )
 val phpAppDirs = listOf("design-tokens", "assets")

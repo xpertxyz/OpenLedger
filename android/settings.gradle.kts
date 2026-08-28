@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "OpenLedger"
 include(":app")
+include(":wear")

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the tile picker shows before the tile is added. Drawn rather than screenshotted so it
+  cannot go stale, and in the app's own dark palette so the card in the picker looks like the
+  card you get: a rupee mark on the Organic accent over the dark ground.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path
+        android:fillColor="#201E1D"
+        android:pathData="M48,48m-48,0a48,48 0,1 1,96 0a48,48 0,1 1,-96 0" />
+    <path
+        android:fillColor="#E0864C"
+        android:pathData="M48,20m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0"
+        android:fillAlpha="0" />
+    <!-- ₹ -->
+    <path
+        android:fillColor="#E0864C"
+        android:pathData="M35,30 L61,30 L61,37 L52,37 Q57,39 58,44 L61,44 L61,51 L58,51 Q56,60 45,62 L61,76 L61,80 L52,80 L34,62 L34,54 L43,54 Q50,54 50,48 Q50,44 45,44 L35,44 L35,37 L45,37 Q49,37 50,37 L35,37 Z" />
+</vector>

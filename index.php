@@ -314,7 +314,7 @@ if (PHP_SAPI === 'cli') {
         echo "Open Ledger — preflight\n\n";
 
         echo "PHP syntax:\n";
-        foreach (['index.php','lib.php','views.php','config.php','router.php'] as $f) {
+        foreach (['index.php','lib.php','views.php','config.php','router.php','api.php'] as $f) {
             $r = shell_exec("php -l " . escapeshellarg(__DIR__ . "/$f") . " 2>&1");
             str_contains((string)$r, 'No syntax errors')
                 ? $line('OK',   "$f")
@@ -800,6 +800,69 @@ if (PHP_SAPI === 'cli') {
         $unscoped ? $line('FAIL', 'write not scoped by household_id: ' . implode(' ; ', $unscoped))
                   : $line('OK',   'every DELETE/UPDATE in a POST handler is household-scoped');
 
+        // ── The watch API ────────────────────────────────────────────────
+        // A second front door onto the same ledger, with no session, no cookie and no CSRF
+        // behind it — so the things that keep it honest have to be checked, not assumed.
+        $api = (string)@file_get_contents(__DIR__ . '/api.php');
+
+        // Every endpoint below the bearer check is authenticated by position: the check sits
+        // once, near the top, and everything after it is guarded. That is fine right up until
+        // someone adds an endpoint above it, which reads as a perfectly ordinary diff and
+        // hands the ledger to anyone who can spell the URL.
+        preg_match_all('~\$path === \'(/api/[a-z/]+)\'~', $api, $eps);
+        $guardAt = strpos($api, 'deviceFromToken(');
+        $unguarded = [];
+        foreach ($eps[1] as $i => $ep) {
+            if ($ep === '/api/pair') continue;   // pairing is how a device GETS a token
+            if (strpos($api, "\$path === '$ep'") < $guardAt) $unguarded[] = $ep;
+        }
+        $unguarded ? $line('FAIL', 'watch API endpoint declared before the bearer-token check: ' . implode(', ', $unguarded))
+                   : $line('OK',   count($eps[1]) . ' watch API endpoint(s): every one but /api/pair sits behind deviceFromToken()');
+
+        // The device's whole credential. A log line or an error body carrying it is a token
+        // leak that nothing else in the app would catch.
+        (str_contains($api, 'error_log') && preg_match('~error_log\([^)]*token~i', $api))
+            ? $line('FAIL', 'api.php logs something called `token`')
+            : $line('OK',   'api.php never logs a device token');
+
+        // The watch parses every response as JSON. An endpoint that answered with a PHP notice
+        // or a redirect page would look, to a client on a Bluetooth proxy, exactly like the
+        // captive-portal HTML a hotel wifi returns — and be reported as "the watch is broken".
+        (str_contains($api, 'application/json') && !preg_match('~\becho\s+[\'"]<~', $api))
+            ? $line('OK',   'api.php answers JSON and never emits markup')
+            : $line('FAIL', 'api.php can emit something that is not JSON');
+
+        // Both front doors onto the expenses table must be the same door. A second INSERT here
+        // is how the watch ends up exempt from the daily cap or filing under the wrong member.
+        (str_contains($api, 'createExpense(') && !str_contains($api, 'INSERT INTO expenses'))
+            ? $line('OK',   'the watch writes expenses through createExpense(), same as the web form')
+            : $line('FAIL', 'api.php inserts into expenses directly instead of calling createExpense()');
+
+        // ── Paired devices ───────────────────────────────────────────────
+        // A 'full' token is a signed-in browser. Everything below is what keeps one from
+        // being handed out by accident.
+        $lib = (string)@file_get_contents(__DIR__ . '/lib.php');
+
+        // The default must be the narrow scope. A caller that forgets the argument should end
+        // up with a watch token, never a full session.
+        (preg_match('~function mintDevicePairing\([^)]*\$scope = DEVICE_SCOPE_API~', $lib)
+            && str_contains($lib, "scope VARCHAR(10) NOT NULL DEFAULT 'api'"))
+            ? $line('OK',   "device pairing defaults to the narrow scope, in the signature and in the column")
+            : $line('FAIL', 'device pairing no longer defaults to DEVICE_SCOPE_API — a forgotten argument would grant full access');
+
+        // The /pair route must refuse anything that is not a full-scope pairing. Without this
+        // a watch code — which is read off a wrist and lives in a pocket — would open a
+        // browser session with edit and delete in it.
+        (preg_match("~\\\$paired\['scope'\] === DEVICE_SCOPE_FULL~", $src))
+            ? $line('OK',   '/pair refuses a code that was not minted for a full session')
+            : $line('FAIL', '/pair does not check scope — a watch code could open a browser session');
+
+        // Revoking has to end a live session, not just future API calls.
+        (str_contains($src, 'deviceSessionValid($db)') && str_contains($src, 'endDeviceSession()')
+            && str_contains($lib, "\$_SESSION['device_id']"))
+            ? $line('OK',   'a disconnected device loses its browser session on its next request')
+            : $line('FAIL', 'nothing ties a paired browser session to its device row — Disconnect would not sign it out');
+
         // Two handlers validating the same field must accept the same values. /recurring and
         // /recurring/update disagreed once, and editing a recurring earning silently turned it
         // into an expense — the form offered a kind the server quietly discarded.
@@ -827,17 +890,24 @@ if (PHP_SAPI === 'cli') {
         $gate     = strpos($src, "redirect('/login');\n}");
         $authPost = $gate === false ? false : strpos($src, "if (\$method === 'POST') {", $gate);
         $sw       = $authPost === false ? false : strpos($src, 'switch ($path) {', $authPost);
-        // Exactly two, and where they are is the point. The first is /setup on the local
-        // build, which necessarily runs before the gate — it is what creates the user the gate
-        // would otherwise be checking for. The second is the one guarding the whole authed
-        // switch. A third would mean some route is checking for itself, which is how per-route
-        // audits start and how one of them eventually gets forgotten.
+        // Exactly three, and WHERE they are is the point.
+        //
+        // Two of them necessarily run before the auth gate, because both are how a session
+        // comes into existence in the first place and neither can be behind a check for one:
+        //   /setup  the local build's first run — it creates the user the gate looks for.
+        //   /pair   signing in with a device code. Its own check, because it is a login form:
+        //           without one, a forged POST signs a victim's browser into someone else's
+        //           ledger. (/signin needs none — Google's g_csrf_token is the same guarantee.)
+        //
+        // The last one guards the entire authed switch. A FOURTH would mean some route inside
+        // that switch is checking for itself, which is how per-route audits start and how one
+        // of them eventually gets forgotten.
         $csrfAt = [];
         for ($o = 0; ($p = strpos($src, 'csrfCheck();', $o)) !== false; $o = $p + 1) $csrfAt[] = $p;
-        $csrf = count($csrfAt) === 2 ? $csrfAt[1] : false;
+        $csrf = count($csrfAt) === 3 ? $csrfAt[2] : false;
         $gate !== false && $authPost !== false && $sw !== false && $csrf !== false
-            && $csrfAt[0] < $gate && $gate < $authPost && $authPost < $csrf && $csrf < $sw
-            ? $line('OK',   'every POST route sits behind the auth gate and one csrfCheck(), first-run setup ahead of both')
+            && $csrfAt[0] < $gate && $csrfAt[1] < $gate && $gate < $authPost && $authPost < $csrf && $csrf < $sw
+            ? $line('OK',   'every POST route sits behind the auth gate and one csrfCheck(); only first-run setup and device pairing sit ahead of it, each with its own')
             : $line('FAIL', 'the POST switch is no longer uniformly auth/CSRF gated — check the order in index.php');
         // `back` is attacker-controlled and only redirect() runs it through safeRedirectTarget().
         $loc = 0;
@@ -1263,8 +1333,15 @@ if (PHP_SAPI === 'cli') {
             }
             // A valid SQLite file is not necessarily one of ours. Without this, pointing the
             // restore at any random .db would wipe the ledger and leave nothing behind.
+            //
+            // A core subset, deliberately, NOT array_keys(sqliteSchema()). Every table this
+            // app will ever add lands in that list, and a snapshot taken by an older version
+            // is a table short through no fault of its own — demanding the full set would
+            // reject the user's own backups the day a new table ships. sqliteSync() creates
+            // whatever is missing straight after the copy anyway. These four cannot be absent
+            // from an Open Ledger database and are not all present in anything else.
             $have = $in->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
-            $need = array_keys(sqliteSchema());
+            $need = ['households', 'users', 'expenses', 'categories'];
             if ($missing = array_diff($need, $have)) {
                 fwrite(STDERR, "$src is not an Open Ledger database (missing: "
                     . implode(', ', $missing) . ")\n"); exit(1);
@@ -1362,6 +1439,19 @@ if ($method === 'GET' && ($path === '/sitemap.xml' || $path === '/robots.txt')) 
 }
 
 // ────────────────────────────────────────────────────────────────────
+// The watch API — answered before the session starts, for the same reason the crawler
+// files above are. A device authenticates with a bearer token on every request, so a
+// session file and a Set-Cookie per poll would be litter with no reader.
+//
+// Never reached on the Android build: that one serves 127.0.0.1 to its own WebView and has
+// no watch talking to it. The file still ships in its assets so the two copies of the app
+// cannot drift apart — see phpAppFiles in android/app/build.gradle.kts.
+// ────────────────────────────────────────────────────────────────────
+if (str_starts_with($path, '/api/')) {
+    require __DIR__ . '/api.php';    // always exits
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Session hardening — before session_start(), so cookie flags land.
 // ────────────────────────────────────────────────────────────────────
 session_name($config['session_name']);
@@ -1392,6 +1482,18 @@ try {
 require __DIR__ . '/views.php';
 
 $user = currentUser($db);
+
+// A session that came from a pairing code lives exactly as long as its row does. Checked here,
+// before anything trusts $user, so Disconnect in the drawer logs the device out on its very
+// next request rather than whenever its cookie happens to expire.
+if ($user && !deviceSessionValid($db)) {
+    endDeviceSession();
+    $user = null;
+    if ($method === 'GET' && !str_starts_with($path, '/api/')) {
+        flash('error', 'This device was disconnected from the ledger.');
+        redirect('/login');
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Local mode (Android): there is no Google, no account and no second device — the ledger is
@@ -1474,6 +1576,44 @@ if (!$user) {
         renderSignIn();
         exit;
     }
+
+    // Signing in with a code instead of with Google, for a device that will not have a Google
+    // account on it — a work laptop, a shared tablet, a browser you do not want to stay signed
+    // into anything on. The code is minted by someone already signed in, from the drawer.
+    //
+    // This grants a full session, so it is the most dangerous route in the app. Three things
+    // hold it: a six-digit code that lives ten minutes and works once, a hard rate limit on
+    // guesses, and `scope` — a watch's token is 'api' and cannot be redeemed here at all.
+    if ($path === '/pair' && ($method === 'GET' || $method === 'POST')) {
+        $err = '';
+        if ($method === 'POST') {
+            rateLimit($db, $config, 'pair-web', 12, 900);
+            csrfCheck();
+            $code = preg_replace('/\D/', '', (string)($_POST['code'] ?? ''));
+            $paired = strlen($code) === 6
+                ? redeemDevicePairing(
+                    $db,
+                    $code,
+                    deviceLabelFromAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? '')),
+                    DEVICE_SCOPE_FULL
+                  )
+                : null;
+            if ($paired && $paired['scope'] === DEVICE_SCOPE_FULL) {
+                session_regenerate_id(true);
+                $_SESSION['user_id']   = $paired['user_id'];
+                // What ties this session to the row, so revoking the row ends the session.
+                $_SESSION['device_id'] = $paired['id'];
+                redirect(afterSignIn($db, $paired['user_id']));
+            }
+            // One message for "wrong", "expired", "already used" and "that was a watch code",
+            // deliberately. Telling a guesser which of those they hit is telling them whether
+            // the code exists.
+            $err = 'That code is wrong or has expired. Ask for a new one.';
+        }
+        renderPair($err);
+        exit;
+    }
+
     if ($method === 'POST' && $path === '/signin') {
         rateLimit($db, $config, 'signin', $config['limits']['rate_signin_per_15min'], 900);
 
@@ -1674,6 +1814,27 @@ if ($method === 'POST') {
                     . INVITE_TTL_MINUTES . ' minutes.');
                 redirect($_POST['back'] ?? '/');
 
+            case '/watch/pair':
+                // Deliberately cheap to re-run: minting again replaces the unclaimed row, so
+                // "New code" is the only recovery anyone needs when a code times out mid-typing.
+                rateLimit($db, $config, 'watch-pair', 20, 3600);
+                // Validated against the constant list by mintDevicePairing(), which throws
+                // rather than quietly widening a typo into full access.
+                $scope = (string)($_POST['scope'] ?? DEVICE_SCOPE_API);
+                mintDevicePairing($db, $hid, $uid, $scope);
+                flash('success', $scope === DEVICE_SCOPE_FULL
+                    ? 'Code ready — open ' . originUrl() . '/pair on the other device.'
+                    : 'Code ready — enter it on your watch.');
+                redirect($_POST['back'] ?? '/#profile');
+
+            case '/watch/revoke':
+                // Scoped to user_id, not to the household: a device belongs to the person who
+                // paired it, and one member should not be able to unpair another's watch.
+                $db->prepare("DELETE FROM device_tokens WHERE id = ? AND household_id = ? AND user_id = ?")
+                   ->execute([(int)($_POST['id'] ?? 0), $hid, $uid]);
+                flash('success', 'Watch disconnected');
+                redirect($_POST['back'] ?? '/#profile');
+
             case '/invite/revoke':
                 if ($role !== ROLE_OWNER) throw new UserErr('Only the ledger owner can revoke invites.');
                 $db->prepare("DELETE FROM invites WHERE household_id = ? AND used_at IS NULL")->execute([$hid]);
@@ -1695,22 +1856,9 @@ if ($method === 'POST') {
                 redirect($_POST['back'] ?? '/');
 
             case '/expenses':
-                $amt  = parseAmount((string)($_POST['amount'] ?? ''), $config);
-                $date = requireDate((string)($_POST['date'] ?? today()), 'Date');
-                $note = optionalStr($_POST['note'] ?? '', $L['note_len_max'], 'Note');
-                $catId = ownedId($db, 'categories', $hid, (int)($_POST['category_id'] ?? 0));
-                $memId = attributableMember($db, $hid, $uid, $role, (int)($_POST['member_id'] ?? 0));
-                assertUnderLimit(
-                    $db,
-                    "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
-                    [$hid, $date],
-                    $L['expenses_per_day_max'],
-                    'Daily expenses'
-                );
-                $db->prepare(
-                    "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)"
-                )->execute([$hid, $amt, $catId, $memId, $note, $date, $uid]);
+                // The watch posts the same expense through api.php. Both go through
+                // createExpense() so neither can end up with its own idea of the rules.
+                createExpense($db, $config, $hid, $uid, $role, $_POST);
                 flash('success', 'Expense added');
                 // The Add tab posts no `back` and lands on itself, ready for the next one. The
                 // History tab's own add dialog sends one, so it returns to the month you were in.
@@ -2371,6 +2519,7 @@ switch ($path) {
         $_SESSION['pending_invite'] = trim((string)($_GET['t'] ?? ''));
         redirect(afterSignIn($db, $uid));
     case '/login':     redirect('/');                   // already signed in
+    case '/pair':      redirect('/#profile');           // already signed in — codes live here
     case '/manage':    redirect('/#profile');           // legacy path
     default:           http_response_code(404); exit('404');
 }

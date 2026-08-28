@@ -321,6 +321,17 @@ isn't in the web app, it isn't in the phone app.
 
 Build it, and the whole story of what was hard about it, in **[ANDROID.md](ANDROID.md)**.
 
+Any device can be signed in with a **six-digit code** instead of Google — a work laptop, a
+shared tablet, a watch. Mint one from the profile drawer and enter it at `/pair`; disconnect it
+from the same place, which signs it out on its next page load. Watch codes are deliberately
+narrower than device codes: they can read a total and add a spend, and nothing else.
+
+There is also a **Wear OS app** (`android/wear`) — a tile one swipe from the watch face showing
+today's spend, and an Add button that files an expense in a couple of seconds. It is a client
+of the *website*, not of the phone app: pair it with a six-digit code from the profile drawer
+and it talks to the same ledger a browser does, over the phone's Bluetooth proxy when the watch
+has no network of its own. See **[WEAR.md](WEAR.md)**.
+
 ```bash
 ./android/build-php.sh          # cross-compile PHP + SQLite (once)
 cd android && ./gradlew assembleDebug

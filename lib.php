@@ -176,6 +176,41 @@ const SCHEMA_STATEMENTS = [
         INDEX ix_household_member (household_id, member_id),
         INDEX ix_recurring (recurring_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // A device that cannot sign into Google — a watch, a work laptop you will not put a
+    // personal account on, a tablet in the kitchen. The row IS the pairing: it is minted
+    // unclaimed, carrying a six-digit code the website shows and the device types back.
+    // Redeeming clears the code and hands over `token`.
+    //
+    // `scope` is the whole safety of this. There are two, and they are not close:
+    //
+    //   api   a bearer token for /api/* — read a summary, add an expense, nothing else.
+    //         What a watch gets. Cannot open a session or reach a single HTML page.
+    //   full  a browser session, identical to having signed in with Google. Everything.
+    //
+    // Minting defaults to the narrow one. A pairing flow that handed out full access because
+    // someone forgot an argument is the failure worth designing against here.
+    //
+    // The code travels website -> device, never the other way. A device that could mint its
+    // own code and ask a signed-in human to approve it is the device-code phishing pattern:
+    // the attacker's watch gets the ledger. This direction has no such shape — the code is
+    // born inside an authenticated session and is worthless to anyone who cannot read it.
+    "CREATE TABLE IF NOT EXISTS device_tokens (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        user_id INT NOT NULL,
+        token CHAR(64) NOT NULL,
+        label VARCHAR(60) NOT NULL DEFAULT 'Device',
+        scope VARCHAR(10) NOT NULL DEFAULT 'api',
+        pair_code CHAR(6) NULL,
+        pair_expires_at DATETIME NULL,
+        claimed_at DATETIME NULL,
+        last_seen_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_token (token),
+        INDEX ix_household (household_id),
+        INDEX ix_pair_code (pair_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
 
 // Applied in order after SCHEMA_STATEMENTS, each independently. Re-running is a no-op —
@@ -253,12 +288,16 @@ const MIGRATIONS = [
     // opposite thing — a budget is a ceiling you would rather stay under, a target is a floor.
     "ALTER TABLE investment_types ADD COLUMN target DECIMAL(12,2) NOT NULL DEFAULT 0",
     "ALTER TABLE investment_types ADD COLUMN parent_id INT NULL",
+    // v20 — paired devices. The table itself is in SCHEMA_STATEMENTS, so a fresh database
+    // gets `scope` with it and this line errors harmlessly. It is here for the databases that
+    // saw the table land one deploy before the column did.
+    "ALTER TABLE device_tokens ADD COLUMN scope VARCHAR(10) NOT NULL DEFAULT 'api'",
 ];
 
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v19';
+const SCHEMA_SENTINEL = '.schema-ok-v21';
 
 // A ledger is a household; these are the only two roles it has. The owner is whoever created
 // it — they can edit every entry, invite people and remove them. Everyone else edits their own.
@@ -1026,6 +1065,350 @@ function redeemInvite(PDO $db, string $token, int $uid): array {
        ->execute([$hid, $uid, ROLE_MEMBER]);
     linkMember($db, $hid, $uid);
     return $out('ok');
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Paired devices — the watch, and anything else that cannot sign into Google
+//
+// A device holds one opaque bearer token and nothing else: no session, no cookie, no CSRF.
+// It is scoped to one household and one user, and every API call resolves back through
+// deviceFromToken() to exactly the ($hid, $uid, $role) triple a browser request would have,
+// so the device can do no more than the human who paired it.
+// ────────────────────────────────────────────────────────────────────
+
+// Six digits, ten minutes, one use. Long enough to type on a watch with a voice button,
+// short-lived enough that guessing it is not a strategy — and the guess would have to land
+// inside the window of a code that a signed-in person is looking at on another screen.
+const DEVICE_PAIR_TTL_MINUTES = 10;
+const DEVICE_TOKENS_MAX       = 8;
+
+// What a paired device may do. See the device_tokens DDL for why the split exists.
+const DEVICE_SCOPE_API  = 'api';    // /api/* only — a watch
+const DEVICE_SCOPE_FULL = 'full';   // a browser session, same as signing in
+const DEVICE_SCOPES     = [DEVICE_SCOPE_API, DEVICE_SCOPE_FULL];
+
+// Mint an unclaimed device row and return the code to show the user.
+//
+// Replaces any other unclaimed row for this user first: two live codes on one account means a
+// person reading the second one while the first is still redeemable, which is one code too
+// many to reason about.
+function mintDevicePairing(PDO $db, int $hid, int $uid, string $scope = DEVICE_SCOPE_API): string {
+    // Not a cast, a rejection. A typo'd scope silently becoming 'full' is the one way this
+    // function can hand out more than the caller asked for.
+    if (!in_array($scope, DEVICE_SCOPES, true)) throw new UserErr('Unknown device type.');
+    $db->prepare("DELETE FROM device_tokens WHERE user_id = ? AND claimed_at IS NULL")->execute([$uid]);
+
+    // The code must be unique among LIVE codes, not for all time — reuse after expiry is fine
+    // and is what keeps six digits enough. Retry rather than trust randomness: a collision is
+    // vanishingly rare and silently catastrophic, because redeemDevicePairing() takes the
+    // first match and would hand one household's token to another household's watch.
+    $live = $db->prepare("SELECT 1 FROM device_tokens WHERE pair_code = ? AND claimed_at IS NULL AND pair_expires_at > ?");
+    $code = '';
+    for ($try = 0; $try < 8; $try++) {
+        $candidate = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $live->execute([$candidate, nowSql()]);
+        if (!$live->fetchColumn()) { $code = $candidate; break; }
+    }
+    if ($code === '') throw new UserErr('Could not generate a pairing code. Try again in a minute.');
+
+    $db->prepare(
+        "INSERT INTO device_tokens (household_id, user_id, token, label, scope, pair_code, pair_expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )->execute([
+        $hid, $uid,
+        bin2hex(random_bytes(32)),
+        $scope === DEVICE_SCOPE_FULL ? 'Device' : 'Watch',
+        $scope,
+        $code,
+        // PHP's clock on both sides of the comparison, per the app's no-DB-clock rule.
+        date('Y-m-d H:i:s', time() + DEVICE_PAIR_TTL_MINUTES * 60),
+        nowSql(),
+    ]);
+    return $code;
+}
+
+// The code a user is currently looking at, or null. Drives the drawer's panel, which has to
+// keep showing the same code across a reload rather than minting a fresh one each paint.
+function liveDevicePairing(PDO $db, int $uid): ?array {
+    $s = $db->prepare(
+        "SELECT pair_code, pair_expires_at, scope FROM device_tokens
+         WHERE user_id = ? AND claimed_at IS NULL AND pair_expires_at > ?"
+    );
+    $s->execute([$uid, nowSql()]);
+    return $s->fetch() ?: null;
+}
+
+// Spend a code and hand back the bearer token. Like redeemInvite(), the UPDATE is the lock:
+// `claimed_at IS NULL` in the WHERE means two devices racing one code produce exactly one
+// winner, with no transaction.
+function redeemDevicePairing(PDO $db, string $code, string $label, string $expectScope): ?array {
+    if (!preg_match('/^\d{6}$/', $code)) return null;
+    if (!in_array($expectScope, DEVICE_SCOPES, true)) return null;
+    // The scope is part of the LOOKUP, not a check the caller does afterwards.
+    //
+    // It used to be the caller's job, and that was wrong in a way that only showed up when
+    // someone typed a watch code into /pair: the row was claimed, then rejected. The code was
+    // spent, the watch never got its token, and the only symptom was "it says the code is
+    // wrong" about a code that had been correct a moment earlier. A mismatched scope now
+    // means no row matches, so there is nothing to claim and nothing to burn.
+    //
+    // Exact match, not a hierarchy. 'full' is a superset of 'api' in what it permits, but a
+    // code minted for a browser should not silently hand a watch more than a watch needs.
+    $s = $db->prepare(
+        "SELECT id, household_id, user_id, token, scope FROM device_tokens
+         WHERE pair_code = ? AND scope = ? AND claimed_at IS NULL AND pair_expires_at > ?"
+    );
+    $s->execute([$code, $expectScope, nowSql()]);
+    $row = $s->fetch();
+    if (!$row) return null;
+
+    // Clearing pair_code is not tidiness. Leaving it set keeps the row matching the SELECT
+    // above forever, and the only thing standing between a replayed code and a second token
+    // would be claimed_at — one condition instead of two, on the app's most sensitive row.
+    $claim = $db->prepare(
+        "UPDATE device_tokens SET claimed_at = ?, pair_code = NULL, label = ?
+         WHERE id = ? AND claimed_at IS NULL"
+    );
+    $claim->execute([nowSql(), mb_substr(trim($label) ?: 'Watch', 0, 60), (int)$row['id']]);
+    if ($claim->rowCount() !== 1) return null;
+
+    // Oldest first, so pairing a sixth device retires the one nobody has used, not this one.
+    $extra = $db->prepare(
+        "SELECT id FROM device_tokens WHERE user_id = ? AND claimed_at IS NOT NULL ORDER BY claimed_at DESC"
+    );
+    $extra->execute([(int)$row['user_id']]);
+    $keep = array_slice($extra->fetchAll(PDO::FETCH_COLUMN), 0, DEVICE_TOKENS_MAX);
+    if ($keep) {
+        $db->prepare(
+            "DELETE FROM device_tokens WHERE user_id = ? AND claimed_at IS NOT NULL
+             AND id NOT IN (" . implode(',', array_map('intval', $keep)) . ")"
+        )->execute([(int)$row['user_id']]);
+    }
+
+    return [
+        'id'           => (int)$row['id'],
+        'token'        => (string)$row['token'],
+        'scope'        => (string)$row['scope'],
+        'household_id' => (int)$row['household_id'],
+        'user_id'      => (int)$row['user_id'],
+    ];
+}
+
+// The watches this person has connected TO THIS LEDGER, newest first. Read-only — the drawer
+// lists them so that "which devices can see my ledger" has an answer that is not "no idea".
+//
+// Scoped by household as well as by user, because a device is pinned to the ledger it was
+// paired with (deviceFromToken). Listing someone's watch from another ledger next to a
+// Disconnect button would offer to unpair a device that is not filing here anyway.
+function pairedDevices(PDO $db, int $hid, int $uid): array {
+    $s = $db->prepare(
+        "SELECT id, label, scope, claimed_at, last_seen_at FROM device_tokens
+         WHERE household_id = ? AND user_id = ? AND claimed_at IS NOT NULL ORDER BY claimed_at DESC"
+    );
+    $s->execute([$hid, $uid]);
+    return $s->fetchAll();
+}
+
+// Resolve a bearer token to the same ($hid, $uid, $role) a signed-in browser request carries.
+// Null for anything that is not a live token — including one whose user has since been removed
+// from the ledger, which roleIn() is what actually catches.
+function deviceFromToken(PDO $db, string $token): ?array {
+    if (!preg_match('/^[0-9a-f]{64}$/', $token)) return null;
+    $s = $db->prepare(
+        "SELECT id, household_id, user_id, scope FROM device_tokens WHERE token = ? AND claimed_at IS NOT NULL"
+    );
+    $s->execute([$token]);
+    $row = $s->fetch();
+    if (!$row) return null;
+
+    // The device is pinned to the household it was paired with, not to wherever the user has
+    // since switched their browser. Two ledgers, one watch, and the watch keeps filing into
+    // the one you pointed it at.
+    $hid  = (int)$row['household_id'];
+    $uid  = (int)$row['user_id'];
+    $role = roleIn($db, $hid, $uid);
+    if ($role === null) return null;
+
+    $db->prepare("UPDATE device_tokens SET last_seen_at = ? WHERE id = ?")->execute([nowSql(), (int)$row['id']]);
+    return ['id' => (int)$row['id'], 'household_id' => $hid, 'user_id' => $uid, 'role' => $role, 'scope' => (string)$row['scope']];
+}
+
+// Is this browser session still allowed to exist?
+//
+// A session created by Google survives until it expires; there is nothing to check. A session
+// created by a pairing code is only as alive as the row it came from, and that is the entire
+// point of the drawer's Disconnect button: without this, revoking a device would kill its API
+// access and leave its browser session merrily signed in for another thirty days.
+//
+// Cheap: one indexed lookup on a session that has a device_id, nothing at all on one that
+// does not. The last_seen write is throttled to once every ten minutes, because "when did
+// this device last use the ledger" does not need per-request precision and per-request
+// precision would mean a write on every page load.
+function deviceSessionValid(PDO $db): bool {
+    $id = (int)($_SESSION['device_id'] ?? 0);
+    if ($id <= 0) return true;
+
+    $s = $db->prepare(
+        "SELECT last_seen_at FROM device_tokens
+         WHERE id = ? AND claimed_at IS NOT NULL AND scope = ?"
+    );
+    $s->execute([$id, DEVICE_SCOPE_FULL]);
+    $row = $s->fetch();
+    if (!$row) return false;
+
+    $seen = $row['last_seen_at'] ? strtotime((string)$row['last_seen_at']) : 0;
+    if (time() - $seen > 600) {
+        $db->prepare("UPDATE device_tokens SET last_seen_at = ? WHERE id = ?")->execute([nowSql(), $id]);
+    }
+    return true;
+}
+
+// Throw away a session whose device was disconnected. Separate from signing out because there
+// is nothing voluntary about it — the person is told what happened rather than asked.
+//
+// Rotates the session rather than destroying it. Destroying was the obvious first version and
+// it silently ate the message: the next thing this request does is put "you were
+// disconnected" somewhere the login page can read it, and a destroyed session has nowhere to
+// put it — the delete-cookie header and the new session's Set-Cookie raced, and the visitor
+// arrived at a bare sign-in page with no idea why. Rotating still invalidates the old id,
+// which is the part that actually matters.
+function endDeviceSession(): void {
+    $_SESSION = [];
+    if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+}
+
+// What to call a browser that just paired, from what it told us about itself.
+//
+// Best-effort and deliberately coarse: the drawer needs "is that the work laptop or the
+// tablet", not a fingerprint. Anything unrecognised is just "Device", which is honest.
+function deviceLabelFromAgent(string $ua): string {
+    $ua = trim($ua);
+    if ($ua === '') return 'Device';
+    $os = match (true) {
+        str_contains($ua, 'Windows')            => 'Windows',
+        str_contains($ua, 'iPhone')             => 'iPhone',
+        str_contains($ua, 'iPad')               => 'iPad',
+        str_contains($ua, 'Android')            => 'Android',
+        // Order matters: every Mac browser also says "Macintosh", and iPadOS says both.
+        str_contains($ua, 'Mac OS X')           => 'Mac',
+        str_contains($ua, 'Linux')              => 'Linux',
+        default                                 => '',
+    };
+    $browser = match (true) {
+        str_contains($ua, 'Edg/')               => 'Edge',
+        str_contains($ua, 'OPR/')               => 'Opera',
+        str_contains($ua, 'Firefox/')           => 'Firefox',
+        str_contains($ua, 'Chrome/')            => 'Chrome',
+        // Safari claims to be lots of things, so it is only Safari once nothing else matched.
+        str_contains($ua, 'Safari/')            => 'Safari',
+        default                                 => '',
+    };
+    $name = trim($browser . ($os !== '' ? " on $os" : ''));
+    return $name !== '' ? mb_substr($name, 0, 60) : 'Device';
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Writing an expense — one implementation, two front doors
+//
+// The web form posts here and so does the watch. Keeping the validation in one place is the
+// point: a second copy would be the one that forgets the daily cap, or attributes a member's
+// entry to the owner, and it would be wrong only on the path nobody looks at.
+// ────────────────────────────────────────────────────────────────────
+function createExpense(PDO $db, array $cfg, int $hid, int $uid, string $role, array $in): void {
+    $L     = $cfg['limits'];
+    $amt   = parseAmount((string)($in['amount'] ?? ''), $cfg);
+    $date  = requireDate((string)($in['date'] ?? today()), 'Date');
+    $note  = optionalStr($in['note'] ?? '', $L['note_len_max'], 'Note');
+    $catId = ownedId($db, 'categories', $hid, (int)($in['category_id'] ?? 0));
+    $memId = attributableMember($db, $hid, $uid, $role, (int)($in['member_id'] ?? 0));
+    assertUnderLimit(
+        $db,
+        "SELECT COUNT(*) FROM expenses WHERE household_id = ? AND date = ?",
+        [$hid, $date],
+        $L['expenses_per_day_max'],
+        'Daily expenses'
+    );
+    $db->prepare(
+        "INSERT INTO expenses (household_id, amount, category_id, member_id, note, date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )->execute([$hid, $amt, $catId, $memId, $note, $date, $uid]);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// The small screen's view of the ledger
+//
+// Everything a 1.5" round display can hold, in one round trip: today, the month, the three
+// biggest categories with their budgets, and the last three entries. Called by the watch API
+// after every write too, so the device never needs a second request to refresh itself.
+// ────────────────────────────────────────────────────────────────────
+function watchSummary(PDO $db, int $hid): array {
+    $today      = today();
+    $monthStart = date('Y-m-01');
+    // Not "+1 month" from today: from Jan 31 that lands in March and the month total would
+    // quietly include February. From the first of the month it is always right.
+    $monthEnd   = date('Y-m-d', strtotime($monthStart . ' +1 month'));
+
+    $dayStmt = $db->prepare("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE household_id = ? AND `date` = ?");
+    $dayStmt->execute([$hid, $today]);
+
+    $monStmt = $db->prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
+         FROM expenses WHERE household_id = ? AND `date` >= ? AND `date` < ?"
+    );
+    $monStmt->execute([$hid, $monthStart, $monthEnd]);
+    $mon = $monStmt->fetch();
+
+    // The same GROUP BY and the same rollup the History tab draws its bars from, so a
+    // sub-category's spend lands on its parent's budget here exactly as it does there.
+    $catStmt = $db->prepare(
+        "SELECT c.id AS cid, COALESCE(c.name, 'Uncategorised') AS name,
+                COALESCE(c.icon, 'tag') AS icon, COALESCE(c.budget, 0) AS budget,
+                p.id AS pid, p.name AS pname, p.icon AS picon, p.budget AS pbudget,
+                SUM(e.amount) AS amt
+         FROM expenses e
+         LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         LEFT JOIN categories p ON p.id = c.parent_id AND p.household_id = c.household_id
+         WHERE e.household_id = ? AND e.`date` >= ? AND e.`date` < ?
+         GROUP BY c.id, c.name, c.icon, c.budget, p.id, p.name, p.icon, p.budget"
+    );
+    $catStmt->execute([$hid, $monthStart, $monthEnd]);
+    // Already sorted by amount desc; three is what fits before the wrist has to scroll.
+    $top = array_slice(rollupCategories($catStmt->fetchAll()), 0, 3);
+
+    // Household budget = every top-level category's budget, spent or not, exactly as the
+    // History tab totals it. 0 means nobody has set one, and the watch draws no bar.
+    $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ? AND parent_id IS NULL");
+    $budStmt->execute([$hid]);
+
+    $recStmt = $db->prepare(
+        "SELECT e.amount, e.note, e.date, COALESCE(c.name, 'Uncategorised') AS category
+         FROM expenses e
+         LEFT JOIN categories c ON c.id = e.category_id AND c.household_id = e.household_id
+         WHERE e.household_id = ?
+         ORDER BY e.`date` DESC, e.id DESC
+         LIMIT 3"
+    );
+    $recStmt->execute([$hid]);
+
+    return [
+        'today'       => roundMoney((float)$dayStmt->fetchColumn()),
+        'month'       => roundMoney((float)$mon['total']),
+        'month_count' => (int)$mon['n'],
+        'month_label' => date('F Y'),
+        'budget'      => roundMoney((float)$budStmt->fetchColumn()),
+        'date'        => $today,
+        'top'         => array_map(fn(array $b) => [
+            'name'   => (string)$b['name'],
+            'amt'    => roundMoney((float)$b['amt']),
+            'budget' => roundMoney((float)$b['budget']),
+        ], $top),
+        'recent'      => array_map(fn(array $r) => [
+            'amount'   => roundMoney((float)$r['amount']),
+            'category' => (string)$r['category'],
+            'note'     => (string)$r['note'],
+            'date'     => (string)$r['date'],
+        ], $recStmt->fetchAll()),
+    ];
 }
 
 // Point a user at one of their ledgers. The membership check is the whole job: the id arrives

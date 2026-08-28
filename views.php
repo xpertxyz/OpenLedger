@@ -1653,6 +1653,80 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <div style="flex:1;"></div>
 
+        <?php /* The website only. A watch pairs against an account, and the Android build has
+                 neither an account nor a socket a watch could reach — it serves 127.0.0.1 to
+                 its own WebView. See api.php. */ ?>
+        <?php if (FEATURE_SIGNIN): ?>
+        <hr>
+        <section>
+          <h4 style="margin:0 0 4px;">Connected devices</h4>
+          <p class="muted" style="margin:0 0 8px; font-size:12px;">
+            Sign a device in with a code instead of Google — a watch, a work laptop, a tablet.
+          </p>
+          <?php $pair = liveDevicePairing($db, (int)$user['id']); $paired = pairedDevices($db, $hid, (int)$user['id']); ?>
+          <?php if ($pair): ?>
+            <?php /* Grouped 3-and-3 and spaced out, because this is read off one screen and
+                     typed into another — the two things that make six digits hard are running
+                     them together and setting them in the body font. */ ?>
+            <div class="card" style="text-align:center; padding:14px 10px;">
+              <div style="font-size:30px; letter-spacing:.22em; font-weight:700; font-variant-numeric:tabular-nums; color:var(--color-accent-700);">
+                <?= h(substr((string)$pair['pair_code'], 0, 3)) ?>&nbsp;<?= h(substr((string)$pair['pair_code'], 3)) ?>
+              </div>
+              <p class="muted" style="margin:8px 0 0; font-size:12px;">
+                <?php if (($pair['scope'] ?? '') === DEVICE_SCOPE_FULL): ?>
+                  Open <strong><?= h(preg_replace('~^https?://~', '', originUrl())) ?>/pair</strong> on the other device and enter this.
+                <?php else: ?>
+                  Open Open&nbsp;Ledger on your watch and enter this.
+                <?php endif; ?>
+                It expires <?= h(date('g:i a', strtotime((string)$pair['pair_expires_at']))) ?>.
+              </p>
+            </div>
+          <?php endif; ?>
+          <?php /* Two buttons rather than a picker, because the two are not variations of one
+                   thing: one grants a browser everything, the other lets a watch read a total
+                   and add a spend. Naming them separately is what makes that visible at the
+                   moment of choosing. */ ?>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <form method="post" action="/watch/pair" style="flex:1;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input type="hidden" name="scope" value="<?= h(DEVICE_SCOPE_API) ?>">
+              <button class="btn btn-block" type="submit">Watch code</button>
+            </form>
+            <form method="post" action="/watch/pair" style="flex:1;">
+              <?= csrfInput() ?>
+              <input type="hidden" name="back" value="<?= $back ?>">
+              <input type="hidden" name="scope" value="<?= h(DEVICE_SCOPE_FULL) ?>">
+              <button class="btn btn-block" type="submit">Device code</button>
+            </form>
+          </div>
+          <?php foreach ($paired as $d): ?>
+            <div class="row" style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px;"><?= h((string)$d['label']) ?></div>
+                <div class="muted" style="font-size:11px;">
+                  <?php /* Saying what it can do, not what kind of hardware it is. "Full access"
+                           is the fact that matters when deciding whether to disconnect it. */ ?>
+                  <?= ($d['scope'] ?? '') === DEVICE_SCOPE_FULL ? 'Full access' : 'Totals and adding only' ?>
+                  ·
+                  <?= $d['last_seen_at'] ? 'used ' . h(date('j M', strtotime((string)$d['last_seen_at']))) : 'not used yet' ?>
+                </div>
+              </div>
+              <button class="icon-btn" type="button" aria-label="Disconnect"
+                      onclick='askConfirm(<?= h(json_encode([
+                          "action" => "/watch/revoke",
+                          "csrf"   => csrfToken(),
+                          "id"     => (int)$d['id'],
+                          "back"   => strtok($requestUri, '#') . '#profile',
+                          "title"  => "Disconnect this device?",
+                          "body"   => "It loses access immediately. If it is signed in right now, it will be signed out.",
+                          "ok"     => "Disconnect",
+                      ])) ?>)'><?= icon('trash-2', 16) ?></button>
+            </div>
+          <?php endforeach; ?>
+        </section>
+        <?php endif; ?>
+
         <hr>
 
         <section>
@@ -2247,6 +2321,88 @@ HTML;
 // Nothing here leaves the device and the page says so, because being asked for a name and an
 // email by an app that has just promised it has no server is otherwise a fair thing to be
 // suspicious of.
+/**
+ * Sign in with a six-digit code instead of with Google.
+ *
+ * For a device that will not hold a Google account — a work laptop, a shared tablet, a browser
+ * you would rather not stay signed into anything on. Somebody already signed in mints the code
+ * from the profile drawer and reads it out; this is where it is spent.
+ *
+ * Same shell as renderSignIn(): one card, the palette the visitor already chose, and no
+ * navigation. Nobody who lands here has a session yet, so there is nowhere for them to go.
+ */
+function renderPair(string $error): void {
+    $sprite = SVG_SPRITE;
+    $csrf   = csrfInput();
+    $err    = $error === '' ? '' :
+        "<div class='toast error' style='position:static;transform:none;margin-top:4px;animation:none;'>" . h($error) . "</div>";
+    $origin = originUrl();
+    $meta   = metaHead($origin);
+    $themeVars = themeCss();
+    $boot   = themeBootScript();
+    $cssV   = cssVersion();
+
+    echo <<<HTML
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Open Ledger — Connect this device</title>
+$meta
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
+$boot
+<style>
+  body { margin:0; background:var(--color-bg); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .toast { padding:8px 14px; border-radius:999px; background:var(--color-accent-700); color:var(--color-bg); font-size:13px; }
+  .toast.error { background:#c0392b; }
+  /* One box, six characters. Wide tracking and tabular figures so a mistyped digit is
+     visible at a glance, and a font size nobody has to lean in for. */
+  .code-in {
+    width:100%; text-align:center; font-size:30px; letter-spacing:.28em; font-weight:700;
+    font-variant-numeric:tabular-nums; padding:14px 10px; text-indent:.28em;
+  }
+</style>
+</head>
+<body>
+$sprite
+<div style="width:100%;max-width:340px;padding:var(--space-4);">
+  <div class="card elev-lg" style="padding:var(--space-6);align-items:center;text-align:center;gap:var(--space-4);">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:14px;">
+      <svg viewBox="0 0 24 24" width="54" height="54" fill="none" stroke="var(--color-accent)"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
+      </svg>
+      <span style="font-family:var(--font-heading);font-size:26px;line-height:1;color:var(--color-text);">Connect this device</span>
+    </div>
+    <div style="font-size:14px;color:var(--color-neutral-800);">
+      On a device already signed in, open the profile menu and tap
+      <strong>Connect a device</strong>. Enter the six digits it shows.
+    </div>
+
+    <form method="post" action="/pair" style="width:100%;display:flex;flex-direction:column;gap:12px;">
+      $csrf
+      <!-- inputmode=numeric brings up a phone keypad without type=number's spinners, and
+           autocomplete=one-time-code lets a password manager stay out of the way. -->
+      <input class="input code-in" name="code" inputmode="numeric" pattern="[0-9]*"
+             maxlength="6" autocomplete="one-time-code" autofocus
+             placeholder="000000" aria-label="Six-digit code">
+      <button class="btn btn-primary btn-block" type="submit">Connect</button>
+    </form>
+    $err
+  </div>
+  <div style="display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; margin-top:14px; font-size:12px; color:var(--color-neutral-800);">
+    <a href="/login" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">Sign in with Google instead</a>
+    <a href="/terms" style="color:inherit; text-decoration:underline; text-underline-offset:2px;">Terms &amp; conditions</a>
+  </div>
+</div>
+</body></html>
+HTML;
+}
+
 function renderSetup(string $error, array $old): void {
     $sprite    = SVG_SPRITE;
     $origin    = originUrl();
