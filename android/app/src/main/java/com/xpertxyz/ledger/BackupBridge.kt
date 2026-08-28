@@ -60,17 +60,16 @@ class BackupBridge(private val activity: Activity, private val server: PhpServer
     @JavascriptInterface
     fun clearPassphrase() = BackupCrypto.disable(ctx)
 
-    /** Opens Google's account chooser. */
+    /**
+     * Opens Google's account chooser, then its Drive consent. The Activity goes in, not
+     * `ctx` — that is the application context, and neither sheet has a window to open in
+     * without one.
+     */
     @JavascriptInterface
     fun connect() {
         if (!DriveAuth.isConfigured) return
         (activity as? FragmentActivity)?.let { fa ->
-            fa.lifecycleScope.launch {
-                val email = DriveAuth.signIn(ctx)
-                if (email != null) {
-                    DriveAuth.authorize(ctx, fa)
-                }
-            }
+            fa.lifecycleScope.launch { DriveAuth.connect(fa) }
         }
     }
 

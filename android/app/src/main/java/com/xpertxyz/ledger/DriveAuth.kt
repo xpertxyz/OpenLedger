@@ -1,10 +1,13 @@
 package com.xpertxyz.ledger
 
+import android.accounts.Account
+import android.app.Activity
 import android.content.Context
 import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CustomCredential
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
-import androidx.credentials.GetCredentialResponse
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
@@ -64,56 +67,87 @@ object DriveAuth {
     val isConfigured: Boolean get() = !WEB_CLIENT_ID.startsWith("REPLACE_ME")
 
     private val driveScope = Scope(DriveScopes.DRIVE_APPDATA)
-    private const val PREFS_AUTH = "auth_state"
+    private const val PREFS_AUTH  = "auth_state"
     private const val KEY_ACCOUNT = "account_email"
+    private const val KEY_GRANTED = "drive_granted"
 
-    /** The connected account's email, or null when nobody has connected one. */
+    private fun authPrefs(ctx: Context) =
+        ctx.getSharedPreferences(PREFS_AUTH, Context.MODE_PRIVATE)
+
+    /**
+     * The connected account's email, or null when nobody has connected one.
+     *
+     * Signing in and granting Drive are two separate answers, and only the second one gives
+     * this app anything. An email on its own means somebody got halfway — so it is not enough
+     * to report an account, or every backup would fail against a panel claiming to be set up.
+     */
     fun connectedAccount(ctx: Context): String? {
         if (!isConfigured) return null
-        return ctx.getSharedPreferences(PREFS_AUTH, Context.MODE_PRIVATE).getString(KEY_ACCOUNT, null)
+        val p = authPrefs(ctx)
+        if (!p.getBoolean(KEY_GRANTED, false)) return null
+        return p.getString(KEY_ACCOUNT, null)
     }
 
-    suspend fun signIn(ctx: Context): String? {
-        val credentialManager = CredentialManager.create(ctx)
-        val googleIdOption = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(false)
-            .setServerClientId(WEB_CLIENT_ID)
-            .build()
+    /**
+     * Who are you, then may we keep a backup for you. Two questions, in that order, and only
+     * the second one grants this app anything — see [connectedAccount].
+     *
+     * Needs the Activity, not the application context: both halves put a sheet on the screen,
+     * and Credential Manager has nowhere to put one without a window.
+     */
+    suspend fun connect(activity: Activity) {
+        if (!isConfigured) return
+        val email = signIn(activity)
+        // Every exit repaints. The reason a connect stopped is written into the panel's own
+        // error line, and a page nobody reloads is a page that still says "not connected"
+        // with no word of why — which is the whole failure this arrangement is here to end.
+        if (email == null) { (activity as? MainActivity)?.onDriveAuthDone(); return }
+        authPrefs(activity).edit { putString(KEY_ACCOUNT, email) }
+        authorize(activity, email)
+    }
 
+    private suspend fun signIn(activity: Activity): String? {
         val request = GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
+            .addCredentialOption(
+                GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(WEB_CLIENT_ID)
+                    .build()
+            )
             .build()
 
         return try {
-            val result = credentialManager.getCredential(ctx, request)
-            val email = handleSignInResponse(ctx, result)
-            if (email != null) {
-                // Store the email temporarily so authorize() can use it if needed,
-                // or just wait for authorization to complete.
-                ctx.getSharedPreferences(PREFS_AUTH, Context.MODE_PRIVATE)
-                    .edit { putString(KEY_ACCOUNT, email) }
+            val credential = CredentialManager.create(activity)
+                .getCredential(activity, request).credential
+            // Credential Manager rebuilds every credential from a Bundle, so what arrives is a
+            // plain CustomCredential carrying the Google type string — never the
+            // GoogleIdTokenCredential subclass, however much it looks like one. `is
+            // GoogleIdTokenCredential` is therefore always false, which is why a sign-in that
+            // visibly succeeded wrote nothing down and the panel kept forgetting the account.
+            if (credential is CustomCredential &&
+                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                GoogleIdTokenCredential.createFrom(credential.data).id
+            } else {
+                logErr("signIn: unexpected credential type " + credential.type)
+                noteError(activity, "Google returned a credential this app cannot read.")
+                null
             }
-            email
+        } catch (e: GetCredentialCancellationException) {
+            null                       // backing out of the sheet is an answer, not a fault
         } catch (e: GetCredentialException) {
             logErr("signIn failed", e)
-            noteSignInError(ctx, e)
+            noteSignInError(activity, e)
             null
         }
     }
 
-    private fun handleSignInResponse(ctx: Context, response: GetCredentialResponse): String? {
-        val credential = response.credential
-        if (credential is GoogleIdTokenCredential) {
-            val email = credential.id
-            log("signIn: success, email=$email")
-            return email
-        }
-        return null
-    }
-
-    fun authorize(ctx: Context, activity: android.app.Activity) {
+    private fun authorize(activity: Activity, email: String) {
         val request = AuthorizationRequest.builder()
             .setRequestedScopes(listOf(driveScope))
+            // Pinned to the account that just signed in. Left open, the consent sheet offers a
+            // picker of its own, and choosing a different account there authorises one address
+            // while drive() goes on asking for a token for the other.
+            .setAccount(Account(email, "com.google"))
             .build()
 
         Identity.getAuthorizationClient(activity)
@@ -122,30 +156,42 @@ object DriveAuth {
                 if (result.hasResolution()) {
                     (activity as? MainActivity)?.launchAuthorization(result)
                 } else {
-                    noteAuthorizationResult(ctx, result)
+                    // Already granted on an earlier run: no sheet, nothing comes back through
+                    // the launcher, and only this branch is left to record it and repaint.
+                    noteAuthorizationResult(activity, result)
+                    (activity as? MainActivity)?.onDriveAuthDone()
                 }
             }
             .addOnFailureListener { e ->
                 logErr("authorize failed", e)
-                noteSignInError(ctx, e as Exception)
+                noteSignInError(activity, e)
+                (activity as? MainActivity)?.onDriveAuthDone()
             }
     }
 
+    /** The grant itself, from either path. Nothing else may set [KEY_GRANTED]. */
     fun noteAuthorizationResult(ctx: Context, result: AuthorizationResult) {
-        // If we reach here, the user has granted permissions.
-        // The account email should already be in PREFS_AUTH from signIn().
-        if (connectedAccount(ctx) != null) {
+        val granted = result.grantedScopes.contains(DriveScopes.DRIVE_APPDATA)
+        authPrefs(ctx).edit { putBoolean(KEY_GRANTED, granted) }
+        if (granted) {
+            log("authorize: drive.appdata granted")
             forgetSignInError(ctx)
-            log("authorize: success")
-            // Notify MainActivity to reload
-            (ctx as? MainActivity)?.onDriveAuthSuccess()
         } else {
-             noteSignInError(ctx, Exception("Signed in, but account information is missing."))
+            noteError(ctx, "Drive access was not granted. Tap Connect and allow it.")
         }
     }
 
+    /** The consent sheet closed without granting anything, or came back unreadable. */
+    fun noteAuthorizationDeclined(
+        ctx: Context,
+        why: String = "Drive access was not granted. Tap Connect and allow it."
+    ) {
+        authPrefs(ctx).edit { putBoolean(KEY_GRANTED, false) }
+        noteError(ctx, why)
+    }
+
     fun disconnect(ctx: Context) {
-        ctx.getSharedPreferences(PREFS_AUTH, Context.MODE_PRIVATE).edit { clear() }
+        authPrefs(ctx).edit { clear() }
         val credentialManager = CredentialManager.create(ctx)
         CoroutineScope(Dispatchers.Main).launch {
             runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
@@ -156,6 +202,11 @@ object DriveAuth {
     private fun forgetSignInError(ctx: Context) {
         ctx.getSharedPreferences(BackupNames.PREFS, Context.MODE_PRIVATE)
             .edit { remove(BackupNames.KEY_LAST_ERROR) }
+    }
+
+    private fun noteError(ctx: Context, why: String) {
+        ctx.getSharedPreferences(BackupNames.PREFS, Context.MODE_PRIVATE)
+            .edit { putString(BackupNames.KEY_LAST_ERROR, why) }
     }
 
     private fun noteSignInError(ctx: Context, e: Exception) {
@@ -173,8 +224,7 @@ object DriveAuth {
             }
             else -> e.message ?: e.javaClass.simpleName
         }
-        ctx.getSharedPreferences(BackupNames.PREFS, Context.MODE_PRIVATE)
-            .edit { putString(BackupNames.KEY_LAST_ERROR, why) }
+        noteError(ctx, why)
     }
 
     /**

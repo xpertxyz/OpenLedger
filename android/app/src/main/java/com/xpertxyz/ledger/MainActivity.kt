@@ -90,17 +90,24 @@ class MainActivity : FragmentActivity() {
         server = PhpServer(this)
         updates = UpdateBridge(this).also { it.start() }
 
+        // Google's Drive consent coming back. Every branch has to write something down and
+        // repaint: a sheet that was dismissed used to leave the panel exactly as it was, which
+        // is indistinguishable from a tap that did nothing.
         authorizeLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
+            if (result.resultCode != Activity.RESULT_OK) {
+                DriveAuth.noteAuthorizationDeclined(this)
+            } else {
                 try {
-                    val authResult = Identity.getAuthorizationClient(this)
-                        .getAuthorizationResultFromIntent(result.data)
-                    DriveAuth.noteAuthorizationResult(this, authResult)
-                    onDriveAuthSuccess()
+                    DriveAuth.noteAuthorizationResult(
+                        this,
+                        Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)
+                    )
                 } catch (e: Exception) {
                     logErr("Authorization result extraction failed", e)
+                    DriveAuth.noteAuthorizationDeclined(this, "Google's reply could not be read. Try again.")
                 }
             }
+            onDriveAuthDone()
         }
 
         web = WebView(this).apply {
@@ -307,7 +314,8 @@ class MainActivity : FragmentActivity() {
         authorizeLauncher.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
     }
 
-    fun onDriveAuthSuccess() {
+    /** Connected or not, the page has to be repainted — that is where the reason is shown. */
+    fun onDriveAuthDone() {
         // Connecting an account is the user saying "keep a copy".
         if (DriveAuth.connectedAccount(this) != null && BackupScheduler.frequency(this) == "off") {
             BackupScheduler.apply(this, "daily")
