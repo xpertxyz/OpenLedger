@@ -13,6 +13,8 @@ define('FEATURE_SIGNIN',   $config['features']['google_signin']);
 // Only the Android build sets this: the panel it renders drives a native Google Drive client
 // through a WebView bridge that does not exist on the web.
 define('FEATURE_BACKUP',   $config['features']['backup']);
+// Non-empty only in the Android build — see config.php.
+define('APP_VERSION',      $config['app_version']);
 
 // ────────────────────────────────────────────────────────────────────
 // CLI modes: --selfcheck (smoke tests), --cron (daily maintenance)

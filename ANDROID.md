@@ -125,6 +125,8 @@ written on the device**:
 | `HL_LOCAL_TOKEN` | random per launch | loopback guard, below |
 | `HL_SHARING` | `0` | invite/join routes return 404 |
 | `HL_GOOGLE_SIGNIN` | `0` | no login screen; one local user |
+| `HL_BACKUP` | `1` | draws the Drive panel in the drawer |
+| `HL_APP_VERSION` | e.g. `1.0.5 (5)` | version line at the foot of the drawer |
 
 `HL_SHARING` and `HL_GOOGLE_SIGNIN` are compiled in via `BuildConfig`, not read from a runtime
 file or a remote switch. An app whose behaviour changes after review is the pattern that gets

@@ -68,6 +68,10 @@ return [
     ],
     'terms_url' => envStr('HL_TERMS_URL', ''),
 
+    // Set by the Android launcher from its own BuildConfig; empty everywhere else, which is
+    // what keeps the version line out of the website's drawer.
+    'app_version' => envStr('HL_APP_VERSION', ''),
+
     // Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web).
     // Add your Hostinger domain to "Authorised JavaScript origins" (e.g. https://homeledger.example.com).
     // No client secret needed — Google Identity Services uses only the client id for One Tap / ID tokens.

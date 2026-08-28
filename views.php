@@ -1677,6 +1677,15 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                   ])) ?>)'>Sign out</button>
         </section>
         <?php endif; ?>
+
+        <?php /* Last line in the drawer, and only on the phone. The website is whatever is
+                 deployed at the moment you load it, so a version number there names something
+                 nobody can act on; an APK sits on a device for months. */ ?>
+        <?php if (APP_VERSION !== ''): ?>
+          <div style="margin-top:10px; font-size:11px; text-align:center; color:var(--color-neutral-800);">
+            Version <?= h(APP_VERSION) ?>
+          </div>
+        <?php endif; ?>
       </div>
     </aside>
     <?php

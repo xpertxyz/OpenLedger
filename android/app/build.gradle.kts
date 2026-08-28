@@ -10,8 +10,8 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.7"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.

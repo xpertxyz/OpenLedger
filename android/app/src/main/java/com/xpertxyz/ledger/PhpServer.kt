@@ -95,6 +95,10 @@ class PhpServer(private val ctx: Context) {
             // runtime — an app that changes behaviour after review is what gets it pulled.
             put("HL_SHARING", if (BuildConfig.FEATURE_SHARING) "1" else "0")
             put("HL_GOOGLE_SIGNIN", if (BuildConfig.FEATURE_SIGNIN) "1" else "0")
+            // The drawer's footer. Only the phone build has a version worth naming: the
+            // website is whatever is deployed at the moment you load it, but an APK sits on a
+            // device for months, and "which version" is the first thing any bug report needs.
+            put("HL_APP_VERSION", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
             // Draws the backup panel in the profile drawer, which drives BackupBridge.
             put("HL_BACKUP", "1")
             put("APP_DEBUG", "0")
