@@ -119,7 +119,16 @@ class MainActivity : FragmentActivity() {
             // belongs in a browser, not inside a window that holds their ledger.
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
-                    if (url == null || url.startsWith(server.origin)) return false
+                    if (url == null) return true
+                    // Online mode shows the website, so the website's own pages — and Google's
+                    // sign-in, which it redirects to — have to stay inside the WebView. Only
+                    // those two hosts: a link to anywhere else is still a link the user tapped
+                    // and still belongs in a browser.
+                    if (AppMode.isOnline(this@MainActivity)) {
+                        if (url.startsWith(AppMode.SITE) ||
+                            url.startsWith("https://accounts.google.com/")
+                        ) return false
+                    } else if (url.startsWith(server.origin)) return false
                     // Hand it to the browser. Returning true on its own claimed the navigation
                     // and then did nothing with it, so every outbound link in the app — the
                     // terms page's GitHub links, the XpertXYZ credit — was a tap that did
@@ -153,6 +162,9 @@ class MainActivity : FragmentActivity() {
             addJavascriptInterface(BackupBridge(this@MainActivity, server), "HLBackup")
             // "Which watches can see this ledger" for the profile drawer. Read-only: it
             // lists nodes and when one last asked for data, and exposes nothing that writes.
+            // Both ledgers' drawers use this — the local PHP's and the website's — so that
+            // going online is not a one-way door.
+            addJavascriptInterface(ModeBridge(this@MainActivity), "HLMode")
             addJavascriptInterface(WearBridge(applicationContext), "HLWear")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
             // Same arrangement for the update bar: Play does the downloading, views.php draws
@@ -197,7 +209,34 @@ class MainActivity : FragmentActivity() {
      * The port is chosen per launch and the token is minted per process, so both the cookie
      * and the URL have to wait until the server is actually up.
      */
-    private fun serve() = server.startAsync {
+    private fun serve() {
+        // Online mode has no local ledger to serve. Starting the interpreter anyway would keep
+        // a PHP process and a loopback socket alive for a WebView that never talks to them.
+        if (AppMode.isOnline(this)) {
+            if (web.url == null || web.url?.startsWith(AppMode.SITE) != true) {
+                web.loadUrl(AppMode.SITE + "/")
+            }
+            return
+        }
+        serveLocal()
+    }
+
+    /**
+     * Tear down and come back on the other ledger.
+     *
+     * recreate() is not enough: the interpreter, the cookie and the WebView's allowed origins
+     * all differ between the two, and a restarted process is the one way to be sure none of
+     * the previous mode is left running.
+     */
+    fun restartForModeChange() {
+        runCatching { server.stop() }
+        val i = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+        finishAffinity()
+        startActivity(i)
+    }
+
+    private fun serveLocal() = server.startAsync {
         // The loopback socket is reachable by every other app on this device. This cookie is
         // what separates our WebView from them: index.php rejects any request that cannot
         // present it, and no other app can read this app's cookie jar or guess the value.

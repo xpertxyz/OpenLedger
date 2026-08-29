@@ -855,6 +855,19 @@ if (PHP_SAPI === 'cli') {
             ? $line('OK',   'the watch writes expenses through createExpense(), same as the web form')
             : $line('FAIL', 'api.php inserts into expenses directly instead of calling createExpense()');
 
+        // The phone app's ledger switch has to be in BOTH builds' drawers — the local PHP's
+        // and the website's — because the website is what you are looking at once you switch,
+        // and it is the only place the way back can live. Gated at runtime on window.HLMode
+        // rather than on a feature flag, so it must NOT sit inside a FEATURE_ block: doing so
+        // would drop it from exactly the build that needs it to get home.
+        $modeAt = strpos($vsrc, 'id="mode-switch"');
+        $modeJs = strpos($vsrc, 'window.HLMode');
+        $inFlag = $modeAt !== false && preg_match(
+            '~if \(FEATURE_\w+\):(?:(?!endif;).)*id="mode-switch"~s', $vsrc);
+        ($modeAt !== false && $modeJs !== false && !$inFlag)
+            ? $line('OK',   'the phone app\'s ledger switch ships in both builds, gated on the bridge rather than a flag')
+            : $line('FAIL', 'the ledger switch is missing or is behind a feature flag — going online would be one-way');
+
         // The drawer answers "what can read this ledger" in two different ways, and each
         // build must get exactly one of them. The website lists device_tokens, which it can
         // revoke; the phone lists Wear nodes, which it cannot. Showing the website's card on

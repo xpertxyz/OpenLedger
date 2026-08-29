@@ -1748,6 +1748,78 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
         </section>
         <?php endif; ?>
 
+        <?php /* Switching the phone app between its own ledger and the website.
+                 Rendered by BOTH builds and hidden by default, revealed only when the page is
+                 running inside the Android app — window.HLMode is injected into the WebView
+                 whichever page is loaded. That is what keeps going online from being a one-way
+                 door: the website has no idea a local ledger exists, but the bridge does.
+                 No server-side app detection, no User-Agent sniffing, nothing to deploy twice. */ ?>
+        <hr id="mode-hr" style="display:none;">
+        <section id="mode-switch" style="display:none;">
+          <h4 style="margin:0 0 4px;">Ledger</h4>
+          <div id="mode-body" class="stack" style="gap:8px;"></div>
+        </section>
+        <script>
+        (function () {
+          var sec = document.getElementById('mode-switch');
+          if (!sec || !window.HLMode) return;
+          var hr = document.getElementById('mode-hr');
+          var body = document.getElementById('mode-body');
+          var s;
+          try { s = JSON.parse(HLMode.status()); } catch (e) { return; }
+          sec.style.display = ''; if (hr) hr.style.display = '';
+
+          var online = s.mode === 'online';
+          function paint(showTerms) {
+            var h = '<p class="muted" style="margin:0;font-size:12px;">'
+              + (online
+                  ? 'You are on the shared online ledger. Sharing, invites and sign-in live here.'
+                  : "You are on this phone's own ledger. It never leaves the device, and it "
+                    + 'cannot be shared with anyone.')
+              + '</p>';
+
+            if (showTerms) {
+              /* The one screen where money starts leaving the phone, so it says so in the
+                 words that matter rather than linking terms nobody opens. */
+              h += '<div class="card" style="padding:12px;">'
+                +    '<p style="margin:0 0 6px;font-size:12px;">'
+                +      'Going online means your entries are stored on our server instead of only '
+                +      'on this phone, so they can be shared with people you invite. '
+                +      "This phone's own ledger stays exactly as it is and nothing is copied "
+                +      'between the two.'
+                +    '</p>'
+                +    '<a class="plain-link" href="/terms" style="font-size:12px;">Read the full terms</a>'
+                +    '<div style="display:flex;gap:8px;margin-top:10px;">'
+                +      '<button class="btn btn-secondary" id="mode-no" type="button" style="flex:1;">Cancel</button>'
+                +      '<button class="btn btn-primary" id="mode-yes" type="button" style="flex:1;">I agree</button>'
+                +    '</div>'
+                +  '</div>';
+            } else {
+              h += '<button class="btn btn-block" id="mode-go" type="button">'
+                +    (online ? "Use this phone's ledger" : 'Use the online ledger')
+                +  '</button>';
+            }
+            body.innerHTML = h;
+
+            var go = document.getElementById('mode-go');
+            if (go) go.onclick = function () {
+              /* Coming back to local needs no agreement — nothing leaves the phone that way. */
+              if (!online && !s.termsAccepted) { paint(true); return; }
+              HLMode.switchTo(online ? 'local' : 'online');
+            };
+            var yes = document.getElementById('mode-yes');
+            if (yes) yes.onclick = function () {
+              HLMode.acceptTerms();
+              s.termsAccepted = true;
+              HLMode.switchTo('online');
+            };
+            var no = document.getElementById('mode-no');
+            if (no) no.onclick = function () { paint(false); };
+          }
+          paint(false);
+        })();
+        </script>
+
         <hr>
 
         <section>

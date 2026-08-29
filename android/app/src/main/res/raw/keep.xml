@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Keep the Wear capability array through resource shrinking.
+
+  `android_wear_capabilities` is read by Google Play services by name, and by nothing in this
+  app. The shrinker sees an array no code references and deletes it — silently, and only in
+  release builds. The result is a phone that answers the watch perfectly in debug and
+  advertises no capability at all once it ships: the watch's CapabilityClient finds no node,
+  and local sync reports "no paired phone is running Open Ledger" on a phone that is running it.
+
+  Nothing else in this file. If another resource is ever reachable only by name from outside
+  the app, it belongs here too, with a line saying who reads it.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@array/android_wear_capabilities" />
