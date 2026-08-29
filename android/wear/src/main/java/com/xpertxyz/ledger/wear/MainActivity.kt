@@ -83,10 +83,18 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LedgerTheme(palette) {
-                // The clock belongs on the ledger and nowhere else. On the pairing keypad it
-                // costs more height than a whole row of keys, and over a failure message it
-                // literally overlapped the sentence explaining what went wrong.
-                AppScaffold(timeText = { if (paired && summary != null) TimeText() }) {
+                // Stable for the whole screen, and deliberately NOT dependent on whether data
+                // has loaded.
+                //
+                // It briefly read `paired && summary != null`, which looks harmless and is
+                // not: ScreenScaffold sizes its top inset from whether a clock is there, so
+                // the list laid out with no clock and then the clock appeared on top of the
+                // day's total. A layout that changes shape when a network call returns is a
+                // layout that will always be wrong for the first second.
+                //
+                // The pairing keypad still gets none — there it costs more height than a whole
+                // row of keys, and that decision never changes while the screen is up.
+                AppScaffold(timeText = { if (paired) TimeText() }) {
                     if (!paired) PairScreen() else HomeScreen()
                 }
             }
@@ -253,6 +261,10 @@ class MainActivity : ComponentActivity() {
                 contentPadding = contentPadding,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // ScalingLazyColumn scales items toward the centre, so a tall first item can
+                // still reach above the scaffold's inset and meet the clock. A few dp of
+                // nothing at the top costs one scroll position and fixes it everywhere.
+                item { Spacer(Modifier.height(6.dp)) }
                 if (s == null) {
                     val err = loadError
                     if (err == null) {
