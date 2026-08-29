@@ -16,12 +16,18 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
 
-        <!-- false, and truthfully. This app is useless without the website, which it reaches
-             over the phone's connection whenever the watch itself has none. Claiming
-             standalone would let Play offer it to someone with no phone at all. -->
+        <!-- true: this app needs no companion phone APP, which is what the flag actually
+             means. Online mode pairs with a six-digit code and talks to the website directly,
+             over the watch's own wifi or LTE, or through the phone's network proxy — none of
+             which involves our phone app. Only "This phone" mode does, and that is one setting
+             rather than the whole app.
+             It was false at first, reasoning about connectivity rather than about the phone
+             app, and false tells Play to offer this only to people who already have the phone
+             app installed — which is both wrong and a plausible reason for a watch to be told
+             an app "won't work on your device". -->
         <meta-data
             android:name="com.google.android.wearable.standalone"
-            android:value="false" />
+            android:value="true" />
 
         <uses-library
             android:name="com.google.android.wearable"
@@ -30,7 +36,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:taskAffinity=""
             android:theme="@android:style/Theme.DeviceDefault">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -38,14 +43,61 @@
             </intent-filter>
         </activity>
 
-        <!-- Its own task, launched straight from the tile. singleTask so a second tap on the
-             tile's + returns to the amount screen already open rather than stacking a second
-             copy of it behind the first. -->
+        <!-- singleTop, and deliberately NOT singleTask, and MainActivity above deliberately
+             has no taskAffinity of its own.
+             Those two together put the ledger screen and the amount screen in separate tasks,
+             which meant finishAffinity() from here tore down only its own — one back press
+             landed you back on the ledger screen instead of leaving the app, which is exactly
+             the bug it was added to fix. One task, one back press out.
+             singleTop still stops a second tap on the tile's + stacking a second copy. -->
         <activity
             android:name=".AddActivity"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:theme="@android:style/Theme.DeviceDefault" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault" />
+
+        <!-- Two numbers for whatever watch face the wearer already uses. Steps and battery are
+             the system's own complications and sit beside these; we do not reimplement them.
+             Bound by the watch face, hence exported and permission-guarded. -->
+        <service
+            android:name=".SpendTodayComplicationService"
+            android:exported="true"
+            android:label="Spent today"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT" />
+            <!-- Half an hour. The app, the tile and the sync worker push a fresh value the
+                 moment one lands, so this is only the floor under a watch nobody has touched;
+                 polling harder would wake the app to redraw an identical number. -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="1800" />
+        </service>
+
+        <service
+            android:name=".InvestProgressComplicationService"
+            android:exported="true"
+            android:label="Investment target"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="RANGED_VALUE" />
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="1800" />
+        </service>
 
         <service
             android:name=".LedgerTileService"

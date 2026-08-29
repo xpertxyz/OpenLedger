@@ -151,6 +151,9 @@ class MainActivity : FragmentActivity() {
             // matches. Safe because the only page this WebView ever loads is our own, served
             // from loopback behind a per-process token.
             addJavascriptInterface(BackupBridge(this@MainActivity, server), "HLBackup")
+            // "Which watches can see this ledger" for the profile drawer. Read-only: it
+            // lists nodes and when one last asked for data, and exposes nothing that writes.
+            addJavascriptInterface(WearBridge(applicationContext), "HLWear")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
             // Same arrangement for the update bar: Play does the downloading, views.php draws
             // every part of it the user actually sees.

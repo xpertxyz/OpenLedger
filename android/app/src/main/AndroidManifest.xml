@@ -25,6 +25,18 @@
           except 127.0.0.1 — which never leaves the device.
         -->
 
+        <!-- Answers the watch over Bluetooth. Bound by Google Play services, not by us, which
+             is why it is exported; the Data Layer only routes between apps sharing this
+             package name and signing key, so nothing else on the phone can reach it. -->
+        <service
+            android:name=".LedgerWearService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/ledger" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

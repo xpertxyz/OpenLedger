@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -54,16 +56,37 @@ class MainActivity : ComponentActivity() {
     private var stale by mutableStateOf(false)
     /** Digits typed on the pairing keypad so far. */
     private var entered by mutableStateOf("")
+    /**
+     * Why there is nothing to show, once an attempt has actually been made.
+     *
+     * Null means "still trying", and only then is a spinner honest. Without this the screen
+     * spun forever whenever the first fetch failed with no cache behind it — switching to a
+     * phone that does not have the app, or pairing indoors and opening it out of range. A
+     * spinner that will never resolve is the worst of both: it says wait, and waiting cannot
+     * help.
+     */
+    private var loadError by mutableStateOf<String?>(null)
 
+
+        /**
+     * Held as state, not read once: a summary can arrive carrying a palette the account
+     * changed on another device, and the screen it lands on should become that colour rather
+     * than waiting for the next launch.
+     */
+    private var palette by mutableStateOf(Palette.Default)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        paired = Store.token(this) != null
+        palette = Palette.of(this)
+        paired = Store.ready(this)
         summary = Store.summary(this)
 
         setContent {
-            LedgerTheme {
-                AppScaffold(timeText = { TimeText() }) {
+            LedgerTheme(palette) {
+                // The clock belongs on the ledger and nowhere else. On the pairing keypad it
+                // costs more height than a whole row of keys, and over a failure message it
+                // literally overlapped the sentence explaining what went wrong.
+                AppScaffold(timeText = { if (paired && summary != null) TimeText() }) {
                     if (!paired) PairScreen() else HomeScreen()
                 }
             }
@@ -72,7 +95,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        pendingCount = Store.pending(this).size
+        paired = Store.ready(this)
+        loadError = null
+        pendingCount = Store.pendingHere(this).size
         if (pendingCount > 0) PendingSync.schedule(this)
         if (paired) refresh()
     }
@@ -82,8 +107,10 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun PairScreen() {
         ScreenScaffold {
+            // No horizontal padding, for the same reason as the amount screen: the flanking
+            // key has to clear the bezel, and a round display supplies its own margin.
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -92,7 +119,7 @@ class MainActivity : ComponentActivity() {
                     // instruction lives on the website, next to the button being described.
                     if (entered.isEmpty()) "Code from the website" else " ",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Ledger.muted,
+                    color = LocalPalette.current.muted,
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -101,22 +128,43 @@ class MainActivity : ComponentActivity() {
                 } else {
                     CodeDisplay(entered)
                     if (message.isNotEmpty()) {
-                        Text(message, style = MaterialTheme.typography.bodySmall, color = Ledger.over, textAlign = TextAlign.Center)
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = LocalPalette.current.over, textAlign = TextAlign.Center)
                     }
-                    Spacer(Modifier.height(4.dp))
-                    NumberPad(
-                        onDigit = { d ->
-                            if (entered.length < 6) {
-                                message = ""
-                                entered += d
-                                // Submits itself on the sixth digit. There is no ambiguity
-                                // about when a six-digit code is finished, so a confirm button
-                                // would be one tap that never carries a decision.
-                                if (entered.length == 6) submitCode(entered)
-                            }
-                        },
-                        onDelete = { if (entered.isNotEmpty()) { entered = entered.dropLast(1); message = "" } },
-                    )
+                    Spacer(Modifier.height(2.dp))
+                    // The gear sits BESIDE the pad, not under it.
+                    //
+                    // It was a full-width button below the keypad, which on a 206dp screen is
+                    // simply off the bottom of a column that does not scroll — so a watch that
+                    // had never been paired online had no way at all to reach the setting that
+                    // would let it read the phone instead. The one escape from this screen was
+                    // unreachable, which is worse than not having built it.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Key(
+                            "⚙",
+                            tint = LocalPalette.current.sage,
+                            size = KeyAction,
+                            onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                        )
+                        Spacer(Modifier.width(KeyFlankGap))
+                        NumberPad(
+                            reserve = 44,
+                            reserveWidth = ((KeyAction + KeyFlankGap) * 2).value.toInt(),
+                            onDigit = { d ->
+                                if (entered.length < 6) {
+                                    message = ""
+                                    entered += d
+                                    // Submits itself on the sixth digit. There is no ambiguity
+                                    // about when a six-digit code is finished, so a confirm
+                                    // button would be a tap that never carries a decision.
+                                    if (entered.length == 6) submitCode(entered)
+                                }
+                            },
+                            onDelete = { if (entered.isNotEmpty()) { entered = entered.dropLast(1); message = "" } },
+                        )
+                        // Keeps the pad centred; the gear has no counterpart on this screen.
+                        Spacer(Modifier.width(KeyFlankGap))
+                        Spacer(Modifier.size(KeyAction))
+                    }
                 }
             }
         }
@@ -130,14 +178,19 @@ class MainActivity : ComponentActivity() {
                     Store.saveToken(this@MainActivity, r.body.optString("token"))
                     Store.saveSummary(this@MainActivity, r.body)
                     summary = r.body
+                    palette = Palette.from(r.body.optJSONObject("theme"))
                     paired = true
                     message = ""
-                    LedgerTileService.refresh(this@MainActivity)
+                    LedgerTileService.refresh(this@MainActivity); LedgerComplication.refresh(this@MainActivity)
                 }
                 // Every failure clears the field. Six digits are quicker to retype than to
                 // audit, and a half-corrected wrong code is the thing that gets typed twice.
                 is Api.Result.Rejected -> { message = r.message; entered = "" }
                 Api.Result.Unpaired -> { message = "That code did not work."; entered = "" }
+                // Unreachable in practice — pairing only happens in Online mode — but named
+                // rather than swallowed by an else, so adding a result later is a compile
+                // error here instead of a silent no-op on the one screen that grants access.
+                Api.Result.NoPhone,
                 Api.Result.Offline -> { message = "No connection to the ledger."; entered = "" }
             }
             busy = false
@@ -152,9 +205,13 @@ class MainActivity : ComponentActivity() {
                 is Api.Result.Ok -> {
                     Store.saveSummary(this@MainActivity, r.body)
                     summary = r.body
+                    // Adopted from the reply, so changing palette on the website shows up on
+                    // the wrist at the next refresh rather than the next install.
+                    palette = Palette.from(r.body.optJSONObject("theme"))
                     stale = false
                     message = ""
-                    LedgerTileService.refresh(this@MainActivity)
+                    loadError = null
+                    LedgerTileService.refresh(this@MainActivity); LedgerComplication.refresh(this@MainActivity)
                 }
                 Api.Result.Unpaired -> {
                     // The website disconnected this watch. Drop everything and start over
@@ -163,10 +220,24 @@ class MainActivity : ComponentActivity() {
                     summary = null
                     paired = false
                 }
-                // Both leave whatever was last fetched on screen, marked as old. A blank
-                // watch face is worse than a slightly stale one.
-                is Api.Result.Rejected -> stale = true
-                Api.Result.Offline -> stale = true
+                // These leave whatever was last fetched on screen, marked as old — a stale
+                // number beats a blank screen. With no cache at all there is nothing to mark,
+                // so loadError is what the screen shows instead of spinning.
+                is Api.Result.Rejected -> { stale = true; loadError = r.message }
+                Api.Result.Offline -> {
+                    stale = true
+                    loadError = if (Store.mode(this@MainActivity) == Store.PHONE)
+                        "Your phone did not answer. Is it nearby and unlocked?"
+                    else
+                        "No connection to the ledger."
+                }
+                Api.Result.NoPhone -> {
+                    stale = true
+                    // Names the actual fix. "Offline" would send someone to check their wifi
+                    // for a problem that is a missing app version.
+                    loadError = "No paired phone is running Open Ledger. " +
+                        "Install or update the phone app, or switch back to Online."
+                }
             }
         }
     }
@@ -183,7 +254,36 @@ class MainActivity : ComponentActivity() {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (s == null) {
-                    item { Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator() } }
+                    val err = loadError
+                    if (err == null) {
+                        item { Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator() } }
+                    } else {
+                        item {
+                            Text(
+                                err,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LocalPalette.current.muted,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                        }
+                        item {
+                            Button(
+                                onClick = { loadError = null; refresh() },
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(),
+                            ) { Text("Try again") }
+                        }
+                        // Always reachable from the failure. Otherwise picking a ledger the
+                        // watch cannot read is a dead end with no way back to the one it can.
+                        item {
+                            Button(
+                                onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(),
+                            ) { Text("Settings", style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
                     return@ScalingLazyColumn
                 }
 
@@ -193,11 +293,11 @@ class MainActivity : ComponentActivity() {
                 // The number this app exists for. Everything else on the screen is context.
                 item {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Today", style = MaterialTheme.typography.labelSmall, color = Ledger.muted)
+                        Text("Today", style = MaterialTheme.typography.labelSmall, color = LocalPalette.current.muted)
                         Text(
                             money(s.optDouble("today", 0.0), currency, indian),
                             fontSize = 34.sp,
-                            color = Ledger.text,
+                            color = LocalPalette.current.text,
                         )
                     }
                 }
@@ -208,7 +308,7 @@ class MainActivity : ComponentActivity() {
                     Button(
                         onClick = { startActivity(Intent(this@MainActivity, AddActivity::class.java)) },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Ledger.accent, contentColor = Ledger.surface),
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalPalette.current.accent, contentColor = LocalPalette.current.surface),
                     ) { Text("Add expense") }
                 }
 
@@ -217,7 +317,7 @@ class MainActivity : ComponentActivity() {
                         Text(
                             if (pendingCount == 1) "1 waiting to sync" else "$pendingCount waiting to sync",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Ledger.sage,
+                            color = LocalPalette.current.sage,
                         )
                     }
                 }
@@ -226,7 +326,7 @@ class MainActivity : ComponentActivity() {
                         Text(
                             "Showing the last figures — no connection.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Ledger.muted,
+                            color = LocalPalette.current.muted,
                             textAlign = TextAlign.Center,
                         )
                     }
@@ -249,6 +349,25 @@ class MainActivity : ComponentActivity() {
                         item { RecentRow(e, currency, indian) }
                     }
                 }
+
+                // Last, and labelled with what it currently does rather than "Settings" — on a
+                // screen you scroll to the end of, "Reading online" answers the question you
+                // came down here to ask.
+                item {
+                    Button(
+                        onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(),
+                    ) {
+                        Text(
+                            if (Store.mode(this@MainActivity) == Store.PHONE) "Reading this phone" else "Reading online",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+
+                item { VersionLine() }
+
             }
         }
     }

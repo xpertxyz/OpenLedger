@@ -30,6 +30,13 @@ import com.google.common.util.concurrent.ListenableFuture
  */
 class LedgerTileService : TileService() {
 
+    /**
+     * Whatever palette the account last sent. A tile is rendered in the launcher's process from
+     * a serialised layout tree, so there is no composition here to read it from — and it is a
+     * `get()` rather than a stored value because the service outlives a palette change.
+     */
+    private val pal: Palette get() = Palette.of(this)
+
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
         // Never fetches. A tile request runs on the launcher's schedule with a hard deadline,
         // and a Bluetooth-proxied HTTP call would blow through it and render nothing. The app
@@ -40,18 +47,18 @@ class LedgerTileService : TileService() {
 
         val root = if (Store.token(this) == null) {
             column(
-                text("Open Ledger", 16, Ledger.accent.toArgb(), bold = true),
-                text("Tap to connect", 12, Ledger.muted.toArgb()),
+                text("Open Ledger", 16, pal.accent.toArgb(), bold = true),
+                text("Tap to connect", 12, pal.muted.toArgb()),
             )
         } else {
             column(
-                text("Today", 12, Ledger.muted.toArgb()),
-                text(money(s?.optDouble("today", 0.0) ?: 0.0, currency, indian), 30, Ledger.text.toArgb(), bold = true),
+                text("Today", 12, pal.muted.toArgb()),
+                text(money(s?.optDouble("today", 0.0) ?: 0.0, currency, indian), 30, pal.text.toArgb(), bold = true),
                 text(
                     (s?.optString("month_label") ?: "This month") + "  " +
                         money(s?.optDouble("month", 0.0) ?: 0.0, currency, indian),
                     12,
-                    Ledger.muted.toArgb(),
+                    pal.muted.toArgb(),
                 ),
                 spacer(8),
                 addButton(),
@@ -152,7 +159,7 @@ class LedgerTileService : TileService() {
                 ModifiersBuilders.Modifiers.Builder()
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(Ledger.accent.toArgb()))
+                            .setColor(argb(pal.accent.toArgb()))
                             .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(20f)).build())
                             .build()
                     )
@@ -164,7 +171,7 @@ class LedgerTileService : TileService() {
                     )
                     .build()
             )
-            .addContent(text("+ Add", 15, Ledger.surface.toArgb(), bold = true))
+            .addContent(text("+ Add", 15, pal.surface.toArgb(), bold = true))
             .build()
 
     private fun launch(activity: String) =

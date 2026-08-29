@@ -320,6 +320,150 @@ const DEFAULT_CATEGORIES = [
     ['Other', 'more-horizontal'],
 ];
 
+// Dark-theme variable overrides — lifted verbatim from the prototype (THEME_DARK_VARS).
+const THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text:#f3e9d8;'
+  . '--color-divider:color-mix(in srgb, #f3e9d8 18%, transparent);'
+  . '--color-neutral-100:#2c2822;--color-neutral-200:#363028;--color-neutral-300:#453d31;--color-neutral-400:#5a5040;--color-neutral-500:#786c56;--color-neutral-600:#9c8f76;--color-neutral-700:#bfb29a;--color-neutral-800:#dcd0ba;--color-neutral-900:#f3e9d8;'
+  . '--color-accent:#e0864c;--color-accent-100:#3a2a1c;--color-accent-200:#4d3320;--color-accent-300:#6b4324;--color-accent-400:#95592c;--color-accent-500:#c06f35;--color-accent-600:#d97f42;--color-accent-700:#e79968;--color-accent-800:#f0b78c;--color-accent-900:#f8d7b8;'
+  . '--color-accent-2:#93a86e;--color-accent-2-100:#2a301f;--color-accent-2-200:#333b26;--color-accent-2-300:#414c2f;--color-accent-2-400:#57643d;--color-accent-2-500:#71804f;--color-accent-2-600:#8a9863;--color-accent-2-700:#a8b884;--color-accent-2-800:#c4d1a8;--color-accent-2-900:#e2e8d0;'
+  . '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);'
+  // Not a token: tells the browser to draw native widgets (date-picker calendar
+  // icon, the open select list, scrollbars) in dark, instead of light-on-dark-invisible.
+  // The CLOSED select is fully custom (.select in layout()); only the popup stays native.
+  . 'color-scheme:dark;';
+
+// The three palettes, each in both modes. Organic is the one the design system ships, so its
+// light values ARE design-tokens/styles.css :root — nothing to repeat here but the status-bar
+// colour. Harbor and Plum are generated in OKLCH on the SAME lightness scale as Organic
+// (light 0.969→0.290, dark 0.290→0.930) and the same chroma arc, only the hues move. That is
+// what keeps every component working unchanged: a rule that reads --color-accent-700 gets the
+// same visual weight whichever palette is on. Retune a hue here, never a single step.
+//
+//   'sw' is what the picker draws — the four colours a palette is recognised by, and the
+//   first of them is also the mobile status-bar colour.
+const THEMES = [
+    'organic' => [
+        'name' => 'Organic', 'note' => 'Terracotta and sage on cream',
+        'light' => [
+            'vars' => '--theme-color:#f5ead8;',
+            'sw' => ['bg' => '#f5ead8', 'surface' => '#ebddc5', 'accent' => '#c67139', 'accent2' => '#7a8a5e'],
+        ],
+        'dark' => [
+            'vars' => THEME_DARK_VARS . '--theme-color:#201e1d;',
+            'sw' => ['bg' => '#201e1d', 'surface' => '#2b2721', 'accent' => '#e0864c', 'accent2' => '#93a86e'],
+        ],
+    ],
+    'harbor' => [
+        'name' => 'Harbor', 'note' => 'Deep azure and teal on cool paper',
+        'light' => [
+            'vars' => '--color-bg:oklch(0.972 0.006 250);--color-surface:oklch(0.938 0.011 250);--color-text:oklch(0.250 0.022 258);--color-accent:oklch(0.560 0.155 258);--color-accent-2:oklch(0.600 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 250);--color-neutral-200:oklch(0.930 0.010 250);--color-neutral-300:oklch(0.870 0.013 250);--color-neutral-400:oklch(0.780 0.014 250);--color-neutral-500:oklch(0.680 0.015 250);--color-neutral-600:oklch(0.580 0.014 250);--color-neutral-700:oklch(0.479 0.012 250);--color-neutral-800:oklch(0.381 0.010 250);--color-neutral-900:oklch(0.290 0.006 250);--color-accent-100:oklch(0.969 0.015 258);--color-accent-200:oklch(0.930 0.033 258);--color-accent-300:oklch(0.870 0.063 258);--color-accent-400:oklch(0.780 0.111 258);--color-accent-500:oklch(0.680 0.155 258);--color-accent-600:oklch(0.580 0.148 258);--color-accent-700:oklch(0.479 0.130 258);--color-accent-800:oklch(0.381 0.100 258);--color-accent-900:oklch(0.290 0.065 258);--color-accent-2-100:oklch(0.969 0.044 196);--color-accent-2-200:oklch(0.930 0.061 196);--color-accent-2-300:oklch(0.870 0.074 196);--color-accent-2-400:oklch(0.780 0.083 196);--color-accent-2-500:oklch(0.680 0.086 196);--color-accent-2-600:oklch(0.580 0.083 196);--color-accent-2-700:oklch(0.479 0.074 196);--color-accent-2-800:oklch(0.381 0.061 196);--color-accent-2-900:oklch(0.290 0.044 196);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f3f6fa;color-scheme:light;',
+            'sw' => ['bg' => '#f3f6fa', 'surface' => '#e5ebf2', 'accent' => '#3372cd', 'accent2' => '#209293'],
+        ],
+        'dark' => [
+            'vars' => '--color-bg:oklch(0.235 0.016 255);--color-surface:oklch(0.278 0.021 255);--color-text:oklch(0.935 0.013 250);--color-accent:oklch(0.720 0.135 258);--color-accent-2:oklch(0.740 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.007 250);--color-neutral-200:oklch(0.340 0.010 250);--color-neutral-300:oklch(0.400 0.014 250);--color-neutral-400:oklch(0.480 0.017 250);--color-neutral-500:oklch(0.570 0.022 250);--color-neutral-600:oklch(0.660 0.023 250);--color-neutral-700:oklch(0.760 0.022 250);--color-neutral-800:oklch(0.850 0.020 250);--color-neutral-900:oklch(0.930 0.015 250);--color-accent-100:oklch(0.290 0.039 258);--color-accent-200:oklch(0.340 0.055 258);--color-accent-300:oklch(0.400 0.082 258);--color-accent-400:oklch(0.480 0.114 258);--color-accent-500:oklch(0.570 0.144 258);--color-accent-600:oklch(0.660 0.155 258);--color-accent-700:oklch(0.760 0.122 258);--color-accent-800:oklch(0.850 0.074 258);--color-accent-900:oklch(0.930 0.033 258);--color-accent-2-100:oklch(0.290 0.037 196);--color-accent-2-200:oklch(0.340 0.046 196);--color-accent-2-300:oklch(0.400 0.060 196);--color-accent-2-400:oklch(0.480 0.076 196);--color-accent-2-500:oklch(0.570 0.091 196);--color-accent-2-600:oklch(0.660 0.095 196);--color-accent-2-700:oklch(0.760 0.091 196);--color-accent-2-800:oklch(0.850 0.071 196);--color-accent-2-900:oklch(0.930 0.041 196);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#191f26;color-scheme:dark;',
+            'sw' => ['bg' => '#191f26', 'surface' => '#212933', 'accent' => '#6da5f8', 'accent2' => '#57bebe'],
+        ],
+    ],
+    'plum' => [
+        'name' => 'Plum', 'note' => 'Berry and emerald on blush',
+        'light' => [
+            'vars' => '--color-bg:oklch(0.970 0.008 340);--color-surface:oklch(0.935 0.014 340);--color-text:oklch(0.245 0.024 335);--color-accent:oklch(0.560 0.175 348);--color-accent-2:oklch(0.600 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 340);--color-neutral-200:oklch(0.930 0.010 340);--color-neutral-300:oklch(0.870 0.013 340);--color-neutral-400:oklch(0.780 0.014 340);--color-neutral-500:oklch(0.680 0.015 340);--color-neutral-600:oklch(0.580 0.014 340);--color-neutral-700:oklch(0.479 0.012 340);--color-neutral-800:oklch(0.381 0.010 340);--color-neutral-900:oklch(0.290 0.006 340);--color-accent-100:oklch(0.969 0.018 348);--color-accent-200:oklch(0.930 0.042 348);--color-accent-300:oklch(0.870 0.083 348);--color-accent-400:oklch(0.780 0.155 348);--color-accent-500:oklch(0.680 0.161 348);--color-accent-600:oklch(0.580 0.154 348);--color-accent-700:oklch(0.479 0.135 348);--color-accent-800:oklch(0.381 0.104 348);--color-accent-900:oklch(0.290 0.068 348);--color-accent-2-100:oklch(0.969 0.041 160);--color-accent-2-200:oklch(0.930 0.056 160);--color-accent-2-300:oklch(0.870 0.068 160);--color-accent-2-400:oklch(0.780 0.077 160);--color-accent-2-500:oklch(0.680 0.079 160);--color-accent-2-600:oklch(0.580 0.077 160);--color-accent-2-700:oklch(0.479 0.068 160);--color-accent-2-800:oklch(0.381 0.056 160);--color-accent-2-900:oklch(0.290 0.041 160);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f9f3f7;color-scheme:light;',
+            'sw' => ['bg' => '#f9f3f7', 'surface' => '#f0e6ec', 'accent' => '#b93e86', 'accent2' => '#3d936a'],
+        ],
+        'dark' => [
+            'vars' => '--color-bg:oklch(0.232 0.019 330);--color-surface:oklch(0.275 0.025 330);--color-text:oklch(0.935 0.013 340);--color-accent:oklch(0.725 0.145 350);--color-accent-2:oklch(0.735 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.008 335);--color-neutral-200:oklch(0.340 0.010 335);--color-neutral-300:oklch(0.400 0.015 335);--color-neutral-400:oklch(0.480 0.018 335);--color-neutral-500:oklch(0.570 0.023 335);--color-neutral-600:oklch(0.660 0.025 335);--color-neutral-700:oklch(0.760 0.023 335);--color-neutral-800:oklch(0.850 0.021 335);--color-neutral-900:oklch(0.930 0.016 335);--color-accent-100:oklch(0.290 0.041 348);--color-accent-200:oklch(0.340 0.058 348);--color-accent-300:oklch(0.400 0.085 348);--color-accent-400:oklch(0.480 0.119 348);--color-accent-500:oklch(0.570 0.150 348);--color-accent-600:oklch(0.660 0.162 348);--color-accent-700:oklch(0.760 0.137 348);--color-accent-800:oklch(0.850 0.098 348);--color-accent-900:oklch(0.930 0.042 348);--color-accent-2-100:oklch(0.290 0.034 160);--color-accent-2-200:oklch(0.340 0.043 160);--color-accent-2-300:oklch(0.400 0.055 160);--color-accent-2-400:oklch(0.480 0.070 160);--color-accent-2-500:oklch(0.570 0.084 160);--color-accent-2-600:oklch(0.660 0.087 160);--color-accent-2-700:oklch(0.760 0.084 160);--color-accent-2-800:oklch(0.850 0.066 160);--color-accent-2-900:oklch(0.930 0.038 160);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#231a22;color-scheme:dark;',
+            'sw' => ['bg' => '#231a22', 'surface' => '#2f232e', 'accent' => '#e87db3', 'accent2' => '#69be92'],
+        ],
+    ],
+];
+
+// ────────────────────────────────────────────────────────────────────
+// Resolving a palette for the watch
+//
+// The Wear app cannot read a stylesheet, and hand-copying three palettes into Kotlin is how
+// the two quietly stop matching the first time a hue is retuned here. So the server resolves
+// whichever palette the user is on down to plain hex and sends it with every summary — which
+// also means a FOURTH palette added above reaches the watch with no app update at all.
+// ────────────────────────────────────────────────────────────────────
+
+// OKLCH to sRGB hex. The palettes are authored in OKLCH precisely because it keeps the ramps
+// perceptually even, and nothing in PHP converts it.
+//
+// Verified against the sRGB primaries in --selfcheck, and independently against the app's own
+// data: the bg this computes for Harbor and Plum equals the --theme-color each palette already
+// hardcodes, which was written by the design tool rather than by this function.
+function oklchToHex(float $L, float $C, float $hDeg): string {
+    $h = deg2rad($hDeg);
+    $a = $C * cos($h);
+    $b = $C * sin($h);
+
+    // OKLab to LMS', cubed to LMS.
+    $l = ($L + 0.3963377774 * $a + 0.2158037573 * $b) ** 3;
+    $m = ($L - 0.1055613458 * $a - 0.0638541728 * $b) ** 3;
+    $s = ($L - 0.0894841775 * $a - 1.2914855480 * $b) ** 3;
+
+    // LMS to linear sRGB.
+    $r  =  4.0767416621 * $l - 3.3077115913 * $m + 0.2309699292 * $s;
+    $g  = -1.2684380046 * $l + 2.6097574011 * $m - 0.3413193965 * $s;
+    $bl = -0.0041960863 * $l - 0.7034186147 * $m + 1.7076147010 * $s;
+
+    // Gamma-encode and clamp. Out-of-gamut values are clipped rather than mapped: every colour
+    // in this app's palettes is inside sRGB, and a gamut-mapping algorithm to handle ones that
+    // are not would be a lot of code for a case that cannot arise.
+    $enc = fn(float $c): int => (int)max(0, min(255, round(
+        255 * ($c <= 0.0031308 ? 12.92 * $c : 1.055 * pow(max($c, 0.0), 1 / 2.4) - 0.055)
+    )));
+    return sprintf('#%02x%02x%02x', $enc($r), $enc($g), $enc($bl));
+}
+
+// A CSS colour from the palettes, as hex. Organic's dark values are already hex; Harbor's and
+// Plum's are OKLCH. Anything else — a color-mix(), a var() — is not a flat colour and returns
+// null rather than a guess.
+function cssColorToHex(string $value): ?string {
+    $value = trim($value);
+    if (preg_match('/^#[0-9a-f]{6}$/i', $value)) return strtolower($value);
+    if (preg_match('/^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)$/i', $value, $m)) {
+        return oklchToHex((float)$m[1], (float)$m[2], (float)$m[3]);
+    }
+    return null;
+}
+
+// The eight colours the Wear app draws with, for one palette, as hex.
+//
+// Always the DARK variant, whatever the account is set to. A watch face is on an OLED panel a
+// few inches from the eye and often always-on: a light one costs visible battery all day and
+// is what every Wear design guideline tells you not to ship. The palette is honoured; the
+// light/dark choice is not, deliberately.
+function watchPalette(string $themeKey): array {
+    $key  = isset(THEMES[$themeKey]) ? $themeKey : 'organic';
+    $vars = (string)(THEMES[$key]['dark']['vars'] ?? '');
+
+    $tokens = [];
+    foreach (explode(';', $vars) as $pair) {
+        if (!str_contains($pair, ':')) continue;
+        [$n, $v] = explode(':', $pair, 2);
+        $tokens[trim($n)] = trim($v);
+    }
+    $hex = function (string $name, string $fallback) use ($tokens): string {
+        return cssColorToHex($tokens[$name] ?? '') ?? $fallback;
+    };
+
+    return [
+        'name'       => $key,
+        'bg'         => $hex('--color-bg',            '#201e1d'),
+        'surface'    => $hex('--color-surface',       '#2b2721'),
+        'text'       => $hex('--color-text',          '#f3e9d8'),
+        'accent'     => $hex('--color-accent',        '#e0864c'),
+        'accentSoft' => $hex('--color-accent-700',    '#e79968'),
+        'accent2'    => $hex('--color-accent-2',      '#93a86e'),
+        'muted'      => $hex('--color-neutral-600',   '#9c8f76'),
+        'track'      => $hex('--color-neutral-300',   '#453d31'),
+        // Not a palette token. "Over budget" has to read as wrong in every palette, and the
+        // accent ramps are the wrong tool — Plum's accent IS pink.
+        'over'       => '#e06c5a',
+    ];
+}
+
 class UserErr extends Exception {}
 
 // ────────────────────────────────────────────────────────────────────
@@ -776,16 +920,24 @@ function rateLimit(PDO $db, array $cfg, string $key, int $limit, int $windowSeco
     // requests at a window boundary both reset the counter.
     // The only upsert in the app, so the two dialects sit here rather than behind a helper.
     // SQLite spells the incoming row `excluded` and has no IF(); the logic is identical.
+    //
+    // "Expired" is measured against NOW, bound as $now. It used to be measured against the
+    // INCOMING window_end — which is now + windowSeconds, and therefore newer than the stored
+    // one on every tick of the clock. So the counter reset itself once a second and could
+    // never exceed the hits that landed inside a single second: /signin, device pairing and
+    // the watch API all had a limiter that did not limit. It read as correct because the
+    // dual-driver test made its three calls fast enough to stay inside one second, and it
+    // surfaced the day MySQL was slow enough not to.
     $sql = isSqlite($db)
         ? "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
            ON CONFLICT(bucket) DO UPDATE SET
-              hits       = CASE WHEN rate_limits.window_end < excluded.window_end THEN 1 ELSE rate_limits.hits + 1 END,
-              window_end = CASE WHEN rate_limits.window_end < excluded.window_end THEN excluded.window_end ELSE rate_limits.window_end END"
+              hits       = CASE WHEN rate_limits.window_end < ? THEN 1 ELSE rate_limits.hits + 1 END,
+              window_end = CASE WHEN rate_limits.window_end < ? THEN excluded.window_end ELSE rate_limits.window_end END"
         : "INSERT INTO rate_limits (bucket, hits, window_end) VALUES (?, 1, ?)
            ON DUPLICATE KEY UPDATE
-              hits       = IF(window_end < VALUES(window_end), 1, hits + 1),
-              window_end = IF(window_end < VALUES(window_end), VALUES(window_end), window_end)";
-    $db->prepare($sql)->execute([$bucket, $windowEnd]);
+              hits       = IF(window_end < ?, 1, hits + 1),
+              window_end = IF(window_end < ?, VALUES(window_end), window_end)";
+    $db->prepare($sql)->execute([$bucket, $windowEnd, $now, $now]);
 
     $sel = $db->prepare("SELECT hits, window_end FROM rate_limits WHERE bucket = ?");
     $sel->execute([$bucket]);
@@ -1334,6 +1486,56 @@ function createExpense(PDO $db, array $cfg, int $hid, int $uid, string $role, ar
     )->execute([$hid, $amt, $catId, $memId, $note, $date, $uid]);
 }
 
+/**
+ * The parts of a ledger a device caches rather than fetches: its name, its currency symbol,
+ * and the categories to choose from. Sent with every reply, not just at pairing — a category
+ * renamed on the website should reach the wrist on the next refresh, not on the next re-pair.
+ */
+function apiLedgerInfo(PDO $db, array $config, int $hid, int $uid = 0): array {
+    // Currency and grouping live on the household, not the user — index.php copies them into
+    // the session from exactly here. The watch formats its own numbers, so it needs both.
+    $h = $db->prepare("SELECT name, currency, number_format FROM households WHERE id = ?");
+    $h->execute([$hid]);
+    $house = $h->fetch() ?: [];
+
+    // Ordered by this month's spend so the categories a household actually uses sit at the top
+    // of a list being scrolled with a bezel. Ties and unused categories keep the app's own
+    // order behind them, so the list is stable rather than reshuffling day to day.
+    $monthStart = date('Y-m-01');
+    $monthEnd   = date('Y-m-d', strtotime($monthStart . ' +1 month'));
+    $c = $db->prepare(
+        "SELECT c.id, c.name, c.icon, COALESCE(SUM(e.amount), 0) AS used
+         FROM categories c
+         LEFT JOIN expenses e ON e.category_id = c.id AND e.household_id = c.household_id
+                             AND e.`date` >= ? AND e.`date` < ?
+         WHERE c.household_id = ?
+         GROUP BY c.id, c.name, c.icon, c.is_custom
+         ORDER BY used DESC, c.is_custom, c.id"
+    );
+    $c->execute([$monthStart, $monthEnd, $hid]);
+
+    // The palette is per user, not per household — two people sharing a ledger each keep
+    // their own. Resolved to hex here so the watch never has to know what OKLCH is.
+    $themeKey = 'organic';
+    if ($uid > 0) {
+        $t = $db->prepare("SELECT theme FROM users WHERE id = ?");
+        $t->execute([$uid]);
+        $themeKey = (string)($t->fetchColumn() ?: 'organic');
+    }
+
+    return [
+        'theme'      => watchPalette($themeKey),
+        'ledger'     => (string)($house['name'] ?? 'Ledger'),
+        'currency'   => (string)($house['currency'] ?? $config['currency'] ?? '₹'),
+        'numfmt'     => (string)($house['number_format'] ?? 'indian'),
+        'categories' => array_map(fn(array $r) => [
+            'id'   => (int)$r['id'],
+            'name' => (string)$r['name'],
+            'icon' => (string)$r['icon'],
+        ], $c->fetchAll()),
+    ];
+}
+
 // ────────────────────────────────────────────────────────────────────
 // The small screen's view of the ledger
 //
@@ -1380,6 +1582,20 @@ function watchSummary(PDO $db, int $hid): array {
     $budStmt = $db->prepare("SELECT COALESCE(SUM(budget), 0) FROM categories WHERE household_id = ? AND parent_id IS NULL");
     $budStmt->execute([$hid]);
 
+    // The investing side, and the one figure worth a glance: how much of this month's target
+    // is already in. Target is a monthly floor, summed over top-level types the same way the
+    // Invest tab totals it — children sit at 0 so a branch cannot count its rupee twice.
+    $invStmt = $db->prepare(
+        "SELECT COALESCE(SUM(amount), 0) FROM investments
+         WHERE household_id = ? AND `date` >= ? AND `date` < ?"
+    );
+    $invStmt->execute([$hid, $monthStart, $monthEnd]);
+    $invested = roundMoney((float)$invStmt->fetchColumn());
+
+    $invTgt = $db->prepare("SELECT COALESCE(SUM(target), 0) FROM investment_types WHERE household_id = ? AND parent_id IS NULL");
+    $invTgt->execute([$hid]);
+    $invTarget = roundMoney((float)$invTgt->fetchColumn());
+
     $recStmt = $db->prepare(
         "SELECT e.amount, e.note, e.date, COALESCE(c.name, 'Uncategorised') AS category
          FROM expenses e
@@ -1396,6 +1612,12 @@ function watchSummary(PDO $db, int $hid): array {
         'month_count' => (int)$mon['n'],
         'month_label' => date('F Y'),
         'budget'      => roundMoney((float)$budStmt->fetchColumn()),
+        'invested'    => $invested,
+        'invest_target' => $invTarget,
+        // Sent computed rather than left to the client: a complication and a tile would
+        // otherwise each do this division, and one of them would divide by zero.
+        // Uncapped on purpose — beating the target is worth seeing, so 140% says 140%.
+        'invest_pct'  => $invTarget > 0 ? (int)round($invested / $invTarget * 100) : 0,
         'date'        => $today,
         'top'         => array_map(fn(array $b) => [
             'name'   => (string)$b['name'],

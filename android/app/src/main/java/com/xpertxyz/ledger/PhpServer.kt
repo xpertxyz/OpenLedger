@@ -101,6 +101,10 @@ class PhpServer(private val ctx: Context) {
             put("HL_APP_VERSION", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
             // Draws the backup panel in the profile drawer, which drives BackupBridge.
             put("HL_BACKUP", "1")
+            // Draws the watch panel in the profile drawer, which reads WearBridge. Only the
+            // phone build has a Data Layer link to describe; the website lists paired devices
+            // of its own from device_tokens.
+            put("HL_WEAR", "1")
             put("APP_DEBUG", "0")
         }
         // Both streams go to a file rather than a pipe. A pipe nobody drains fills its buffer
@@ -162,6 +166,27 @@ class PhpServer(private val ctx: Context) {
     fun restoreFrom(src: File): String? {
         val (code, output) = cli("--restore", src.absolutePath)
         return if (code == 0) null else output.trim().ifEmpty { "restore failed (exit $code)" }
+    }
+
+    /**
+     * Answer a watch. Returns index.php's JSON verbatim, or null if it could not be produced.
+     *
+     * Goes through the CLI rather than the HTTP server on purpose: the interpreter only runs
+     * while MainActivity is alive, and a watch asks whenever a wrist is raised. This works with
+     * the app closed.
+     *
+     * syncAppCode() first because [cli] does not do it — a device updated but never reopened
+     * would otherwise run the PHP from the previous APK, or none at all.
+     */
+    fun wear(vararg args: String): String? {
+        runCatching { syncAppCode() }.onFailure { logErr("wear: could not sync app code", it); return null }
+        val (code, out) = cli(*args)
+        // Exit 2 is a UserErr the PHP side already shaped as {"error": …} for the watch to
+        // show; anything else non-zero is ours and has no business reaching a wrist.
+        return when {
+            code == 0 || code == 2 -> out.trim().takeIf { it.startsWith("{") }
+            else -> null
+        }
     }
 
     /** Run one of index.php's CLI modes against this device's ledger. */

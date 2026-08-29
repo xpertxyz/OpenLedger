@@ -26,8 +26,8 @@ android {
         // Must not collide with the phone's, because Play scopes version codes to the whole
         // app rather than to a form factor. Offset rather than shared so the two can be
         // released independently without either one blocking the other.
-        versionCode = 10001
-        versionName = "1.0.1"
+        versionCode = 10002
+        versionName = "1.0.2"
 
         // Where the ledger lives. A watch has nowhere sensible to type a URL, and the pairing
         // code is six digits with no room to carry one, so the address is compiled in. Point a
@@ -86,13 +86,28 @@ dependencies {
     implementation(libs.wear.protolayout)
     implementation(libs.wear.protolayout.material3)
     implementation(libs.wear.protolayout.expression)
+    // Two numbers on whatever watch face the wearer already uses, next to the step count and
+    // the battery the system already provides. See LedgerComplications.kt.
+    implementation(libs.wear.complications)
     // TileService hands back a ListenableFuture, and the tiles library ships only the
     // interface. This is the smallest implementation of it that exists — Guava, the usual
     // answer, is several megabytes for one static factory method.
     implementation(libs.androidx.concurrent.futures)
 
+    // Local mode: talking to the phone app's own ledger over Bluetooth, with no server and no
+    // internet on either device. See PhoneBackend.kt.
+    implementation(libs.play.services.wearable)
+    implementation(libs.kotlinx.coroutines.play.services)
+    // Not used directly. play-services-wearable drags in a pre-1.3 androidx.fragment, whose
+    // FragmentActivity never called super.onRequestPermissionsResult — which makes every
+    // registerForActivityResult in this module unsound, and which lintVital fails the release
+    // build over. Naming a current version is what resolves it.
+    implementation(libs.androidx.fragment.ktx)
     // Flushes expenses that were logged with no route to the server. See PendingSync.kt.
     implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
+    // Android's org.json is an unimplemented stub on the JVM — every method throws
+    // "not mocked". The palette is parsed from JSON, so testing it needs a real one.
+    testImplementation(libs.org.json)
 }

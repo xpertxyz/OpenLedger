@@ -72,7 +72,7 @@ if ($path === '/api/pair' && $method === 'POST') {
         DEVICE_SCOPE_API
     );
     if (!$paired) $fail(404, 'That code is wrong or has expired. Generate a new one.');
-    $reply(200, ['token' => $paired['token']] + apiLedgerInfo($apiDb, $config, $paired['household_id']));
+    $reply(200, ['token' => $paired['token']] + apiLedgerInfo($apiDb, $config, $paired['household_id'], $paired['user_id']));
 }
 
 // ── Everything below needs a token ───────────────────────────────────
@@ -100,7 +100,7 @@ $role = $device['role'];
 
 if ($path === '/api/summary' && $method === 'GET') {
     rateLimit($apiDb, $config, 'api-read', 300, 3600);
-    $reply(200, watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid));
+    $reply(200, watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid, $uid));
 }
 
 if ($path === '/api/expense' && $method === 'POST') {
@@ -123,7 +123,7 @@ if ($path === '/api/expense' && $method === 'POST') {
             date('Y-m-d H:i:s', time() - 900),
         ]);
         if ($dupe->fetchColumn()) {
-            $reply(200, ['ok' => true, 'duplicate' => true] + watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid));
+            $reply(200, ['ok' => true, 'duplicate' => true] + watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid, $uid));
         }
     }
 
@@ -143,47 +143,7 @@ if ($path === '/api/expense' && $method === 'POST') {
     // The fresh totals ride back on the write. Without this every add costs a second round
     // trip over a Bluetooth proxy to answer "so what is my total now" — which is the only
     // question anyone asks after adding an expense.
-    $reply(200, ['ok' => true] + watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid));
+    $reply(200, ['ok' => true] + watchSummary($apiDb, $hid) + apiLedgerInfo($apiDb, $config, $hid, $uid));
 }
 
 $fail(404, 'No such endpoint.');
-
-/**
- * The parts of a ledger a device caches rather than fetches: its name, its currency symbol,
- * and the categories to choose from. Sent with every reply, not just at pairing — a category
- * renamed on the website should reach the wrist on the next refresh, not on the next re-pair.
- */
-function apiLedgerInfo(PDO $db, array $config, int $hid): array {
-    // Currency and grouping live on the household, not the user — index.php copies them into
-    // the session from exactly here. The watch formats its own numbers, so it needs both.
-    $h = $db->prepare("SELECT name, currency, number_format FROM households WHERE id = ?");
-    $h->execute([$hid]);
-    $house = $h->fetch() ?: [];
-
-    // Ordered by this month's spend so the categories a household actually uses sit at the top
-    // of a list being scrolled with a bezel. Ties and unused categories keep the app's own
-    // order behind them, so the list is stable rather than reshuffling day to day.
-    $monthStart = date('Y-m-01');
-    $monthEnd   = date('Y-m-d', strtotime($monthStart . ' +1 month'));
-    $c = $db->prepare(
-        "SELECT c.id, c.name, c.icon, COALESCE(SUM(e.amount), 0) AS used
-         FROM categories c
-         LEFT JOIN expenses e ON e.category_id = c.id AND e.household_id = c.household_id
-                             AND e.`date` >= ? AND e.`date` < ?
-         WHERE c.household_id = ?
-         GROUP BY c.id, c.name, c.icon, c.is_custom
-         ORDER BY used DESC, c.is_custom, c.id"
-    );
-    $c->execute([$monthStart, $monthEnd, $hid]);
-
-    return [
-        'ledger'     => (string)($house['name'] ?? 'Ledger'),
-        'currency'   => (string)($house['currency'] ?? $config['currency'] ?? '₹'),
-        'numfmt'     => (string)($house['number_format'] ?? 'indian'),
-        'categories' => array_map(fn(array $r) => [
-            'id'   => (int)$r['id'],
-            'name' => (string)$r['name'],
-            'icon' => (string)$r['icon'],
-        ], $c->fetchAll()),
-    ];
-}

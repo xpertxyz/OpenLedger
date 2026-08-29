@@ -31,21 +31,42 @@ object Api {
         data object Unpaired : Result
         /** No route to the server. Nothing is wrong; the watch is out of range. */
         data object Offline : Result
+        /**
+         * Phone mode, and no paired phone is advertising the ledger app.
+         *
+         * Distinct from [Offline] because the fix is completely different and the wearer
+         * cannot guess it: out of range resolves itself, a phone without the app installed
+         * never will. Treated like Offline for queueing — the app may yet be installed — but
+         * it gets its own message.
+         */
+        data object NoPhone : Result
     }
 
     suspend fun pair(code: String, label: String): Result =
         call("/api/pair", "POST", null, JSONObject().put("code", code).put("label", label))
 
+    /**
+     * The ledger this watch is set to read, whichever that is.
+     *
+     * The mode switch lives here and nowhere else. Screens, the tile and the complications all
+     * call this and never learn whether the answer arrived over HTTPS from the website or over
+     * Bluetooth from the phone — which is what lets one set of UI serve both.
+     */
     suspend fun summary(ctx: Context): Result =
-        call("/api/summary", "GET", Store.token(ctx), null)
+        if (Store.mode(ctx) == Store.PHONE) PhoneBackend.summary(ctx)
+        else call("/api/summary", "GET", Store.token(ctx), null)
 
     /**
      * @param retry true only when this is a second attempt at an expense that may already have
      *   landed — see PendingSync. The server dedupes on it; a first attempt never sets it, so
      *   two coffees ten seconds apart still make two rows.
      */
-    suspend fun addExpense(ctx: Context, amount: String, categoryId: Int, note: String, retry: Boolean = false): Result =
-        call(
+    suspend fun addExpense(ctx: Context, amount: String, categoryId: Int, note: String, retry: Boolean = false): Result {
+        // The phone path needs no dedupe key. `retry` guards against a lost HTTP reply; a Data
+        // Layer request either returns the phone's answer or throws, and a throw means the PHP
+        // never ran.
+        if (Store.mode(ctx) == Store.PHONE) return PhoneBackend.addExpense(ctx, amount, categoryId, note)
+        return call(
             "/api/expense", "POST", Store.token(ctx),
             JSONObject()
                 .put("amount", amount)
@@ -53,6 +74,7 @@ object Api {
                 .put("note", note)
                 .put("retry", retry)
         )
+    }
 
     private suspend fun call(path: String, method: String, token: String?, body: JSONObject?): Result =
         withContext(Dispatchers.IO) {

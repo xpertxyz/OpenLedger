@@ -1,62 +1,8 @@
 <?php
 declare(strict_types=1);
 
-// Dark-theme variable overrides — lifted verbatim from the prototype (THEME_DARK_VARS).
-const THEME_DARK_VARS = '--color-bg:#201e1d;--color-surface:#2b2721;--color-text:#f3e9d8;'
-  . '--color-divider:color-mix(in srgb, #f3e9d8 18%, transparent);'
-  . '--color-neutral-100:#2c2822;--color-neutral-200:#363028;--color-neutral-300:#453d31;--color-neutral-400:#5a5040;--color-neutral-500:#786c56;--color-neutral-600:#9c8f76;--color-neutral-700:#bfb29a;--color-neutral-800:#dcd0ba;--color-neutral-900:#f3e9d8;'
-  . '--color-accent:#e0864c;--color-accent-100:#3a2a1c;--color-accent-200:#4d3320;--color-accent-300:#6b4324;--color-accent-400:#95592c;--color-accent-500:#c06f35;--color-accent-600:#d97f42;--color-accent-700:#e79968;--color-accent-800:#f0b78c;--color-accent-900:#f8d7b8;'
-  . '--color-accent-2:#93a86e;--color-accent-2-100:#2a301f;--color-accent-2-200:#333b26;--color-accent-2-300:#414c2f;--color-accent-2-400:#57643d;--color-accent-2-500:#71804f;--color-accent-2-600:#8a9863;--color-accent-2-700:#a8b884;--color-accent-2-800:#c4d1a8;--color-accent-2-900:#e2e8d0;'
-  . '--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);'
-  // Not a token: tells the browser to draw native widgets (date-picker calendar
-  // icon, the open select list, scrollbars) in dark, instead of light-on-dark-invisible.
-  // The CLOSED select is fully custom (.select in layout()); only the popup stays native.
-  . 'color-scheme:dark;';
-
-// The three palettes, each in both modes. Organic is the one the design system ships, so its
-// light values ARE design-tokens/styles.css :root — nothing to repeat here but the status-bar
-// colour. Harbor and Plum are generated in OKLCH on the SAME lightness scale as Organic
-// (light 0.969→0.290, dark 0.290→0.930) and the same chroma arc, only the hues move. That is
-// what keeps every component working unchanged: a rule that reads --color-accent-700 gets the
-// same visual weight whichever palette is on. Retune a hue here, never a single step.
-//
-//   'sw' is what the picker draws — the four colours a palette is recognised by, and the
-//   first of them is also the mobile status-bar colour.
-const THEMES = [
-    'organic' => [
-        'name' => 'Organic', 'note' => 'Terracotta and sage on cream',
-        'light' => [
-            'vars' => '--theme-color:#f5ead8;',
-            'sw' => ['bg' => '#f5ead8', 'surface' => '#ebddc5', 'accent' => '#c67139', 'accent2' => '#7a8a5e'],
-        ],
-        'dark' => [
-            'vars' => THEME_DARK_VARS . '--theme-color:#201e1d;',
-            'sw' => ['bg' => '#201e1d', 'surface' => '#2b2721', 'accent' => '#e0864c', 'accent2' => '#93a86e'],
-        ],
-    ],
-    'harbor' => [
-        'name' => 'Harbor', 'note' => 'Deep azure and teal on cool paper',
-        'light' => [
-            'vars' => '--color-bg:oklch(0.972 0.006 250);--color-surface:oklch(0.938 0.011 250);--color-text:oklch(0.250 0.022 258);--color-accent:oklch(0.560 0.155 258);--color-accent-2:oklch(0.600 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 250);--color-neutral-200:oklch(0.930 0.010 250);--color-neutral-300:oklch(0.870 0.013 250);--color-neutral-400:oklch(0.780 0.014 250);--color-neutral-500:oklch(0.680 0.015 250);--color-neutral-600:oklch(0.580 0.014 250);--color-neutral-700:oklch(0.479 0.012 250);--color-neutral-800:oklch(0.381 0.010 250);--color-neutral-900:oklch(0.290 0.006 250);--color-accent-100:oklch(0.969 0.015 258);--color-accent-200:oklch(0.930 0.033 258);--color-accent-300:oklch(0.870 0.063 258);--color-accent-400:oklch(0.780 0.111 258);--color-accent-500:oklch(0.680 0.155 258);--color-accent-600:oklch(0.580 0.148 258);--color-accent-700:oklch(0.479 0.130 258);--color-accent-800:oklch(0.381 0.100 258);--color-accent-900:oklch(0.290 0.065 258);--color-accent-2-100:oklch(0.969 0.044 196);--color-accent-2-200:oklch(0.930 0.061 196);--color-accent-2-300:oklch(0.870 0.074 196);--color-accent-2-400:oklch(0.780 0.083 196);--color-accent-2-500:oklch(0.680 0.086 196);--color-accent-2-600:oklch(0.580 0.083 196);--color-accent-2-700:oklch(0.479 0.074 196);--color-accent-2-800:oklch(0.381 0.061 196);--color-accent-2-900:oklch(0.290 0.044 196);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f3f6fa;color-scheme:light;',
-            'sw' => ['bg' => '#f3f6fa', 'surface' => '#e5ebf2', 'accent' => '#3372cd', 'accent2' => '#209293'],
-        ],
-        'dark' => [
-            'vars' => '--color-bg:oklch(0.235 0.016 255);--color-surface:oklch(0.278 0.021 255);--color-text:oklch(0.935 0.013 250);--color-accent:oklch(0.720 0.135 258);--color-accent-2:oklch(0.740 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.007 250);--color-neutral-200:oklch(0.340 0.010 250);--color-neutral-300:oklch(0.400 0.014 250);--color-neutral-400:oklch(0.480 0.017 250);--color-neutral-500:oklch(0.570 0.022 250);--color-neutral-600:oklch(0.660 0.023 250);--color-neutral-700:oklch(0.760 0.022 250);--color-neutral-800:oklch(0.850 0.020 250);--color-neutral-900:oklch(0.930 0.015 250);--color-accent-100:oklch(0.290 0.039 258);--color-accent-200:oklch(0.340 0.055 258);--color-accent-300:oklch(0.400 0.082 258);--color-accent-400:oklch(0.480 0.114 258);--color-accent-500:oklch(0.570 0.144 258);--color-accent-600:oklch(0.660 0.155 258);--color-accent-700:oklch(0.760 0.122 258);--color-accent-800:oklch(0.850 0.074 258);--color-accent-900:oklch(0.930 0.033 258);--color-accent-2-100:oklch(0.290 0.037 196);--color-accent-2-200:oklch(0.340 0.046 196);--color-accent-2-300:oklch(0.400 0.060 196);--color-accent-2-400:oklch(0.480 0.076 196);--color-accent-2-500:oklch(0.570 0.091 196);--color-accent-2-600:oklch(0.660 0.095 196);--color-accent-2-700:oklch(0.760 0.091 196);--color-accent-2-800:oklch(0.850 0.071 196);--color-accent-2-900:oklch(0.930 0.041 196);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#191f26;color-scheme:dark;',
-            'sw' => ['bg' => '#191f26', 'surface' => '#212933', 'accent' => '#6da5f8', 'accent2' => '#57bebe'],
-        ],
-    ],
-    'plum' => [
-        'name' => 'Plum', 'note' => 'Berry and emerald on blush',
-        'light' => [
-            'vars' => '--color-bg:oklch(0.970 0.008 340);--color-surface:oklch(0.935 0.014 340);--color-text:oklch(0.245 0.024 335);--color-accent:oklch(0.560 0.175 348);--color-accent-2:oklch(0.600 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 340);--color-neutral-200:oklch(0.930 0.010 340);--color-neutral-300:oklch(0.870 0.013 340);--color-neutral-400:oklch(0.780 0.014 340);--color-neutral-500:oklch(0.680 0.015 340);--color-neutral-600:oklch(0.580 0.014 340);--color-neutral-700:oklch(0.479 0.012 340);--color-neutral-800:oklch(0.381 0.010 340);--color-neutral-900:oklch(0.290 0.006 340);--color-accent-100:oklch(0.969 0.018 348);--color-accent-200:oklch(0.930 0.042 348);--color-accent-300:oklch(0.870 0.083 348);--color-accent-400:oklch(0.780 0.155 348);--color-accent-500:oklch(0.680 0.161 348);--color-accent-600:oklch(0.580 0.154 348);--color-accent-700:oklch(0.479 0.135 348);--color-accent-800:oklch(0.381 0.104 348);--color-accent-900:oklch(0.290 0.068 348);--color-accent-2-100:oklch(0.969 0.041 160);--color-accent-2-200:oklch(0.930 0.056 160);--color-accent-2-300:oklch(0.870 0.068 160);--color-accent-2-400:oklch(0.780 0.077 160);--color-accent-2-500:oklch(0.680 0.079 160);--color-accent-2-600:oklch(0.580 0.077 160);--color-accent-2-700:oklch(0.479 0.068 160);--color-accent-2-800:oklch(0.381 0.056 160);--color-accent-2-900:oklch(0.290 0.041 160);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f9f3f7;color-scheme:light;',
-            'sw' => ['bg' => '#f9f3f7', 'surface' => '#f0e6ec', 'accent' => '#b93e86', 'accent2' => '#3d936a'],
-        ],
-        'dark' => [
-            'vars' => '--color-bg:oklch(0.232 0.019 330);--color-surface:oklch(0.275 0.025 330);--color-text:oklch(0.935 0.013 340);--color-accent:oklch(0.725 0.145 350);--color-accent-2:oklch(0.735 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.008 335);--color-neutral-200:oklch(0.340 0.010 335);--color-neutral-300:oklch(0.400 0.015 335);--color-neutral-400:oklch(0.480 0.018 335);--color-neutral-500:oklch(0.570 0.023 335);--color-neutral-600:oklch(0.660 0.025 335);--color-neutral-700:oklch(0.760 0.023 335);--color-neutral-800:oklch(0.850 0.021 335);--color-neutral-900:oklch(0.930 0.016 335);--color-accent-100:oklch(0.290 0.041 348);--color-accent-200:oklch(0.340 0.058 348);--color-accent-300:oklch(0.400 0.085 348);--color-accent-400:oklch(0.480 0.119 348);--color-accent-500:oklch(0.570 0.150 348);--color-accent-600:oklch(0.660 0.162 348);--color-accent-700:oklch(0.760 0.137 348);--color-accent-800:oklch(0.850 0.098 348);--color-accent-900:oklch(0.930 0.042 348);--color-accent-2-100:oklch(0.290 0.034 160);--color-accent-2-200:oklch(0.340 0.043 160);--color-accent-2-300:oklch(0.400 0.055 160);--color-accent-2-400:oklch(0.480 0.070 160);--color-accent-2-500:oklch(0.570 0.084 160);--color-accent-2-600:oklch(0.660 0.087 160);--color-accent-2-700:oklch(0.760 0.084 160);--color-accent-2-800:oklch(0.850 0.066 160);--color-accent-2-900:oklch(0.930 0.038 160);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#231a22;color-scheme:dark;',
-            'sw' => ['bg' => '#231a22', 'surface' => '#2f232e', 'accent' => '#e87db3', 'accent2' => '#69be92'],
-        ],
-    ],
-];
+// The palettes live in lib.php: the watch API and the phone's CLI both resolve a palette to
+// hex for the Wear app, and neither of them loads this file.
 
 // Selector list for one palette. Organic doubles as the default: a page that carries no
 // data-palette at all already renders it, because the stylesheet's :root IS organic light.
@@ -1652,6 +1598,81 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
         <?php endif; ?>
 
         <div style="flex:1;"></div>
+
+        <?php if (FEATURE_WEAR): ?>
+        <?php /* Android only, and the counterpart of the website's Connected devices card: the
+                 same question — what can read this ledger — answered from the Data Layer
+                 instead of from device_tokens. Rendered here rather than as a native screen
+                 for the reason the backup panel is: one design system, one set of controls. */ ?>
+        <hr>
+        <section>
+          <h4 style="margin:0 0 4px;">Watch</h4>
+          <div id="wear-panel" class="stack" style="gap:8px;">
+            <p class="muted" style="margin:0; font-size:12px;">Checking…</p>
+          </div>
+        </section>
+        <script>
+        (function () {
+          var el = document.getElementById('wear-panel');
+          if (!el || !window.HLWear) { if (el) el.innerHTML = '<p class="muted" style="margin:0;font-size:12px;">Unavailable.</p>'; return; }
+          function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+          function ago(ms) {
+            if (!ms) return '';
+            var m = Math.floor((Date.now() - ms) / 60000);
+            if (m < 1) return 'just now';
+            if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+            var h = Math.floor(m / 60);
+            if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+            var d = Math.floor(h / 24);
+            return d + (d === 1 ? ' day ago' : ' days ago');
+          }
+          function render() {
+            var s;
+            try { s = JSON.parse(HLWear.status()); }
+            catch (e) { el.innerHTML = '<p class="muted" style="margin:0;font-size:12px;">Could not check.</p>'; return; }
+
+            var h = '';
+            if (!s.ok) {
+              h += '<p class="muted" style="margin:0;font-size:12px;">Could not reach Wear OS on this phone.</p>';
+            } else if (!s.nodes || !s.nodes.length) {
+              /* The single most useful thing this panel does: say why a watch is absent.
+                 Paired but not listed almost always means the watch app is missing or was
+                 installed from somewhere that does not match this app's signature. */
+              h += '<p class="muted" style="margin:0;font-size:12px;">'
+                +  'No watch is running Open Ledger. Install it on your watch from Google Play '
+                +  '&mdash; both apps must come from Play for them to recognise each other.'
+                +  '</p>';
+            } else {
+              for (var i = 0; i < s.nodes.length; i++) {
+                var n = s.nodes[i];
+                h += '<div class="row" style="display:flex;align-items:center;gap:8px;">'
+                  +    '<div style="flex:1;min-width:0;">'
+                  +      '<div style="font-size:13px;">' + esc(n.name || 'Watch') + '</div>'
+                  +      '<div class="muted" style="font-size:11px;">'
+                  +        (n.nearby ? 'Connected' : 'Paired, not in range')
+                  +        (s.lastSeen ? ' &middot; last used ' + esc(ago(s.lastSeen)) : ' &middot; not used yet')
+                  +      '</div>'
+                  +    '</div>'
+                  +  '</div>';
+              }
+            }
+            /* No Disconnect button, on purpose. A watch reaches this ledger because Wear OS
+               paired it to this phone; the way to revoke that is to unpair the watch, which is
+               Wear OS's own screen. A button here would either do nothing or lie. */
+            h += '<p class="muted" style="margin:2px 0 0;font-size:11px;">'
+              +  'Watches paired to this phone. To disconnect one, unpair it in the Galaxy '
+              +  'Wearable app.</p>';
+            el.innerHTML = h;
+          }
+          render();
+          /* Cheap and local — no network, just a Play services lookup — but not free, so only
+             while the drawer is actually open. */
+          setInterval(function () {
+            if (document.getElementById('drawer-panel').classList.contains('open')) render();
+          }, 5000);
+        })();
+        </script>
+        <?php endif; ?>
 
         <?php /* The website only. A watch pairs against an account, and the Android build has
                  neither an account nor a socket a watch could reach — it serves 127.0.0.1 to

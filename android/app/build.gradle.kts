@@ -10,8 +10,8 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 7
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.9"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.
@@ -161,6 +161,9 @@ dependencies {
     // Play's flexible in-app update. The download and the install are Play's; every piece of
     // UI around them is views.php, so an update offer looks like the rest of the app.
     implementation(libs.play.app.update)
+    // Local watch sync. The watch cannot reach this app's loopback server, so it asks over
+    // the Data Layer instead and LedgerWearService answers from the same PHP. See WEAR.md.
+    implementation(libs.play.services.wearable)
     // Drive backup, appDataFolder scope only — see ANDROID.md for why not full `drive`.
     implementation(libs.play.services.auth)
     implementation(libs.androidx.credentials)

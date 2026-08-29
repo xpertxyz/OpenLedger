@@ -7,18 +7,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,48 +44,70 @@ fun NumberPad(
     modifier: Modifier = Modifier,
     /** The decimal point. Off for a pairing code, on for an amount. */
     decimal: Boolean = false,
-    /** Drawn where the decimal point would otherwise sit. Used for the mic. */
-    extraKey: (@Composable () -> Unit)? = null,
+    /**
+     * Height in dp the caller is using above the pad — the row showing what has been typed.
+     */
+    reserve: Int = VALUE_ROW,
+    /**
+     * Width in dp the caller is using either side of the pad, for keys that flank it.
+     *
+     * The amount screen puts its mic and confirm on the left and right edges at the vertical
+     * centre. That is the widest part of a round screen and the easiest place on it to hit;
+     * the corners, where they sat first, are the narrowest and the worst.
+     */
+    reserveWidth: Int = 0,
 ) {
+    // Sized from the screen, not hardcoded. The first version used a fixed 50dp and the bottom
+    // row — 0 and backspace — fell off a 206dp watch entirely: it scrolled, so it worked, but
+    // having to scroll to reach zero on a number pad is not a keypad.
+    //
+    // Four rows plus the value above them have to fit inside the height, and on a ROUND screen
+    // the corner keys have to stay inside the circle too, which is the tighter of the two
+    // constraints. The cap keeps a large watch from drawing comically big keys.
+    // Whichever runs out first. Four rows have to fit the height; three columns plus anything
+    // flanking them have to fit the width. Sizing to only one of the two is how a pad ends up
+    // reaching off the bottom of a small watch or off the sides of a narrow one.
+    val cfg = LocalConfiguration.current
+    val byHeight = ((cfg.screenHeightDp - reserve) / 4f) - GAP.value
+    val byWidth  = ((cfg.screenWidthDp - reserveWidth) / 3f) - GAP.value
+    val key = minOf(byHeight, byWidth).dp.coerceIn(30.dp, 52.dp)
+
     Column(
-        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(GAP),
     ) {
-        KeyRow("123", onDigit)
-        KeyRow("456", onDigit)
-        KeyRow("789", onDigit)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        KeyRow("123", key, onDigit)
+        KeyRow("456", key, onDigit)
+        KeyRow("789", key, onDigit)
+        Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
             // The bottom-left slot: a decimal point on the amount screen, a mic where one is
             // offered, and an empty gap otherwise — never a third thing crowding the row.
-            when {
-                decimal -> Key(".") { onDigit('.') }
-                extraKey != null -> extraKey()
-                else -> Spacer(Modifier.size(KEY))
-            }
-            Key("0") { onDigit('0') }
-            Key("⌫", tint = Ledger.muted, onClick = onDelete)
+            if (decimal) Key(".", size = key) { onDigit('.') } else Spacer(Modifier.size(key))
+            Key("0", size = key) { onDigit('0') }
+            Key("⌫", tint = LocalPalette.current.muted, size = key, onClick = onDelete)
         }
     }
 }
 
 @Composable
-private fun KeyRow(digits: String, onDigit: (Char) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        digits.forEach { d -> Key(d.toString()) { onDigit(d) } }
+private fun KeyRow(digits: String, size: androidx.compose.ui.unit.Dp, onDigit: (Char) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
+        digits.forEach { d -> Key(d.toString(), size = size) { onDigit(d) } }
     }
 }
 
 @Composable
 fun Key(
     label: String,
-    tint: Color = Ledger.text,
-    bg: Color = Ledger.surface,
+    tint: Color = LocalPalette.current.text,
+    bg: Color = LocalPalette.current.surface,
+    size: androidx.compose.ui.unit.Dp = 44.dp,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(KEY)
+            .size(size)
             .clip(CircleShape)
             .background(bg)
             .clickable(onClick = onClick),
@@ -102,11 +122,14 @@ fun Key(
     }
 }
 
-/**
- * Three of these plus the gaps is 158dp, which fits across the flat width of every round Wear
- * screen from the smallest 1.2" upwards. Larger keys would be nicer and would not fit.
- */
-private val KEY = 50.dp
+private val GAP = 3.dp
+
+/** A key that sits beside the pad rather than in it — the mic, the confirm, the settings gear. */
+val KeyAction = 34.dp
+val KeyFlankGap = 3.dp
+
+/** Height to leave above the pad for the value being typed. */
+private const val VALUE_ROW = 34
 
 /** The digits entered so far, in the accent, with the empty places shown as dashes. */
 @Composable
@@ -115,9 +138,8 @@ fun CodeDisplay(entered: String, length: Int = 6) {
     androidx.wear.compose.material3.Text(
         // Grouped 3-and-3, the same way the website prints it, so the two read as one number.
         shown.take(3) + "  " + shown.drop(3),
-        fontSize = 26.sp,
+        fontSize = 22.sp,
         fontWeight = FontWeight.Bold,
-        color = if (entered.isEmpty()) Ledger.muted else Ledger.accent,
-        modifier = Modifier.padding(bottom = 2.dp),
+        color = if (entered.isEmpty()) LocalPalette.current.muted else LocalPalette.current.accent,
     )
 }

@@ -13,6 +13,8 @@ define('FEATURE_SIGNIN',   $config['features']['google_signin']);
 // Only the Android build sets this: the panel it renders drives a native Google Drive client
 // through a WebView bridge that does not exist on the web.
 define('FEATURE_BACKUP',   $config['features']['backup']);
+// Also Android only: the drawer panel that lists watches paired to this phone.
+define('FEATURE_WEAR',     $config['features']['wear']);
 // Non-empty only in the Android build — see config.php.
 define('APP_VERSION',      $config['app_version']);
 
@@ -35,6 +37,21 @@ if (PHP_SAPI === 'cli') {
         assert(addMonths('2026-08-07', 0)  === '2026-08-07');
         // Split bills: n equal shares, the last one n-1 months after the payment date.
         assert(splitPlan(24000.0, 12, '2026-01-01') === [2000.0, '2026-12-01']);
+        // OKLCH -> hex, against the sRGB primaries. Pure maths with no test around it is
+        // exactly the kind of code that drifts on a "tidy-up" and takes the watch's colours
+        // with it.
+        assert(oklchToHex(0.62796, 0.25768, 29.234)  === '#ff0000');
+        assert(oklchToHex(0.86644, 0.29483, 142.495) === '#00ff00');
+        assert(oklchToHex(0.45201, 0.31321, 264.052) === '#0000ff');
+        assert(oklchToHex(1.0, 0.0, 0.0)             === '#ffffff');
+        assert(oklchToHex(0.0, 0.0, 0.0)             === '#000000');
+        // And against the app's own data: each palette's computed background must equal the
+        // --theme-color it already declares, which was written by the design tool.
+        foreach (['organic' => '#201e1d', 'harbor' => '#191f26', 'plum' => '#231a22'] as $k => $bg) {
+            assert(watchPalette($k)['bg'] === $bg, "$k background should be $bg");
+        }
+        assert(watchPalette('no-such-palette')['name'] === 'organic');
+        assert(cssColorToHex('color-mix(in srgb, #fff 50%, transparent)') === null);
         assert(splitPlan(1200.0,  24, '2026-06-15') === [50.0,   '2028-05-15']);
         try { splitPlan(100.0, 1, '2026-01-01');   assert(false, 'a 1-month split should throw'); } catch (UserErr) {}
         try { splitPlan(100.0, 999, '2026-01-01'); assert(false, 'a 999-month split should throw'); } catch (UserErr) {}
@@ -838,6 +855,22 @@ if (PHP_SAPI === 'cli') {
             ? $line('OK',   'the watch writes expenses through createExpense(), same as the web form')
             : $line('FAIL', 'api.php inserts into expenses directly instead of calling createExpense()');
 
+        // The drawer answers "what can read this ledger" in two different ways, and each
+        // build must get exactly one of them. The website lists device_tokens, which it can
+        // revoke; the phone lists Wear nodes, which it cannot. Showing the website's card on
+        // the phone would offer a Disconnect button for devices that were never paired that
+        // way, and showing the phone's on the web would query a bridge that is not there.
+        $wearPanel = strpos($vsrc, "id=\"wear-panel\"");
+        $wearGate  = strpos($vsrc, 'if (FEATURE_WEAR):');
+        // The heading markup, not the phrase: the wear panel's own comment describes itself
+        // as the counterpart of the "Connected devices" card, so a loose search finds that
+        // comment first and the ordering check compares a comment against a panel.
+        $devGate   = strpos($vsrc, '>Connected devices</h4>');
+        ($wearPanel !== false && $wearGate !== false && $wearGate < $wearPanel
+            && $devGate !== false && $devGate > $wearPanel)
+            ? $line('OK',   'the drawer\'s watch panel is behind FEATURE_WEAR, separate from the website\'s device list')
+            : $line('FAIL', 'the drawer\'s two "what can read this ledger" panels are no longer separately gated');
+
         // ── Paired devices ───────────────────────────────────────────────
         // A 'full' token is a signed-in browser. Everything below is what keeps one from
         // being handed out by accident.
@@ -862,6 +895,35 @@ if (PHP_SAPI === 'cli') {
             && str_contains($lib, "\$_SESSION['device_id']"))
             ? $line('OK',   'a disconnected device loses its browser session on its next request')
             : $line('FAIL', 'nothing ties a paired browser session to its device row — Disconnect would not sign it out');
+
+        // The watch has two backends — HTTPS to this site, and a Data Layer request to the
+        // phone app — and they must be the same ledger logic reached two ways. If the local
+        // path ever grows its own INSERT or its own totals, the two start disagreeing on a
+        // wrist and nobody finds out for a month.
+        // Two traps here, both hit on the way in.
+        //
+        // The needle is split so this check cannot find ITSELF. preflight runs inside the same
+        // CLI block it is inspecting and sits above the modes it is looking for, so a literal
+        // spelling matched the check's own source a thousand lines early and measured 100
+        // bytes of its own comment.
+        //
+        // And the block is bounded, not scanned with `.*` across the file — the first cut
+        // matched the needle then any `INSERT INTO` anywhere after it, which is every INSERT
+        // in the app. It failed on a correct implementation, which is worse than no check.
+        // $full, not $src: $src is sliced to the request-handling half of this file and these
+        // modes live in the CLI half above it, so the check could never have seen them.
+        $needle    = "\$mode === '--wear" . "-summary'";
+        $wearBlock = '';
+        if (($ws = strpos($full, $needle)) !== false) {
+            $end = strpos($full, 'usage: php ' . 'index.php', $ws);
+            if ($end !== false) $wearBlock = substr($full, $ws, $end - $ws);
+        }
+        ($wearBlock !== ''
+            && str_contains($wearBlock, 'createExpense(')
+            && str_contains($wearBlock, 'watchSummary($db, $hid) + apiLedgerInfo(')
+            && !str_contains($wearBlock, 'INSERT INTO'))
+            ? $line('OK',   'the local watch path answers from watchSummary()/createExpense(), same as the network one')
+            : $line('FAIL', 'the --wear CLI modes no longer share the API\'s implementation');
 
         // Two handlers validating the same field must accept the same values. /recurring and
         // /recurring/update disagreed once, and editing a recurring earning silently turned it
@@ -1373,8 +1435,50 @@ if (PHP_SAPI === 'cli') {
         echo "previous ledger kept at $dest.pre-restore\n";
         exit;
     }
+    // ── The watch, talking to the phone instead of to the website ────
+    //
+    // The Android build serves 127.0.0.1 to its own WebView, and a watch cannot reach a
+    // loopback socket on another device. So the local path does not use HTTP at all: the watch
+    // sends a Data Layer request over Bluetooth, the phone's LedgerWearService receives it, and
+    // it runs these — the same PhpServer.cli() route that --backup and --restore already take.
+    //
+    // Which means no server need be running and the app need not even be open. The answers are
+    // the identical JSON api.php returns over the network, from the identical functions, so the
+    // watch cannot tell the two backends apart beyond how it asked.
+    if ($mode === '--wear-summary' || $mode === '--wear-add') {
+        if (($config['db']['driver'] ?? '') !== 'sqlite') {
+            fwrite(STDERR, "$mode is for DB_DRIVER=sqlite only\n"); exit(1);
+        }
+        $db = makeDb($config);
+        // The local build has exactly one household and one user — index.php's local mode
+        // creates them on first run — so there is nobody to choose between.
+        $u = $db->query("SELECT id, household_id FROM users ORDER BY id LIMIT 1")->fetch();
+        if (!$u) { fwrite(STDERR, "no ledger on this device yet\n"); exit(1); }
+        [$uid, $hid] = [(int)$u['id'], (int)$u['household_id']];
+
+        if ($mode === '--wear-add') {
+            try {
+                createExpense($db, $config, $hid, $uid, roleIn($db, $hid, $uid) ?? ROLE_OWNER, [
+                    'amount'      => (string)($argv[2] ?? ''),
+                    'category_id' => (int)($argv[3] ?? 0),
+                    'note'        => (string)($argv[4] ?? ''),
+                ]);
+            } catch (UserErr $e) {
+                // Shaped like api.php's 422 body so the watch shows one kind of message
+                // whichever backend refused it.
+                echo json_encode(['error' => $e->getMessage()]), "\n"; exit(2);
+            }
+        }
+        echo json_encode(
+            watchSummary($db, $hid) + apiLedgerInfo($db, $config, $hid, $uid),
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ), "\n";
+        exit;
+    }
+
     fwrite(STDERR, "usage: php index.php --selfcheck | --preflight | --cron"
-        . " | --count | --backup <path> | --restore <path>\n"); exit(1);
+        . " | --count | --backup <path> | --restore <path>"
+        . " | --wear-summary | --wear-add <amount> <category_id> [note]\n"); exit(1);
 }
 
 // Debug output — surface fatals + warnings in the browser response.

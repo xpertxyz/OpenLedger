@@ -87,6 +87,14 @@ try {
     for ($i = 0; $i < 3; $i++) rateLimit($db, $config, 'dualtest', 99, 60);
     $row = $db->query("SELECT hits FROM rate_limits WHERE bucket LIKE '%dualtest'")->fetch();
     printf("  after 3 calls hits=%d (expect 3)\n", (int)$row['hits']);
+    // Three calls a second apart must still count to 3. The window used to be compared
+    // against the incoming window_end rather than against now, so every tick of the clock
+    // reset the counter — this is the assertion that would have caught it.
+    sleep(1);
+    rateLimit($db, $config, 'dualtest', 99, 60);
+    $row = $db->query("SELECT hits FROM rate_limits WHERE bucket LIKE '%dualtest'")->fetch();
+    printf("  after a 4th a second later hits=%d (expect 4)\n", (int)$row['hits']);
+
     // Force the window into the past; the next call must reset to 1 rather than increment.
     $db->prepare("UPDATE rate_limits SET window_end = ? WHERE bucket LIKE '%dualtest'")->execute([time() - 1]);
     rateLimit($db, $config, 'dualtest', 99, 60);
@@ -157,6 +165,12 @@ try {
     createExpense($db, $config, $hid, $hid, ROLE_OWNER, ['amount' => '250.50', 'category_id' => $hid, 'note' => 'from the wrist']);
     createExpense($db, $config, $hid, $hid, ROLE_OWNER, ['amount' => '99.50',  'category_id' => $hid, 'note' => '']);
     $after = watchSummary($db, $hid);
+    // The investing half of the summary, which a complication divides by — so a driver that
+    // returned the target as a string would surface as a percentage of NaN on a watch face.
+    printf("  invested=%s target=%s pct=%d\n",
+        number_format($after['invested'], 2, '.', ''),
+        number_format($after['invest_target'], 2, '.', ''),
+        $after['invest_pct']);
     printf("  d_today=%s d_month=%s d_count=%d top_n=%d recent_top=%s|%s\n",
         number_format($after['today'] - $before['today'], 2, '.', ''),
         number_format($after['month'] - $before['month'], 2, '.', ''),

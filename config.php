@@ -65,6 +65,10 @@ return [
         // Off by default, and off on the web for good: the panel it draws talks to a native
         // Drive client over a WebView bridge that only the Android build provides.
         'backup'         => envFlag('HL_BACKUP',        false),
+        // Android only. The drawer's "Watch" panel, which asks WearBridge which watches
+        // are paired to this phone. The website has no Data Layer and answers that question
+        // from device_tokens instead.
+        'wear'           => envFlag('HL_WEAR', false),
     ],
     'terms_url' => envStr('HL_TERMS_URL', ''),
 

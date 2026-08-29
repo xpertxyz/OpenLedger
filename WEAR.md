@@ -3,21 +3,34 @@
 A Wear OS app for checking today's spend and logging one in a few seconds, without taking a
 phone out. Built for a Galaxy Watch 8 Classic; anything on Wear OS 3 or later will run it.
 
-It is a **client of the website**, not of the phone app. That distinction decides everything
-else in this document, so it is worth being blunt about:
+It reads one of **two** ledgers, chosen in its settings:
 
 ```
-  watch  ──HTTPS──▶  ledger.xpertxyz.com  (MySQL)      ← what the watch reads and writes
-  phone app         ledger.db on the phone (SQLite)    ← a separate ledger, not involved
+  Online   watch ──HTTPS──────────▶ ledger.xpertxyz.com   (MySQL)
+  Phone    watch ──Data Layer─────▶ the phone app          (SQLite on the phone)
 ```
 
-The Android phone app serves its own SQLite file to its own WebView over `127.0.0.1`. There is
-no socket on it a watch could reach, and its data is a different ledger. If you log expenses in
-both, the watch will only ever show the website's numbers.
+These are **separate ledgers, not two views of one**. The phone app has never synced anywhere:
+it serves its own SQLite file to its own WebView over `127.0.0.1`. Switching modes changes
+which numbers you see and moves nothing between them, and the settings screen says so.
 
-There is **no Bluetooth Data Layer code here**. None is needed: Wear OS proxies TCP through the
-paired phone whenever the watch has no wifi or LTE of its own, so plain HTTPS works out of
-range of a router. The phone module is untouched by any of this.
+**Online** needs no Bluetooth code at all — Wear OS proxies TCP through the paired phone
+whenever the watch has no wifi or LTE, so plain HTTPS works out of range of a router.
+
+**Phone** needs the Data Layer, because loopback does not leave a device. The watch sends a
+`MessageClient.sendRequest` and `LedgerWearService` on the phone answers by running
+`index.php --wear-summary` / `--wear-add` through `PhpServer.cli()` — the same route
+`--backup` and `--restore` already take, so no server need be running and the app need not
+even be open. The replies are the same JSON `api.php` returns over the network, from the same
+`watchSummary()` and `createExpense()`, so every screen above `Api` is unaware of which
+backend answered.
+
+No token and no pairing in Phone mode, and none is wanted: the Data Layer only routes between
+apps sharing a package name **and** a signing key, so the only thing that can reach the service
+is our own watch app on that phone's own paired watch. A bearer token would guard a channel
+that is already closed. The phone advertises `open_ledger_phone` (`res/values/wear.xml`) and
+the watch resolves it as a capability rather than hardcoding a node — a watch outlives its
+phone.
 
 ## What is on the watch
 
@@ -227,11 +240,42 @@ Same package name, same Play app-signing key, different version code. It declare
 `standalone=false`, truthfully — it is useless without a network, which on a Bluetooth-only
 watch means without the phone.
 
+## On the watch face
+
+Two **complications**, not a watch face of our own:
+
+- **Spent today** — short text, `₹460`
+- **Investment target** — ranged value, an arc plus `62%` of this month's target
+
+Add them the way you add any complication: long-press the watch face, Customise, tap a slot,
+pick Open Ledger. Tapping either opens the app.
+
+Complications rather than a bespoke face on purpose. Steps and battery already exist as
+complications on every face Samsung ships, so a face of ours would mean reimplementing two
+things the system does better — and forcing one design on someone who already chose theirs.
+This way the ledger sits on *their* face, beside their step count.
+
+Both read the cached summary and never fetch: a complication is refreshed by the system on a
+hard deadline that a Bluetooth-proxied request would miss. `LedgerComplication.refresh()`
+pushes a new value whenever one lands, and the 30-minute `UPDATE_PERIOD_SECONDS` is only the
+floor under a watch nobody has touched.
+
+## Signing out, and switching ledgers
+
+Settings is at the foot of the ledger screen, and also on the pairing screen — without that
+second entry point a watch that has never paired online could never reach the setting that
+lets it read the phone instead.
+
+**Sign out** clears the token, the cached summary and anything still queued. It keeps the mode,
+which is a preference rather than a credential. In Phone mode there is nothing to sign out of.
+
 ## Deliberately not built
 
 - **A complication** (today's total as a field on the watch face). Cheap to add now that the
   data sync exists; the tile covers the same need one swipe away.
 - **Editing or deleting from the watch.** A wrist is for capture. Corrections want a screen.
 - **A note field.** See above.
-- **Data Layer sync with the phone app.** Only worth writing if the watch should ever read the
-  phone's local SQLite ledger, which is a different product decision.
+- **A watch face of our own.** See above — complications get the numbers onto the face the
+  wearer already likes, next to the step count we would otherwise have to reimplement.
+- **Merging the two ledgers.** Online and Phone stay separate. Syncing a local SQLite ledger
+  into a shared MySQL one is a whole product, not a setting.
