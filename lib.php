@@ -899,8 +899,22 @@ function csrfInput(): string {
 }
 // Raw token for JS attribute contexts (e.g. onclick="askConfirm({csrf:'...'})").
 function csrfJs(): string { return h(csrfToken()); }
+// The decision, separated from the exit so it can be asserted. csrfCheck() below ends the
+// request, which makes it untestable in-process — and this is the one rule in the app most
+// worth a test.
+//
+// The empty case is rejected explicitly, because hash_equals('', '') is TRUE. It never bit
+// while every csrfCheck() sat behind the auth gate: a signed-in session has always minted a
+// token by the time it posts anything. The login routes broke that assumption — /pair and
+// /signin/app run on a session that may have none — and there a request carrying no cookie and
+// no token passed by matching nothing against nothing, which is precisely the forged post the
+// check exists to stop.
+function csrfValid(string $have, string $sent): bool {
+    return $have !== '' && hash_equals($have, $sent);
+}
+
 function csrfCheck(): void {
-    if (!hash_equals($_SESSION['csrf'] ?? '', (string)($_POST['_csrf'] ?? ''))) {
+    if (!csrfValid((string)($_SESSION['csrf'] ?? ''), (string)($_POST['_csrf'] ?? ''))) {
         http_response_code(400); exit('Bad CSRF token — refresh and retry.');
     }
 }

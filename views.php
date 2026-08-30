@@ -2391,6 +2391,50 @@ $sprite
          data-text="signin_with"
          data-logo_alignment="left"></div>
 
+    <!-- The Android app's way in. Google Identity Services refuses to render inside an
+         embedded WebView — it detects the user agent and draws nothing at all, which is
+         exactly what "the sign-in button disappeared" looks like. So when the app's bridge is
+         present we hide Google's block entirely and ask Google natively instead, posting the
+         same ID token to /signin/app. Hidden and inert in a real browser. -->
+    <div id="app-signin" style="display:none; width:100%;">
+      <button class="btn btn-primary btn-block" type="button" id="app-signin-btn">Sign in with Google</button>
+      <div id="app-signin-msg" style="margin-top:8px; font-size:12px; color:var(--color-neutral-800);"></div>
+      <form method="post" action="/signin/app" id="app-signin-form" style="display:none;">
+        $csrf
+        <input type="hidden" name="credential" id="app-signin-token">
+      </form>
+    </div>
+    <script>
+    (function () {
+      var wrap = document.getElementById('app-signin');
+      if (!wrap || !window.HLAuth) return;
+      var ok = false;
+      try { ok = HLAuth.available(); } catch (e) { ok = false; }
+      if (!ok) return;
+
+      // Google's own block would render as an empty gap here, so it goes rather than hides.
+      var onload = document.getElementById('g_id_onload');
+      var btn = document.querySelector('.g_id_signin');
+      if (onload) onload.remove();
+      if (btn) btn.remove();
+      wrap.style.display = '';
+
+      var msg = document.getElementById('app-signin-msg');
+      document.getElementById('app-signin-btn').onclick = function () {
+        msg.textContent = 'Opening Google…';
+        HLAuth.signIn();
+      };
+      // Called by the app once the account sheet closes. An empty token means the sheet was
+      // dismissed, which is a decision rather than a failure.
+      window.__hlGoogleToken = function (token) {
+        if (!token) { msg.textContent = ''; return; }
+        document.getElementById('app-signin-token').value = token;
+        msg.textContent = 'Signing in…';
+        document.getElementById('app-signin-form').submit();
+      };
+    })();
+    </script>
+
     $devBlock
     $flashHtml
   </div>

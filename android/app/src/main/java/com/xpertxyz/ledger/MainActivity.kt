@@ -29,6 +29,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 
@@ -165,6 +167,9 @@ class MainActivity : FragmentActivity() {
             // Both ledgers' drawers use this — the local PHP's and the website's — so that
             // going online is not a one-way door.
             addJavascriptInterface(ModeBridge(this@MainActivity), "HLMode")
+            // Google will not render its own button inside a WebView, so the app asks Google
+            // natively and hands the page the token. See AuthBridge.
+            addJavascriptInterface(AuthBridge(this@MainActivity), "HLAuth")
             addJavascriptInterface(WearBridge(applicationContext), "HLWear")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
             // Same arrangement for the update bar: Play does the downloading, views.php draws
@@ -228,6 +233,28 @@ class MainActivity : FragmentActivity() {
      * all differ between the two, and a restarted process is the one way to be sure none of
      * the previous mode is left running.
      */
+    /**
+     * Ask Google for an ID token and give it to the page.
+     *
+     * The page turns it into a session by posting to /signin/app, which verifies it exactly as
+     * it verifies the token GIS produces on the web. Nothing about the session differs
+     * afterwards — this only replaces the button Google refuses to draw here.
+     */
+    fun startNativeSignIn() {
+        lifecycleScope.launch {
+            val token = DriveAuth.idToken(this@MainActivity)
+            // A cancelled sheet is an answer. The page is told, so it can stop showing a
+            // spinner, and is told nothing else — there is no error worth spelling out.
+            val js = if (token.isNullOrBlank()) {
+                "window.__hlGoogleToken && window.__hlGoogleToken('')"
+            } else {
+                "window.__hlGoogleToken && window.__hlGoogleToken(" +
+                    org.json.JSONObject.quote(token) + ")"
+            }
+            web.evaluateJavascript(js, null)
+        }
+    }
+
     fun restartForModeChange() {
         runCatching { server.stop() }
         val i = Intent(this, MainActivity::class.java)

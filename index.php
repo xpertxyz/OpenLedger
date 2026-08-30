@@ -40,6 +40,15 @@ if (PHP_SAPI === 'cli') {
         // OKLCH -> hex, against the sRGB primaries. Pure maths with no test around it is
         // exactly the kind of code that drifts on a "tidy-up" and takes the watch's colours
         // with it.
+        // A session with no token must never satisfy the CSRF check. hash_equals('', '') is
+        // true, so "no session, no token" used to pass — the exact shape of a forged post from
+        // a browser that has never visited the site.
+        assert(csrfValid('', '')            === false, 'no session token must never validate');
+        assert(csrfValid('', 'anything')    === false);
+        assert(csrfValid('abc', '')         === false);
+        assert(csrfValid('abc', 'abd')      === false);
+        assert(csrfValid('abc', 'abc')      === true);
+
         assert(oklchToHex(0.62796, 0.25768, 29.234)  === '#ff0000');
         assert(oklchToHex(0.86644, 0.29483, 142.495) === '#00ff00');
         assert(oklchToHex(0.45201, 0.31321, 264.052) === '#0000ff');
@@ -855,6 +864,17 @@ if (PHP_SAPI === 'cli') {
             ? $line('OK',   'the watch writes expenses through createExpense(), same as the web form')
             : $line('FAIL', 'api.php inserts into expenses directly instead of calling createExpense()');
 
+        // The sign-in page must offer a way in that does not depend on Google Identity
+        // Services rendering, because inside a WebView it does not render at all. If the
+        // native path or its handler ever goes missing, online mode becomes a ledger nobody
+        // can sign into — and it fails silently, as a button that is simply absent.
+        (str_contains($vsrc, 'window.HLAuth')
+            && str_contains($vsrc, 'action="/signin/app"')
+            && str_contains($vsrc, '__hlGoogleToken')
+            && str_contains($src, "\$path === '/signin/app'"))
+            ? $line('OK',   'the sign-in page has a native path for the app, and a handler behind it')
+            : $line('FAIL', 'the app has no way to sign in — Google will not render its button in a WebView');
+
         // The phone app's ledger switch has to be in BOTH builds' drawers — the local PHP's
         // and the website's — because the website is what you are looking at once you switch,
         // and it is the only place the way back can live. Gated at runtime on window.HLMode
@@ -973,16 +993,20 @@ if (PHP_SAPI === 'cli') {
         //   /pair   signing in with a device code. Its own check, because it is a login form:
         //           without one, a forged POST signs a victim's browser into someone else's
         //           ledger. (/signin needs none — Google's g_csrf_token is the same guarantee.)
+        //   /signin/app  the Android app's native Google sign-in. Same reasoning as /pair: the
+        //           token comes from Credential Manager, so there is no g_csrf_token cookie to
+        //           pair it with and the session's own token stands in.
         //
         // The last one guards the entire authed switch. A FOURTH would mean some route inside
         // that switch is checking for itself, which is how per-route audits start and how one
         // of them eventually gets forgotten.
         $csrfAt = [];
         for ($o = 0; ($p = strpos($src, 'csrfCheck();', $o)) !== false; $o = $p + 1) $csrfAt[] = $p;
-        $csrf = count($csrfAt) === 3 ? $csrfAt[2] : false;
+        $csrf = count($csrfAt) === 4 ? $csrfAt[3] : false;
         $gate !== false && $authPost !== false && $sw !== false && $csrf !== false
-            && $csrfAt[0] < $gate && $csrfAt[1] < $gate && $gate < $authPost && $authPost < $csrf && $csrf < $sw
-            ? $line('OK',   'every POST route sits behind the auth gate and one csrfCheck(); only first-run setup and device pairing sit ahead of it, each with its own')
+            && $csrfAt[0] < $gate && $csrfAt[1] < $gate && $csrfAt[2] < $gate
+            && $gate < $authPost && $authPost < $csrf && $csrf < $sw
+            ? $line('OK',   'every POST route sits behind the auth gate and one csrfCheck(); only first-run setup, device pairing and native sign-in sit ahead of it, each with its own')
             : $line('FAIL', 'the POST switch is no longer uniformly auth/CSRF gated — check the order in index.php');
         // `back` is attacker-controlled and only redirect() runs it through safeRedirectTarget().
         $loc = 0;
@@ -1729,6 +1753,39 @@ if (!$user) {
         }
         renderPair($err);
         exit;
+    }
+
+    // Signing in from inside the Android app.
+    //
+    // Google Identity Services will not render inside a WebView, so the app asks Google
+    // natively through Credential Manager and posts the resulting ID token here. From
+    // verifyGoogleIdToken() down this is identical to /signin — same signature check, same
+    // audience check, same session. Only the component that asked Google differs.
+    //
+    // Its own csrfCheck(), for the same reason /pair has one: this is a login form, and
+    // without it a forged POST carrying an attacker's ID token signs a victim's browser into
+    // the attacker's ledger. /signin does not need one because Google's g_csrf_token cookie is
+    // that guarantee, and a natively-obtained token has no such cookie to pair with.
+    if ($method === 'POST' && $path === '/signin/app') {
+        rateLimit($db, $config, 'signin', $config['limits']['rate_signin_per_15min'], 900);
+        csrfCheck();
+        $payload = verifyGoogleIdToken((string)($_POST['credential'] ?? ''), GOOGLE_CLIENT_ID);
+        if (!$payload) { http_response_code(401); exit('Google sign-in failed.'); }
+
+        $stmt = $db->prepare("SELECT id FROM users WHERE google_sub = ?");
+        $stmt->execute([$payload['sub']]);
+        $uid = $stmt->fetchColumn();
+        if (!$uid) {
+            $uid = bootstrapHousehold(
+                $db,
+                (string)($payload['name']  ?? 'User'),
+                (string)($payload['email'] ?? ''),
+                (string)$payload['sub']
+            );
+        }
+        session_regenerate_id(true);
+        $_SESSION['user_id'] = (int)$uid;
+        redirect(afterSignIn($db, (int)$uid));
     }
 
     if ($method === 'POST' && $path === '/signin') {

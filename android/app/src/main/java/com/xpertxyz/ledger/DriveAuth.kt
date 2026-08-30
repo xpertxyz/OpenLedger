@@ -106,6 +106,41 @@ object DriveAuth {
         authorize(activity, email)
     }
 
+    /**
+     * The Google ID token itself, for signing into the website.
+     *
+     * Distinct from [signIn], which returns the email because that is all the Drive flow needs.
+     * A server cannot verify an email — it verifies the signed token, whose audience must be
+     * this app's client id. Same sheet, same Credential Manager, different field.
+     */
+    suspend fun idToken(activity: Activity): String? {
+        if (!isConfigured) return null
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(
+                GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(WEB_CLIENT_ID)
+                    .build()
+            )
+            .build()
+        return try {
+            val credential = CredentialManager.create(activity)
+                .getCredential(activity, request).credential
+            if (credential is CustomCredential &&
+                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                GoogleIdTokenCredential.createFrom(credential.data).idToken
+            } else {
+                logErr("idToken: unexpected credential type " + credential.type)
+                null
+            }
+        } catch (e: GetCredentialCancellationException) {
+            null
+        } catch (e: GetCredentialException) {
+            logErr("idToken failed", e)
+            null
+        }
+    }
+
     private suspend fun signIn(activity: Activity): String? {
         val request = GetCredentialRequest.Builder()
             .addCredentialOption(
