@@ -4,16 +4,24 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
@@ -47,12 +55,22 @@ class MainActivity : FragmentActivity() {
         const val RC_APP_UPDATE    = 4002
         private const val PREFS = "ui"
         private const val BAR_COLOR = "bar_color"
+        private const val ACCENT_COLOR = "accent_color"
     }
 
     private lateinit var server: PhpServer
     private lateinit var updates: UpdateBridge
     private lateinit var web: WebView
     private lateinit var shell: FrameLayout
+    private lateinit var pull: SwipeRefreshLayout
+    // The two things drawn over the page rather than by it: the page-load bar, and the in-app
+    // update strip. Native so they exist on every screen the WebView can show.
+    private lateinit var progress: ProgressBar
+    private lateinit var upd: LinearLayout
+    private lateinit var updText: TextView
+    private lateinit var updBar: ProgressBar
+    private lateinit var updLater: Button
+    private lateinit var updGo: Button
     private lateinit var authorizeLauncher: ActivityResultLauncher<IntentSenderRequest>
 
     private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -69,10 +87,51 @@ class MainActivity : FragmentActivity() {
             prefs().edit().putInt(BAR_COLOR, color).apply()
             runOnUiThread { applyBarColor(color) }
         }
+
+        /** The palette's accent, for the native strips that have no CSS to read it from. */
+        @JavascriptInterface
+        fun accent(hex: String) {
+            val color = try { Color.parseColor(hex) } catch (e: IllegalArgumentException) { return }
+            prefs().edit().putInt(ACCENT_COLOR, color).apply()
+            runOnUiThread { applyAccent(color) }
+        }
+    }
+
+    /**
+     * The page telling the app when a pull-down must not mean "refresh".
+     *
+     * The drawer is a fixed overlay with its own scroll, so the document underneath stays at
+     * scrollY 0 while it is open — and the native gesture, which has no idea the overlay
+     * exists, would fire a refresh in the middle of scrolling it. The page knows; this is how
+     * it says so.
+     */
+    inner class UiBridge {
+        @JavascriptInterface
+        fun pull(enabled: Boolean) = runOnUiThread {
+            // Qualified: this method's own name shadows the property inside the inner class.
+            if (this@MainActivity::pull.isInitialized) this@MainActivity.pull.isEnabled = enabled
+        }
     }
 
     /** The strips behind the system bars, and whether their icons are drawn dark or light. */
     private fun applyBarColor(color: Int) {
+        // The refresh spinner is native, so it does not inherit the page's palette. paintStatusBar()
+        // in views.php already hands over the one colour that tracks the theme; the arrow is
+        // then whichever of dark/light actually reads on it.
+        val fg = if (ColorUtils.calculateLuminance(color) > 0.5) 0xFF201E1D.toInt() else 0xFFF3E9D8.toInt()
+        if (::pull.isInitialized) {
+            pull.setProgressBackgroundColorSchemeColor(color)
+            pull.setColorSchemeColors(fg)
+        }
+        if (::upd.isInitialized) {
+            updText.setTextColor(fg)
+            // Near enough the page's surface tone; the strip has no stylesheet to take it from.
+            upd.background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(ColorUtils.blendARGB(color, fg, 0.07f))
+            }
+            updBar.background = ColorDrawable(ColorUtils.blendARGB(color, fg, 0.18f))
+        }
         shell.setBackgroundColor(color)
         web.setBackgroundColor(color)
         window.setBackgroundDrawable(ColorDrawable(color))
@@ -85,12 +144,23 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** The accent goes on the two bars and the strip's buttons — everything that must read as "ours". */
+    private fun applyAccent(accent: Int) {
+        if (!::upd.isInitialized) return
+        progress.progressDrawable = ClipDrawable(ColorDrawable(accent), Gravity.START, ClipDrawable.HORIZONTAL)
+        updBar.progressDrawable = ClipDrawable(ColorDrawable(accent), Gravity.START, ClipDrawable.HORIZONTAL)
+        updLater.setTextColor(accent)
+        updGo.setTextColor(accent)
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         server = PhpServer(this)
-        updates = UpdateBridge(this).also { it.start() }
+        updates = UpdateBridge(this, ::renderUpdate).also { it.start() }
 
         // Google's Drive consent coming back. Every branch has to write something down and
         // repaint: a sheet that was dismissed used to leave the panel exactly as it was, which
@@ -120,6 +190,32 @@ class MainActivity : FragmentActivity() {
             // Everything is served from 127.0.0.1; anything else is a link the user tapped and
             // belongs in a browser, not inside a window that holds their ledger.
             webViewClient = object : WebViewClient() {
+                // Not on onPageStarted's timer or a delay: the spinner belongs on screen for
+                // exactly as long as the load takes, which only the WebView knows.
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    pull.isRefreshing = false
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    error: android.webkit.WebResourceError?,
+                ) {
+                    if (request?.isForMainFrame != true) return
+                    // A failed refresh must still end. Otherwise the one time the network is
+                    // down is the one time the spinner never stops.
+                    pull.isRefreshing = false
+                    // Chrome's grey "Webpage not available" is the one screen in the app that
+                    // wears no theme. Once the service worker is installed the site answers
+                    // this itself (sw.js serves /offline); this is for the launches before
+                    // that — the first, and any before the site has ever been reached. Local
+                    // mode is left to its own errors: nothing there is "offline".
+                    val url = request.url.toString()
+                    if (AppMode.isOnline(this@MainActivity) && url.startsWith(AppMode.SITE)) {
+                        view?.loadDataWithBaseURL(url, offlineHtml(url), "text/html", "utf-8", url)
+                    }
+                }
+
                 override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
                     if (url == null) return true
                     // Online mode shows the website, so the website's own pages — and Google's
@@ -147,6 +243,15 @@ class MainActivity : FragmentActivity() {
             // a restore stopped — died as an unseen ReferenceError and the buttons looked dead.
             // One line here turns that into `adb logcat -s HLWeb`.
             webChromeClient = object : android.webkit.WebChromeClient() {
+                // The thin bar under the status bar a browser draws for a page on its way. A
+                // WebView has no chrome and drew nothing, so the seconds a slow page takes read
+                // as a tap that did nothing.
+                override fun onProgressChanged(view: WebView, p: Int) {
+                    // Qualified: inside apply{} on the WebView, `progress` is its own getProgress().
+                    this@MainActivity.progress.progress = p
+                    this@MainActivity.progress.visibility = if (p < 100) View.VISIBLE else View.GONE
+                }
+
                 override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
                     val where = "${m.sourceId()}:${m.lineNumber()}"
                     if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
@@ -172,16 +277,59 @@ class MainActivity : FragmentActivity() {
             addJavascriptInterface(AuthBridge(this@MainActivity), "HLAuth")
             addJavascriptInterface(WearBridge(applicationContext), "HLWear")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
-            // Same arrangement for the update bar: Play does the downloading, views.php draws
-            // every part of it the user actually sees.
-            addJavascriptInterface(updates, "HLUpdate")
+            addJavascriptInterface(UiBridge(), "HLUi")
         }
 
         // The insets go on a container, not on the WebView. A WebView accepts setPadding and
         // then lays the page out as if it were not there — the bars still sat on top of the
         // header. A plain FrameLayout honours it, and its background is what paints the strips
         // the padding leaves behind, so they carry whatever palette is on.
-        shell = FrameLayout(this).apply { addView(web) }
+        // Pull-to-refresh, which the page cannot provide for itself: a browser's pull gesture
+        // is chrome, and a WebView has none.
+        pull = SwipeRefreshLayout(this).apply {
+            addView(web)
+            // The document scrolls, not an inner container, so scrollY answers "is there
+            // anything above this" — which is the only condition under which a downward drag
+            // should mean refresh rather than scroll.
+            setOnChildScrollUpCallback { _, _ -> web.scrollY > 0 }
+            setOnRefreshListener { web.reload() }
+        }
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            minimumHeight = 0
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(3), Gravity.TOP)
+        }
+        // The in-app update strip. Over the page rather than in it, so it is there on the
+        // sign-in page, the terms, the offline page, and in online mode before the website has
+        // been deployed with the same views.php as the app. See UpdateBridge.
+        updText = TextView(this).apply { textSize = 13f }
+        updBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            minimumHeight = 0
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(4))
+                .apply { topMargin = dp(8) }
+        }
+        updLater = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setOnClickListener { updates.dismiss() }
+        }
+        updGo = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setOnClickListener { if (updates.state == "downloaded") updates.install() else updates.begin() }
+        }
+        upd = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            elevation = dp(6).toFloat()
+            setPadding(dp(16), dp(12), dp(8), dp(2))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP
+            ).apply { setMargins(dp(12), dp(12), dp(12), 0) }
+            addView(updText)
+            addView(updBar)
+            addView(LinearLayout(context).apply { gravity = Gravity.END; addView(updLater); addView(updGo) })
+        }
+        shell = FrameLayout(this).apply { addView(pull); addView(progress); addView(upd) }
         setContentView(shell)
 
         // Edge to edge, then inset the page back out from under the bars. ime() is in the list
@@ -197,6 +345,7 @@ class MainActivity : FragmentActivity() {
         // Last launch's colour, so the bars are already right for the palette the user chose
         // before the page has loaded enough to say so. Organic light is the app's default.
         applyBarColor(prefs().getInt(BAR_COLOR, Color.parseColor("#f5ead8")))
+        applyAccent(prefs().getInt(ACCENT_COLOR, Color.parseColor("#c67139")))
 
         serve()
 
@@ -253,6 +402,51 @@ class MainActivity : FragmentActivity() {
             }
             web.evaluateJavascript(js, null)
         }
+    }
+
+    /** Draw whatever Play is holding, or nothing. UpdateBridge calls this on every change. */
+    private fun renderUpdate() {
+        if (!::upd.isInitialized) return
+        val s = updates.shown
+        upd.visibility = if (s.isEmpty()) View.GONE else View.VISIBLE
+        if (s.isEmpty()) return
+        val pct  = if (updates.total > 0) (updates.bytes * 100 / updates.total).toInt().coerceIn(0, 100) else 0
+        val size = if (updates.total > 0) " · %.1f MB".format(updates.total / 1048576.0) else ""
+        updBar.visibility = if (s == "downloading") View.VISIBLE else View.GONE
+        updBar.progress = pct
+        val (text, later, go) = when (s) {
+            "available"   -> Triple("Update available$size", "Later", "Update")
+            "downloading" -> Triple("Downloading update · $pct% — carry on, this runs in the background", null, null)
+            "downloaded"  -> Triple("Update ready · restart to finish installing it", "Later", "Restart")
+            else          -> Triple(updates.error.ifEmpty { "Update failed" }, "Dismiss", "Try again")
+        }
+        updText.text = text
+        updLater.text = later
+        updLater.visibility = if (later == null) View.GONE else View.VISIBLE
+        updGo.text = go
+        updGo.visibility = if (go == null) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The offline page for before a service worker exists, in the last colours the page handed
+     * over. Loaded with the failed URL as both base and history entry, so "Try again" and the
+     * online listener are plain navigations back to it, and onResume sees a site URL and leaves
+     * the WebView alone.
+     */
+    private fun offlineHtml(url: String): String {
+        val bg     = prefs().getInt(BAR_COLOR, Color.parseColor("#f5ead8"))
+        val accent = prefs().getInt(ACCENT_COLOR, Color.parseColor("#c67139"))
+        val fg     = if (ColorUtils.calculateLuminance(bg) > 0.5) "#201e1d" else "#f3e9d8"
+        val hex    = { c: Int -> String.format("#%06x", c and 0xFFFFFF) }
+        val href   = org.json.JSONObject.quote(url)
+        return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;font-family:system-ui,sans-serif;background:${hex(bg)};color:$fg}
+.c{max-width:320px;padding:24px}.c svg{width:56px;height:56px;margin-bottom:16px;color:${hex(accent)}}
+h1{font-size:22px;margin:0 0 8px}p{opacity:.72;font-size:14px;line-height:1.5;margin:0 0 20px}
+a{display:inline-block;background:${hex(accent)};color:${hex(bg)};padding:10px 22px;border-radius:999px;text-decoration:none;font-weight:600}</style></head>
+<body><div class="c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+<h1>You're offline</h1><p>Open Ledger can't be reached right now. It will come back on its own when the connection does.</p><a href=$href>Try again</a></div>
+<script>addEventListener('online',function(){location.href=$href})</script></body></html>"""
     }
 
     fun restartForModeChange() {

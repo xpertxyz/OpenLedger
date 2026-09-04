@@ -770,7 +770,8 @@ if (PHP_SAPI === 'cli') {
                 : $line('OK',   count($linked) . ' linked paths all resolve to a route');
         // Reached by the crawler or by an old bookmark, never by a link in the app.
         // /join is reached from outside entirely — a link pasted into a chat, not rendered here.
-        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage', '/join']);
+        // /offline is sw.js's, not a view's.
+        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage', '/join', '/offline']);
         $dead ? $line('WARN', 'route nothing links to: ' . implode(', ', $dead))
               : $line('OK',   'no unreachable routes');
 
@@ -863,6 +864,16 @@ if (PHP_SAPI === 'cli') {
         (str_contains($api, 'createExpense(') && !str_contains($api, 'INSERT INTO expenses'))
             ? $line('OK',   'the watch writes expenses through createExpense(), same as the web form')
             : $line('FAIL', 'api.php inserts into expenses directly instead of calling createExpense()');
+
+        // Pull-to-refresh is a native gesture over a page that scrolls itself, so the two have
+        // to agree on when it applies. The drawer is a fixed overlay with its own scroll: while
+        // it is open the document stays at the top, and a pull fires a refresh in the middle of
+        // scrolling it. openProfile/closeProfile are the only places that know.
+        (substr_count($vsrc, 'HLUi.pull(') === 2
+            && preg_match('~function openProfile\(\)(?:(?!function ).)*HLUi\.pull\(false\)~s', $vsrc)
+            && preg_match('~function closeProfile\(\)(?:(?!function ).)*HLUi\.pull\(true\)~s', $vsrc))
+            ? $line('OK',   'pull-to-refresh stands down while the drawer is open, and comes back when it closes')
+            : $line('FAIL', 'the drawer no longer suspends pull-to-refresh — a pull mid-scroll would reload the page');
 
         // The sign-in page must offer a way in that does not depend on Google Identity
         // Services rendering, because inside a WebView it does not render at all. If the
@@ -1126,6 +1137,7 @@ if (PHP_SAPI === 'cli') {
                 'orginvest' => ['renderOrganiseInvest', [$db, $stub]],
                 'ledgers'   => ['renderLedgers',   [$db, $stub]],
                 'terms'     => ['renderTerms',     [$db, $stub]],
+                'delacct'   => ['renderDeleteAccount', [$db, $stub]],
             ] as $name => [$fn, $args]) {
                 ob_start(); $fn(...$args); $pages[$name] = (string)ob_get_clean();
             }
@@ -1333,13 +1345,56 @@ if (PHP_SAPI === 'cli') {
             ? $line('FAIL', 'form.submit() bypasses the fetch handler on: ' . implode(', ', $rawSubmit)
                           . ' — call requestSubmit() instead')
             : $line('OK',   'no page submits a form behind the fetch handler\'s back');
-        // The Android update bar. It draws itself only where the bridge exists, so on the web
-        // this is the only thing that can prove it is still shipped at all.
-        $noUpd = array_keys(array_filter($pages, fn($h) =>
-            !str_contains($h, 'if (!window.HLUpdate) return;') || !str_contains($h, '.upd {')));
-        $pages && $noUpd
-            ? $line('FAIL', 'the in-app update bar lost its script or its CSS on: ' . implode(', ', $noUpd))
-            : $line('OK',   'every tab ships the in-app update bar (Android draws it, the web ignores it)');
+        // Offline. The queue and the pill live in layout(), so every tab has to carry them — and
+        // the queue must never take a sign-in, an invite or a ledger switch, each of which needs
+        // the server's answer now and is dangerous replayed later.
+        $noQ = array_keys(array_filter($pages, fn($h) =>
+            !str_contains($h, "var QK = 'ol-queue'") || !str_contains($h, '.net-pill {')));
+        $pages && $noQ
+            ? $line('FAIL', 'the offline queue or its pill is missing on: ' . implode(', ', $noQ))
+            : $line('OK',   'every tab ships the offline queue and the connectivity pill');
+        preg_match('~function queueable\(action\).*?/\^\\\\/\(([^)]*)\)~s', $vsrc, $qm);
+        $qList = array_filter(explode('|', $qm[1] ?? ''));
+        ($qList && !array_intersect($qList, ['signin', 'signout', 'invite', 'pair', 'ledgers', 'watch', 'household-users', 'theme']))
+            ? $line('OK',   'the offline queue takes only ledger entries (' . implode(', ', $qList) . ')')
+            : $line('FAIL', 'the offline queue whitelist is missing or admits a session-level route');
+
+        // Account deletion has to reach every table a ledger owns. A table added later with a
+        // household_id column and no line in deleteAccount() would keep a deleted household's
+        // rows forever — and nothing else would ever notice.
+        preg_match_all('~CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\) ENGINE~s', $lsrc, $ct, PREG_SET_ORDER);
+        $scoped = [];
+        foreach ($ct as $c) if (str_contains($c[2], 'household_id')) $scoped[] = $c[1];
+        $scoped = array_diff($scoped, ['users']);   // users.household_id is "which ledger am I on", not ownership
+        preg_match('~function deleteAccount\(.*?\n\}~s', $lsrc, $da);
+        $unswept = array_filter($scoped, fn($t) => !str_contains($da[0] ?? '', "'$t'"));
+        $unswept ? $line('FAIL', 'deleteAccount() does not clear: ' . implode(', ', $unswept))
+                 : $line('OK',   'deleteAccount() clears every table that carries a household_id (' . count($scoped) . ')');
+        (str_contains($da[0] ?? '', 'beginTransaction') && str_contains($da[0] ?? '', 'rollBack'))
+            ? $line('OK',   'deleteAccount() is one transaction')
+            : $line('FAIL', 'deleteAccount() is not transactional — a failure half-way leaves a half-deleted account');
+        // The route itself: refused without the typed word, and the session ended after.
+        preg_match("~case '/account/delete':(.*?)redirect\(~s", $src, $dr);
+        (str_contains($dr[1] ?? '', "!== 'DELETE'") && str_contains($dr[1] ?? '', 'deleteAccount(') && str_contains($dr[1] ?? '', 'endDeviceSession()'))
+            ? $line('OK',   '/account/delete demands the typed word, deletes through deleteAccount(), then ends the session')
+            : $line('FAIL', '/account/delete lost its confirmation, its helper, or its session teardown');
+
+        echo "\nOffline:\n";
+        $sw = (string)@file_get_contents(__DIR__ . '/sw.js');
+        ($sw !== '' && str_contains($sw, "req.method !== 'GET'") && str_contains($sw, "'/offline'") && str_contains($sw, "'/login'"))
+            ? $line('OK',   'sw.js exists, leaves every non-GET alone, keeps /offline, and wipes its copies at /login')
+            : $line('FAIL', 'sw.js is missing, or no longer leaves POSTs alone / wipes on sign-out');
+        (preg_match('~location\.protocol === \'https:\'[^\n]*serviceWorker~', $vsrc) && str_contains($vsrc, "register('/sw.js')"))
+            ? $line('OK',   'themeBootScript() registers sw.js over https only')
+            : $line('FAIL', 'sw.js is not registered, or is registered on http — the app\'s loopback server would get one');
+        $offAt = strpos($src, "\$path === '/offline'");
+        ($offAt !== false && $offAt < strpos($src, "if (!\$user) {"))
+            ? $line('OK',   '/offline is answered ahead of the sign-in gate, so the worker can fetch it at install')
+            : $line('FAIL', '/offline is missing or sits behind the sign-in gate — sw.js would never install');
+        ob_start(); renderOffline(); $op = (string)ob_get_clean();
+        (str_contains($op, "addEventListener('online'") && str_contains($op, '#icon-wifi-off'))
+            ? $line('OK',   '/offline reloads itself when the connection returns')
+            : $line('FAIL', '/offline lost its online listener or its icon');
 
         echo "\nIcons:\n";
         // A name with no matching <symbol> renders a blank box — no error, nothing in the log.
@@ -1622,6 +1677,13 @@ try {
 
 require __DIR__ . '/views.php';
 
+// The page the service worker falls back to. It fetches this at install — whoever is signed
+// in, or nobody — so it is answered ahead of the gate below. Nothing on it to gate.
+if ($method === 'GET' && $path === '/offline') {
+    renderOffline();
+    exit;
+}
+
 $user = currentUser($db);
 
 // A session that came from a pairing code lives exactly as long as its row does. Checked here,
@@ -1701,6 +1763,13 @@ if ($method === 'POST') {
 if (!$user) {
     if ($method === 'GET' && $path === '/terms') {
         renderTermsPublic();
+        exit;
+    }
+    // The account-deletion URL Play's Data safety form asks for. Signed out it explains and
+    // offers the way in; afterSignIn() brings them straight back here.
+    if ($method === 'GET' && $path === '/account/delete') {
+        $_SESSION['after_signin'] = '/account/delete';
+        renderDeleteAccountPublic();
         exit;
     }
     if ($method === 'GET' && $path === '/') {
@@ -1910,6 +1979,23 @@ if ($method === 'POST') {
         switch ($path) {
             case '/signout':
                 $_SESSION = []; session_destroy();
+                redirect('/login');
+
+            case '/account/delete':
+                // The local build has one user and no account; this would wipe the phone's
+                // ledger. The drawer never offers it there, and the route refuses regardless.
+                if (!FEATURE_SIGNIN) throw new UserErr('There is no account to delete on this phone.');
+                // The typed word is the last of three confirmations. Checked here as well as
+                // on the page, because the page's script is a courtesy, not a guard.
+                if (trim((string)($_POST['confirm'] ?? '')) !== 'DELETE') {
+                    throw new UserErr('Type DELETE to confirm.');
+                }
+                $n = deleteAccount($db, $uid);
+                // The session goes with the account, but the sign-in page still has to say what
+                // happened — endDeviceSession() keeps one alive for exactly that.
+                endDeviceSession();
+                flash('success', 'Your account' . ($n ? ", $n ledger" . ($n === 1 ? '' : 's') : '')
+                    . ' and everything in ' . ($n ? 'them' : 'it') . ' have been deleted.');
                 redirect('/login');
 
             case '/theme':
@@ -2687,6 +2773,7 @@ switch ($path) {
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
     case '/ledgers':   renderLedgers($db, $user); break;
+    case '/account/delete': renderDeleteAccount($db, $user); break;
     // A join link opened while already signed in — redeem straight away, no detour. The token
     // goes through the session either way so there is one redemption path, not two.
     case '/join':

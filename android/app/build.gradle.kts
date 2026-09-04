@@ -10,8 +10,8 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 12
-        versionName = "1.0.12"
+        versionCode = 15
+        versionName = "1.0.15"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.
@@ -157,6 +157,9 @@ dependencies {
     implementation(libs.androidx.biometric)
     // No appcompat: the activity is a ComponentActivity and the theme extends the platform's
     // Material, so it only ever contributed dex and ~80 translated app-name strings.
+    // Pull-to-refresh over the WebView. The page cannot do this itself: a browser's own
+    // pull gesture is chrome, and a WebView has no chrome.
+    implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.work.runtime.ktx)
     // Play's flexible in-app update. The download and the install are Play's; every piece of
     // UI around them is views.php, so an update offer looks like the rest of the app.

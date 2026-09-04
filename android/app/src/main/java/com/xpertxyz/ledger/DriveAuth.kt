@@ -64,6 +64,24 @@ object DriveAuth {
     /** Replace with the **Web application** OAuth client id. See the notes above. */
     const val WEB_CLIENT_ID = "476911098690-vpmm92mij1k48f50pmc6u2utjdms5lnu.apps.googleusercontent.com"
 
+    /**
+     * The audience the WEBSITE will accept, which is a different client id in the same project.
+     *
+     * An ID token names the client it was minted for, and index.php rejects any whose `aud` is
+     * not its own GOOGLE_CLIENT_ID — so signing into the website with a token minted for
+     * [WEB_CLIENT_ID] fails verification and reports "Google sign-in failed", with the sheet
+     * having worked perfectly.
+     *
+     * Deliberately not merged with the constant above. That one is the audience Drive's
+     * authorization flow is built around; changing it to match the site would move the Drive
+     * grant to a different client and re-prompt every existing backup. Two audiences for two
+     * purposes, each named where it is used.
+     *
+     * This must equal the website's GOOGLE_CLIENT_ID. Check with:
+     *   curl -s https://ledger.xpertxyz.com/login | grep -o 'data-client_id="[^"]*"'
+     */
+    const val SITE_CLIENT_ID = "476911098690-jo43s8qg70b1eivoa7k8o6dghhrob5df.apps.googleusercontent.com"
+
     val isConfigured: Boolean get() = !WEB_CLIENT_ID.startsWith("REPLACE_ME")
 
     private val driveScope = Scope(DriveScopes.DRIVE_APPDATA)
@@ -119,7 +137,8 @@ object DriveAuth {
             .addCredentialOption(
                 GetGoogleIdOption.Builder()
                     .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId(WEB_CLIENT_ID)
+                    // The site's audience, not Drive's — see SITE_CLIENT_ID.
+                    .setServerClientId(SITE_CLIENT_ID)
                     .build()
             )
             .build()

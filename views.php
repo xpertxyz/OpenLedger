@@ -76,6 +76,7 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
   <symbol id="icon-log-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
   <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
+  <symbol id="icon-wifi-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
 </svg>
 SVG;
 
@@ -224,9 +225,22 @@ function themeBootScript(): string {
     if (m) m.setAttribute('content', c);
     // A WebView ignores that meta, so the Android shell is told the same colour and paints
     // the bars itself. Absent everywhere else, which is why this is the last thing here.
-    if (window.HLTheme) { try { HLTheme.paint(c); } catch (e) {} }
+    if (window.HLTheme) {
+      try {
+        HLTheme.paint(c);
+        // The accent too, for the strips the app draws natively — the page-load bar, the update
+        // offer. A separate call, so a website deployed ahead of the app still paints the bars.
+        var a = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
+        if (a && HLTheme.accent) HLTheme.accent(a);
+      } catch (e) {}
+    }
   }
   paintStatusBar();
+  // Offline copies of the site, and the page shown when there is none — see sw.js. https only:
+  // the Android app's local ledger is served from loopback, and needs and must not get one.
+  if (location.protocol === 'https:' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  }
   // While no explicit choice is stored the page tracks the OS, so the status
   // bar has to follow it live too.
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paintStatusBar);
@@ -601,20 +615,10 @@ $boot
   .toast.success { background:var(--color-accent-2-700); color:var(--color-bg); }
   .toast.error   { background:var(--color-accent-700); color:var(--color-bg); animation: toast-life-long 3.6s forwards; }
 
-  /* In-app update, Android only — drawn here rather than by Play so an update offer looks
-     like the rest of the app instead of a blue system sheet. Sits above the tab bar, below
-     the drawer (200) and the toasts (250), because neither should ever end up behind it. */
-  .upd { position:fixed; left:50%; transform:translateX(-50%); width:calc(100% - 32px); max-width:448px;
-         z-index:150; background:var(--color-surface); border-radius:var(--radius-md);
-         box-shadow:var(--shadow-lg); padding:12px 14px; display:flex; flex-direction:column; gap:10px;
-         animation: upd-in .22s ease both; }
-  @keyframes upd-in { from { opacity:0; transform:translate(-50%, 12px); } to { opacity:1; transform:translate(-50%, 0); } }
-  .upd-acts { display:flex; justify-content:flex-end; gap:8px; }
-  .upd-ttl { font-family:var(--font-heading); font-size:14px; }
-  .upd-sub { color:var(--color-neutral-800); font-size:12px; margin-top:1px; }
-  .upd .btn { padding-block:6px; font-size:13px; white-space:nowrap; }
-  .upd-track { height:5px; border-radius:999px; background:var(--color-neutral-300); overflow:hidden; }
-  .upd-fill { height:100%; width:0; border-radius:999px; background:var(--color-accent); transition:width .3s ease; }
+  /* Connectivity, only when it matters: while offline, and again while the entries saved
+     offline drain. Same spot as a toast but it stays until the state changes; under the toasts
+     (250) so a save's own message still reads over it, over the drawer (201). */
+  .net-pill { position:fixed; left:50%; top: calc(env(safe-area-inset-top, 0px) + 12px); transform:translateX(-50%); padding:8px 16px; border-radius:999px; font-size:12px; z-index:240; max-width: calc(100% - 32px); text-align:center; background:var(--color-neutral-900); color:var(--color-bg); box-shadow: var(--shadow-md); }
   @keyframes toast-life {
     0%{opacity:0;transform:translate(-50%,-10px);} 10%{opacity:1;transform:translate(-50%,0);}
     80%{opacity:1;transform:translate(-50%,0);} 100%{opacity:0;transform:translate(-50%,-10px);}
@@ -765,6 +769,7 @@ HTML;
 
     // Shared confirmation dialog + trigger helper. Every destructive form / signout uses this.
     echo <<<DLG
+<div id="net-pill" class="net-pill" role="status" hidden></div>
 <dialog id="confirm-dlg" class="confirm" aria-labelledby="dlg-title">
   <form method="post" id="confirm-form">
     <input type="hidden" name="_csrf" id="confirm-csrf" value="$csrfTok">
@@ -792,6 +797,14 @@ function askConfirm(opts) {
   // Pre-filled from the page, so a caller only overrides it deliberately. Dropping it from
   // the per-row payloads takes a 32-char token off every one of a 200-row History page.
   if (opts.csrf) document.getElementById('confirm-csrf').value = opts.csrf;
+  // Extra hidden fields, for the one caller that has to post more than an id — account deletion
+  // carries its typed confirmation. Cleared every time, so nothing leaks into the next dialog.
+  f.querySelectorAll('[data-extra]').forEach(function (i) { i.remove(); });
+  Object.keys(opts.fields || {}).forEach(function (k) {
+    var i = document.createElement('input');
+    i.type = 'hidden'; i.name = k; i.value = opts.fields[k]; i.dataset.extra = '1';
+    f.appendChild(i);
+  });
   document.getElementById('dlg-title').textContent = opts.title || 'Are you sure?';
   document.getElementById('dlg-body').textContent  = opts.body  || '';
   document.getElementById('confirm-ok').textContent = opts.ok || 'Delete';
@@ -858,6 +871,19 @@ document.addEventListener('submit', function (e) {
       });
     })
     .catch(function () {
+      // No answer at all — the network, not the server. An entry is kept on this phone and
+      // posted again when the connection returns (syncQueue, below); anything else is told.
+      // ponytail: a POST the server did apply before the connection dropped is queued again and
+      // saved twice. Rare enough to leave; an idempotency key per submit is the fix.
+      if (queueable(f.action)) {
+        enqueue(f.action, body);
+        toast('Saved on this device — it will sync when you\'re back online');
+        // The screen the save would have landed on. Same path means a reload, which sw.js
+        // answers from its copy, and the pill on it says what is waiting. Delayed so the toast
+        // is read, and without free(): a second tap in the gap would queue the entry twice.
+        setTimeout(function () { goReplace(body.get('back') || location.href); }, 1200);
+        return;
+      }
       toast('Could not save. Check your connection.', 'error');
       free();
     });
@@ -913,6 +939,9 @@ function openProfile() {
   document.getElementById('drawer-backdrop').classList.add('open');
   document.getElementById('drawer-panel').classList.add('open');
   document.body.style.overflow = 'hidden';
+  // The drawer scrolls itself while the document behind it stays at the top, so the Android
+  // app's pull-to-refresh has to stand down or it fires mid-scroll. Inert in a browser.
+  if (window.HLUi) HLUi.pull(false);
   // The backup panel paints itself once, when the page loads. The drawer is only shown and
   // hidden with CSS after that, so a backup finishing later — including every scheduled one,
   // which by definition runs with nobody watching — left a stale "last backed up" time
@@ -923,6 +952,7 @@ function closeProfile() {
   document.getElementById('drawer-backdrop').classList.remove('open');
   document.getElementById('drawer-panel').classList.remove('open');
   document.body.style.overflow = '';
+  if (window.HLUi) HLUi.pull(true);
   if (location.hash === '#profile') history.replaceState(null, '', location.pathname + location.search);
 }
 // Auto-open when redirected back from a POST inside the drawer.
@@ -1006,86 +1036,73 @@ addEventListener('scroll', function (e) { if (selPop && !selPop.contains(e.targe
 addEventListener('resize', closeSelect);
 
 /*
- * The in-app update bar. Defined only where the bridge is — the web build has no HLUpdate and
- * this whole block returns on its first line.
+ * Offline. Two pieces, both inert while the network is up.
  *
- * Play's flexible flow hands us the download and asks us to draw everything around it, which is
- * the point: the alternative is its own full-screen sheet, in Google's colours, over a ledger
- * the user was reading. State comes from one poll rather than a callback, because the bridge
- * cannot call into JavaScript and the numbers only move while someone is looking anyway.
+ * The pill says so when the connection is gone, because the page still opens — sw.js answers
+ * with the last copy it kept — and a stale screen with no explanation reads as the app lying.
+ * The queue is where the submit handler above puts a save the POST could not deliver: entries,
+ * edits and deletes on the ledger's own tables, replayed in order the moment the connection
+ * returns and on every page load until they are. Sign-in, invites, pairing and ledger switching
+ * are never queued — each needs the server's answer now, and a stale replay of any of them is
+ * worse than a failure the user saw. Inert on the web when nothing is queued, and in the app's
+ * local mode always: a ledger served from loopback is never offline.
  */
-(function () {
-  if (!window.HLUpdate) return;
-  var el = null, painted = null;
-
-  // Play's failure text is the only string here that did not come from this file.
-  function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-  function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
-  function pct(s) { return s.total > 0 ? Math.min(100, Math.round(s.bytes * 100 / s.total)) : 0; }
-
-  function bar() {
-    if (el) return el;
-    el = document.createElement('div');
-    el.className = 'upd';
-    el.addEventListener('click', function (e) {
-      var b = e.target.closest('[data-act]');
-      if (!b) return;
-      if (b.dataset.act === 'later')   { HLUpdate.dismiss(); }
-      if (b.dataset.act === 'begin')   { HLUpdate.begin(); }
-      if (b.dataset.act === 'install') { HLUpdate.install(); }
-      painted = null;
-      render();
-    });
-    document.body.appendChild(el);
-    // Above the tab bar, measured rather than guessed: the pill is a different height on the
-    // screens that have no tab bar at all, where this falls back to sitting on the margin.
-    var nav = document.querySelector('.tabnav');
-    el.style.bottom = (nav ? nav.offsetHeight + 32 : 16) + 'px';
-    return el;
-  }
-
-  function render() {
-    var s;
-    try { s = JSON.parse(HLUpdate.status()); } catch (e) { return; }
-    var key = s.state + ':' + pct(s) + ':' + s.error;
-    if (key === painted) return;
-    painted = key;
-    if (!s.state) { if (el) { el.remove(); el = null; } return; }
-
-    var size = s.total > 0 ? mb(s.total) : '';
-    // One shape for every state: a heading, a line under it, then the two optional pieces.
-    // Buttons get a row of their own — sharing one with the text squeezed both at 320px.
-    var card = function (title, sub, track, acts) {
-      return '<div><div class="upd-ttl">' + title + '</div>'
-           + '<div class="upd-sub">' + sub + '</div></div>'
-           + (track ? '<div class="upd-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"'
-                    + ' aria-valuenow="' + pct(s) + '"><div class="upd-fill" style="width:'
-                    + pct(s) + '%"></div></div>' : '')
-           + (acts ? '<div class="upd-acts">' + acts + '</div>' : '');
-    };
-    var later   = '<button class="btn btn-ghost" data-act="later">Later</button>';
-    var html;
-    if (s.state === 'available') {
-      html = card('Update available', size || 'A newer version is ready to install.', false,
-                  later + '<button class="btn btn-primary" data-act="begin">Update</button>');
-    } else if (s.state === 'downloading') {
-      html = card('Downloading update',
-                  pct(s) + '%' + (size ? ' of ' + size : '') + ' — carry on, this runs in the background.',
-                  true, '');
-    } else if (s.state === 'downloaded') {
-      html = card('Update ready', 'Restart to finish installing it.', false,
-                  later + '<button class="btn btn-primary" data-act="install">Restart</button>');
-    } else {
-      html = card('Update failed', esc(s.error || 'Play could not download it.'), false,
-                  '<button class="btn btn-ghost" data-act="later">Dismiss</button>'
-                  + '<button class="btn btn-primary" data-act="begin">Try again</button>');
+var QK = 'ol-queue';
+function queued() { try { return JSON.parse(localStorage.getItem(QK) || '[]'); } catch (e) { return []; } }
+function queueable(action) {
+  return /^\/(expenses|earnings|investments|recurring|categories|earning-categories|investment-types|members)(\/|$)/
+    .test(new URL(action, location.href).pathname);
+}
+function enqueue(action, body) {
+  var q = queued(), rows = [];
+  body.forEach(function (v, k) { if (typeof v === 'string') rows.push([k, v]); });
+  q.push({ a: action, b: rows });
+  localStorage.setItem(QK, JSON.stringify(q));
+}
+var syncing = false;
+function syncQueue() {
+  if (syncing || !navigator.onLine || !queued().length) return;
+  syncing = true;
+  (function next(done) {
+    var q = queued();
+    if (!q.length) {
+      syncing = false; netPill();
+      if (done) {
+        toast('Synced ' + done + (done === 1 ? ' entry' : ' entries') + ' saved offline');
+        setTimeout(function () { location.reload(); }, 1400);   // the screen still shows the copy from before
+      }
+      return;
     }
-    bar().innerHTML = html;
-  }
-
-  render();
-  setInterval(render, 900);
-})();
+    var it = q[0], fd = new FormData();
+    it.b.forEach(function (p) { fd.append(p[0], p[1]); });
+    // The token the entry was saved with may belong to a session that has since ended; the one
+    // on this page is the one the server will check.
+    fd.set('_csrf', CSRF);
+    fetch(it.a, { method: 'POST', body: fd, headers: { 'X-PRG': '1' } })
+      .then(function (r) {
+        var to = r.headers.get('X-Location') || '';
+        // Signed out meanwhile: keep the queue for after the next sign-in, and go there.
+        if (r.status === 204 && /^\/login(\?|$)/.test(to)) { syncing = false; location.replace('/login'); return; }
+        // Any other answer settles it. A 204 is saved — or refused with a flash the reload will
+        // show; anything else is the server saying no, and asking again cannot change its mind.
+        q.shift(); localStorage.setItem(QK, JSON.stringify(q));
+        if (r.status === 204) return next(done + 1);
+        return r.text().then(function (t) { toast('Not synced: ' + t.slice(0, 120), 'error'); next(done); });
+      })
+      .catch(function () { syncing = false; netPill(); });   // still no network; the next 'online' tries again
+  })(0);
+}
+function netPill() {
+  var n = queued().length, el = document.getElementById('net-pill');
+  el.textContent = !navigator.onLine
+    ? (n ? 'Offline · ' + n + ' waiting to sync' : 'You\'re offline · new entries will sync later')
+    : (syncing ? 'Syncing ' + n + (n === 1 ? ' entry' : ' entries') + '…' : '');
+  el.hidden = !el.textContent;
+}
+addEventListener('online',  function () { syncQueue(); netPill(); });
+addEventListener('offline', netPill);
+syncQueue();
+netPill();
 </script>
 </body></html>
 DLG;
@@ -1842,6 +1859,8 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
                       "body"   => "You will need to sign in with Google again.",
                       "ok"     => "Sign out",
                   ])) ?>)'>Sign out</button>
+          <a class="plain-link" href="/account/delete"
+             style="display:block;margin-top:10px;font-size:12px;text-align:center;color:var(--color-neutral-800);">Delete my account…</a>
         </section>
         <?php endif; ?>
 
@@ -2399,6 +2418,10 @@ $sprite
     <div id="app-signin" style="display:none; width:100%;">
       <button class="btn btn-primary btn-block" type="button" id="app-signin-btn">Sign in with Google</button>
       <div id="app-signin-msg" style="margin-top:8px; font-size:12px; color:var(--color-neutral-800);"></div>
+      <!-- Signed out inside the app — after deleting the account, say — the website is all the
+           WebView shows and the drawer that holds the ledger switch is gone with the session.
+           This is the one way back to the phone's own ledger from here. -->
+      <button class="btn btn-ghost btn-block" type="button" id="app-local-btn" style="margin-top:8px;">Use this phone's own ledger instead</button>
       <form method="post" action="/signin/app" id="app-signin-form" style="display:none;">
         $csrf
         <input type="hidden" name="credential" id="app-signin-token">
@@ -2420,6 +2443,9 @@ $sprite
       wrap.style.display = '';
 
       var msg = document.getElementById('app-signin-msg');
+      document.getElementById('app-local-btn').onclick = function () {
+        if (window.HLMode) HLMode.switchTo('local');
+      };
       document.getElementById('app-signin-btn').onclick = function () {
         msg.textContent = 'Opening Google…';
         HLAuth.signIn();
@@ -6140,6 +6166,10 @@ function termsBody(): string {
           household members — are stored in a MySQL database. <strong>The data is not encrypted at rest.</strong>
           Anyone with access to the database server can read your entries. Only sign in with data you're comfortable
           storing this way. If that isn't OK for you, self-host so the database is yours.</p>
+        <p style="margin:0; font-size:14px;">You can delete your account, and with it every ledger you own and every
+          entry in them, at any time: open the profile drawer and choose <strong>Delete my account</strong>, or go to
+          <a href="/account/delete" style="color:var(--color-accent-700);">/account/delete</a>. Deletion is immediate
+          and permanent, and nothing is retained.</p>
       </div>
 
       <?php /* This page is the privacy policy the OAuth consent screen links to, and that link
@@ -6255,6 +6285,205 @@ function renderTermsPublic(): void {
 <body>
 $sprite
 <div class="col">$body</div>
+</body></html>
+HTML;
+}
+
+// The page sw.js answers with when a screen is asked for offline and it holds no copy of it.
+// Public, and fetched at service-worker install — whoever is signed in — which is why index.php
+// answers it ahead of the sign-in gate. The Android shell has its own version of this for the
+// launches before a service worker exists at all (MainActivity.offlineHtml).
+function renderOffline(): void {
+    $sprite    = SVG_SPRITE;
+    $cssV      = cssVersion();
+    $themeVars = themeCss();
+    $boot      = themeBootScript();
+    $meta      = metaHead(originUrl());
+    $icon      = icon('wifi-off', 28);
+    echo <<<HTML
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Open Ledger — Offline</title>
+$meta
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
+$boot
+<style>
+  body { margin:0; background:var(--color-bg); }
+  .col { max-width:480px; min-height:100vh; margin:0 auto; padding:var(--space-4); box-sizing:border-box;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  .off-icon { width:64px; height:64px; margin-bottom:var(--space-4); border-radius:50%; display:flex; align-items:center;
+              justify-content:center; background:var(--color-accent-100); color:var(--color-accent-700); }
+  h1 { font-family:var(--font-heading); font-size:24px; margin:0 0 var(--space-2); }
+  p { color:var(--color-neutral-800); font-size:14px; line-height:1.5; margin:0 0 var(--space-4); max-width:320px; }
+</style>
+</head>
+<body>
+$sprite
+<div class="col">
+  <div class="off-icon">$icon</div>
+  <h1>You're offline</h1>
+  <p>This screen hasn't been opened on this device yet, so there is no copy to show. Anything you saved while offline is kept and will sync as soon as you're back.</p>
+  <button class="btn btn-primary" onclick="location.reload()">Try again</button>
+</div>
+<script>addEventListener('online', function () { location.reload(); });</script>
+</body></html>
+HTML;
+}
+
+// ─── Account deletion ───────────────────────────────────────────────
+//
+// Three confirmations stand between the drawer link and deleteAccount(): the consequences,
+// spelled out with this account's real ledgers and numbers rather than adjectives; a checkbox
+// and a typed word, which is also what enables the button; and the shared dialog, last. The
+// server checks the word again, because the script here is a courtesy and not a guard.
+function renderDeleteAccount(PDO $db, array $user): void {
+    $uid     = (int)$user['id'];
+    $ledgers = $user['ledgers'] ?? ledgersFor($db, $uid);
+    $owned   = array_values(array_filter($ledgers, fn($l) => $l['role'] === ROLE_OWNER));
+    $joined  = array_values(array_filter($ledgers, fn($l) => $l['role'] !== ROLE_OWNER));
+    $entries = $db->prepare(
+        "SELECT (SELECT COUNT(*) FROM expenses    WHERE household_id = ?)
+              + (SELECT COUNT(*) FROM earnings    WHERE household_id = ?)
+              + (SELECT COUNT(*) FROM investments WHERE household_id = ?)
+              + (SELECT COUNT(*) FROM recurring   WHERE household_id = ?)"
+    );
+
+    $rows = '';
+    foreach ($owned as $l) {
+        $entries->execute([(int)$l['id'], (int)$l['id'], (int)$l['id'], (int)$l['id']]);
+        $n      = (int)$entries->fetchColumn();
+        $others = (int)$l['people'] - 1;
+        $rows .= '<li><strong>' . h($l['name']) . '</strong> — you own it. '
+            . ($n === 1 ? 'Its 1 entry' : "All $n entries") . ', every category, every recurring item and every paired watch go with it.'
+            . ($others > 0 ? " <strong>$others other " . ($others === 1 ? 'person' : 'people') . ' will lose it too.</strong>' : '')
+            . '</li>';
+    }
+    foreach ($joined as $l) {
+        $rows .= '<li>Your seat in <strong>' . h($l['name']) . '</strong>, which someone else owns. The entries you added stay'
+            . ' with that household — they paid for them — with your name unlinked from them.</li>';
+    }
+    $rows .= '<li>Every watch and paired device signed in as you.</li>';
+    $rows .= '<li>Your sign-in. Signing in again with the same Google account starts from nothing.</li>';
+
+    $name  = h($user['name'] ?? '');
+    $email = h($user['email'] ?? '');
+    $icon  = icon('trash-2', 22);
+    // Script context, not an attribute: JSON with < > escaped is what is safe inside <script>.
+    $dlg   = json_encode([
+        'action' => '/account/delete',
+        'back'   => '/account/delete',
+        'title'  => 'Delete your account?',
+        'body'   => 'Last chance. This deletes your account'
+                    . ($owned ? ', ' . count($owned) . ' ledger' . (count($owned) === 1 ? '' : 's') : '')
+                    . ' and everything in ' . ($owned ? 'them' : 'it') . ', now and for good. There is no undo.',
+        'ok'     => 'Delete everything',
+    ], JSON_HEX_TAG | JSON_HEX_AMP);
+
+    $content = <<<HTML
+<style>
+  .del-head { display:flex; align-items:center; gap:12px; }
+  .del-icon { width:44px; height:44px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center;
+              background:var(--color-accent-100); color:var(--color-accent-700); }
+  .del-list { margin:0; padding-left:20px; font-size:14px; line-height:1.55; display:flex; flex-direction:column; gap:8px; }
+  .del-ack { display:flex; align-items:flex-start; gap:10px; font-size:14px; cursor:pointer; }
+  .del-ack input { width:18px; height:18px; margin:2px 0 0; accent-color:var(--color-accent); }
+</style>
+<div class="col" style="padding:var(--space-4);">
+  <div class="card elev-md stack" style="gap:var(--space-4);">
+    <div class="del-head">
+      <div class="del-icon">$icon</div>
+      <h2 style="margin:0; font-family:var(--font-heading); font-size:22px;">Delete your account</h2>
+    </div>
+    <p style="margin:0; font-size:14px; line-height:1.5;">This removes <strong>$name</strong> ($email) from Open Ledger,
+      permanently. There is no undo and no recovery afterwards — not by you, and not by us.</p>
+    <div>
+      <h4 style="margin:0 0 8px;">What will be deleted</h4>
+      <ul class="del-list">$rows</ul>
+    </div>
+    <label class="del-ack"><input type="checkbox" id="del-ack"><span>I understand this cannot be undone.</span></label>
+    <div class="field">
+      <label for="del-word">Type <strong>DELETE</strong> to confirm</label>
+      <input class="input" id="del-word" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="DELETE">
+    </div>
+    <button class="btn btn-danger btn-block" type="button" id="del-btn" disabled>Delete my account</button>
+    <a class="plain-link" href="/" style="text-align:center; font-size:14px;">Keep my account</a>
+  </div>
+</div>
+<script>
+(function () {
+  var ack = document.getElementById('del-ack'), word = document.getElementById('del-word'),
+      btn = document.getElementById('del-btn'), dlg = $dlg;
+  function check() { btn.disabled = !(ack.checked && word.value.trim() === 'DELETE'); }
+  ack.addEventListener('change', check);
+  word.addEventListener('input', check);
+  btn.addEventListener('click', function () {
+    if (btn.disabled) return;
+    dlg.fields = { confirm: word.value.trim() };
+    askConfirm(dlg);
+  });
+})();
+</script>
+HTML;
+    layout($db, $user, '', $content, '/account/delete');
+}
+
+// The same URL, signed out: the page Play's Data safety form links to. It says what deletion
+// does and offers the way in; index.php marks the session so sign-in lands back here.
+function renderDeleteAccountPublic(): void {
+    $sprite    = SVG_SPRITE;
+    $cssV      = cssVersion();
+    $themeVars = themeCss();
+    $boot      = themeBootScript();
+    $meta      = metaHead(originUrl());
+    $icon      = icon('trash-2', 22);
+    echo <<<HTML
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Open Ledger — Delete your account</title>
+$meta
+<link rel="stylesheet" href="/design-tokens/styles.css?v={$cssV}">
+<style>$themeVars</style>
+$boot
+<style>
+  body { margin:0; background:var(--color-bg); }
+  .col { max-width:480px; min-height:100vh; margin:0 auto; padding:var(--space-4); box-sizing:border-box;
+         display:flex; flex-direction:column; justify-content:center; }
+  .del-icon { width:44px; height:44px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center;
+              background:var(--color-accent-100); color:var(--color-accent-700); }
+  p, li { font-size:14px; line-height:1.55; }
+</style>
+</head>
+<body>
+$sprite
+<div class="col">
+  <div class="card elev-md stack" style="gap:var(--space-4);">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div class="del-icon">$icon</div>
+      <h1 style="margin:0; font-family:var(--font-heading); font-size:22px;">Delete your Open Ledger account</h1>
+    </div>
+    <p style="margin:0;">You can delete your account and every piece of data attached to it at any time, from inside
+      the app: open the profile drawer (the avatar at the top right) and choose <strong>Delete my account</strong>.
+      Or sign in below and you will be taken straight to that page.</p>
+    <div>
+      <h4 style="margin:0 0 6px;">What is deleted</h4>
+      <ul style="margin:0; padding-left:20px;">
+        <li>Your sign-in and profile.</li>
+        <li>Every ledger you own — all of its expenses, earnings, investments, recurring items, categories, invites and paired devices.</li>
+        <li>Your membership in ledgers other people own. Entries you added there stay with that household, unlinked from you.</li>
+        <li>Every watch and device paired to your account.</li>
+      </ul>
+    </div>
+    <p style="margin:0;">Deletion happens immediately and cannot be undone. Nothing is retained afterwards.</p>
+    <a class="btn btn-primary btn-block" href="/login">Sign in to continue</a>
+  </div>
+</div>
 </body></html>
 HTML;
 }

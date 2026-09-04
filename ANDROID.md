@@ -388,16 +388,20 @@ app update always brings its code with it.
 
 `UpdateBridge` (`AppUpdate.kt`) drives Play's **flexible** update flow. Not the immediate one:
 that is a full-screen Google-blue sheet that cannot be themed and blocks the ledger until it
-finishes. Flexible downloads in the background and leaves the UI to us, so the offer, the
-progress bar and the restart prompt are drawn by `layout()` out of the same tokens as the rest
-of the app — the same arrangement as the backup panel. The one screen Google keeps is the
-single dialog asking permission to download, which is not ours to skip.
+finishes. Flexible downloads in the background and leaves the UI to us: the offer, the progress
+bar and the restart prompt are one native strip `MainActivity` draws over the WebView, in the
+colours the page hands it (`HLTheme.paint` for the background, `HLTheme.accent` for the accent).
 
-The bridge is exposed to JavaScript as `HLUpdate` with `status()` / `begin()` / `install()` /
-`dismiss()`. The page polls `status()` and draws nothing at all when `state` is empty, so the
-web build — which has no bridge — never sees any of it. `refresh()` runs on every `onResume`,
-because a download that finished while the app was in the background sends no callback to a
-process that was not listening.
+It used to be drawn by `layout()` in views.php. That made it a feature of one page template: it
+was absent on the sign-in page, on the terms, on any error page, and in online mode until the
+website had been deployed with the same views.php as the app. Drawn by the shell, it is there
+on every screen the WebView can show, in either mode. The one screen Google keeps is the single
+dialog asking permission to download, which is not ours to skip.
+
+The bridge reports through its `onChange` callback, which `MainActivity.renderUpdate()` answers
+on the main thread; an empty `state` hides the strip, so a debug build never sees it.
+`refresh()` runs on every `onResume`, because a download that finished while the app was in the
+background sends no callback to a process that was not listening.
 
 "Later" is deliberately session-only: the offer comes back the next time the app is opened,
 rather than never.
@@ -409,6 +413,36 @@ behaviour, not a bug. To see it: install from internal testing, then upload a bu
 higher `versionCode` and wait for Play to notice.
 
 ---
+
+## Offline, in online mode
+
+Local mode is never offline: the ledger is a file and the server is in-process. Everything
+below is about online mode, where the WebView is showing the website — and most of it is the
+website's, so the browser gets it too.
+
+- **Page-load bar.** A browser draws a thin bar under the status bar while a page is on its
+  way; a WebView has no chrome and drew nothing, so a slow page read as a dead tap.
+  `WebChromeClient.onProgressChanged` drives a 3dp `ProgressBar` over the top of the shell, in
+  the palette's accent.
+- **The site keeps copies of itself.** `sw.js`, registered by `themeBootScript()` over https
+  only, keeps every page it has served and every static asset, and answers from them when the
+  network is gone. Pages are network-first — a page is per-user and is never served stale while
+  the network is up — and the copies are wiped whenever `/login` is reached, so nothing kept for
+  one account is shown to the next. For a page it holds no copy of it answers `/offline`, a
+  public route index.php serves ahead of the sign-in gate so the worker can fetch it at install.
+- **Before the worker exists** — the first launch, or a phone that has never reached the
+  site — Chrome's grey error page is replaced by `MainActivity.offlineHtml()`: the same screen,
+  in the last colours the page handed over, with a Try again link. Both pages reload themselves
+  on the `online` event, so nothing has to be tapped.
+- **Entries saved offline.** The submit handler in `layout()` posts every form through
+  `fetch()`. When the POST cannot leave the phone and the route is one of the ledger's own
+  tables, the form's fields are kept in `localStorage` (`ol-queue`) and replayed in order on the
+  next `online` event and on every page load until they are gone; the CSRF token is swapped for
+  the current page's at replay. Sign-in, invites, pairing and ledger switching are never queued.
+  The pill at the top says what is waiting, and the page reloads once the queue drains.
+
+Nothing native listens for connectivity. The WebView raises `online` / `offline` in the page,
+which is where every reaction lives, and `navigator.onLine` is what the pill reads.
 
 ## Schema upgrades
 
@@ -435,6 +469,10 @@ so that door is still open — but it is a different app, not a recompile.
 
 - Data Safety declaration must match the privacy claim exactly. Declare the Drive backup as a
   user-initiated transfer to the user's own account. A mismatch is a rejection.
+- Account deletion URL, for the same form: `https://ledger.xpertxyz.com/account/delete`. Signed
+  out it explains and offers sign-in; signed in it is the page behind the drawer's "Delete my
+  account". Deletion is immediate and total — `deleteAccount()` in lib.php, held by
+  `--preflight` to every table that carries a household_id — and nothing is retained.
 - `allowBackup="false"` and the exclusions in `data_extraction_rules.xml` keep the ledger out
   of Google's automatic cloud backup and device-to-device transfer.
 - arm64 only. Every current device is arm64, and each extra ABI adds another ~12 MB.

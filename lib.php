@@ -345,33 +345,33 @@ const THEMES = [
     'organic' => [
         'name' => 'Organic', 'note' => 'Terracotta and sage on cream',
         'light' => [
-            'vars' => '--theme-color:#f5ead8;',
+            'vars' => '--theme-color:#f5ead8;--accent-color:#c67139;',
             'sw' => ['bg' => '#f5ead8', 'surface' => '#ebddc5', 'accent' => '#c67139', 'accent2' => '#7a8a5e'],
         ],
         'dark' => [
-            'vars' => THEME_DARK_VARS . '--theme-color:#201e1d;',
+            'vars' => THEME_DARK_VARS . '--theme-color:#201e1d;--accent-color:#e0864c;',
             'sw' => ['bg' => '#201e1d', 'surface' => '#2b2721', 'accent' => '#e0864c', 'accent2' => '#93a86e'],
         ],
     ],
     'harbor' => [
         'name' => 'Harbor', 'note' => 'Deep azure and teal on cool paper',
         'light' => [
-            'vars' => '--color-bg:oklch(0.972 0.006 250);--color-surface:oklch(0.938 0.011 250);--color-text:oklch(0.250 0.022 258);--color-accent:oklch(0.560 0.155 258);--color-accent-2:oklch(0.600 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 250);--color-neutral-200:oklch(0.930 0.010 250);--color-neutral-300:oklch(0.870 0.013 250);--color-neutral-400:oklch(0.780 0.014 250);--color-neutral-500:oklch(0.680 0.015 250);--color-neutral-600:oklch(0.580 0.014 250);--color-neutral-700:oklch(0.479 0.012 250);--color-neutral-800:oklch(0.381 0.010 250);--color-neutral-900:oklch(0.290 0.006 250);--color-accent-100:oklch(0.969 0.015 258);--color-accent-200:oklch(0.930 0.033 258);--color-accent-300:oklch(0.870 0.063 258);--color-accent-400:oklch(0.780 0.111 258);--color-accent-500:oklch(0.680 0.155 258);--color-accent-600:oklch(0.580 0.148 258);--color-accent-700:oklch(0.479 0.130 258);--color-accent-800:oklch(0.381 0.100 258);--color-accent-900:oklch(0.290 0.065 258);--color-accent-2-100:oklch(0.969 0.044 196);--color-accent-2-200:oklch(0.930 0.061 196);--color-accent-2-300:oklch(0.870 0.074 196);--color-accent-2-400:oklch(0.780 0.083 196);--color-accent-2-500:oklch(0.680 0.086 196);--color-accent-2-600:oklch(0.580 0.083 196);--color-accent-2-700:oklch(0.479 0.074 196);--color-accent-2-800:oklch(0.381 0.061 196);--color-accent-2-900:oklch(0.290 0.044 196);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f3f6fa;color-scheme:light;',
+            'vars' => '--color-bg:oklch(0.972 0.006 250);--color-surface:oklch(0.938 0.011 250);--color-text:oklch(0.250 0.022 258);--color-accent:oklch(0.560 0.155 258);--color-accent-2:oklch(0.600 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 250);--color-neutral-200:oklch(0.930 0.010 250);--color-neutral-300:oklch(0.870 0.013 250);--color-neutral-400:oklch(0.780 0.014 250);--color-neutral-500:oklch(0.680 0.015 250);--color-neutral-600:oklch(0.580 0.014 250);--color-neutral-700:oklch(0.479 0.012 250);--color-neutral-800:oklch(0.381 0.010 250);--color-neutral-900:oklch(0.290 0.006 250);--color-accent-100:oklch(0.969 0.015 258);--color-accent-200:oklch(0.930 0.033 258);--color-accent-300:oklch(0.870 0.063 258);--color-accent-400:oklch(0.780 0.111 258);--color-accent-500:oklch(0.680 0.155 258);--color-accent-600:oklch(0.580 0.148 258);--color-accent-700:oklch(0.479 0.130 258);--color-accent-800:oklch(0.381 0.100 258);--color-accent-900:oklch(0.290 0.065 258);--color-accent-2-100:oklch(0.969 0.044 196);--color-accent-2-200:oklch(0.930 0.061 196);--color-accent-2-300:oklch(0.870 0.074 196);--color-accent-2-400:oklch(0.780 0.083 196);--color-accent-2-500:oklch(0.680 0.086 196);--color-accent-2-600:oklch(0.580 0.083 196);--color-accent-2-700:oklch(0.479 0.074 196);--color-accent-2-800:oklch(0.381 0.061 196);--color-accent-2-900:oklch(0.290 0.044 196);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f3f6fa;--accent-color:#3372cd;color-scheme:light;',
             'sw' => ['bg' => '#f3f6fa', 'surface' => '#e5ebf2', 'accent' => '#3372cd', 'accent2' => '#209293'],
         ],
         'dark' => [
-            'vars' => '--color-bg:oklch(0.235 0.016 255);--color-surface:oklch(0.278 0.021 255);--color-text:oklch(0.935 0.013 250);--color-accent:oklch(0.720 0.135 258);--color-accent-2:oklch(0.740 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.007 250);--color-neutral-200:oklch(0.340 0.010 250);--color-neutral-300:oklch(0.400 0.014 250);--color-neutral-400:oklch(0.480 0.017 250);--color-neutral-500:oklch(0.570 0.022 250);--color-neutral-600:oklch(0.660 0.023 250);--color-neutral-700:oklch(0.760 0.022 250);--color-neutral-800:oklch(0.850 0.020 250);--color-neutral-900:oklch(0.930 0.015 250);--color-accent-100:oklch(0.290 0.039 258);--color-accent-200:oklch(0.340 0.055 258);--color-accent-300:oklch(0.400 0.082 258);--color-accent-400:oklch(0.480 0.114 258);--color-accent-500:oklch(0.570 0.144 258);--color-accent-600:oklch(0.660 0.155 258);--color-accent-700:oklch(0.760 0.122 258);--color-accent-800:oklch(0.850 0.074 258);--color-accent-900:oklch(0.930 0.033 258);--color-accent-2-100:oklch(0.290 0.037 196);--color-accent-2-200:oklch(0.340 0.046 196);--color-accent-2-300:oklch(0.400 0.060 196);--color-accent-2-400:oklch(0.480 0.076 196);--color-accent-2-500:oklch(0.570 0.091 196);--color-accent-2-600:oklch(0.660 0.095 196);--color-accent-2-700:oklch(0.760 0.091 196);--color-accent-2-800:oklch(0.850 0.071 196);--color-accent-2-900:oklch(0.930 0.041 196);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#191f26;color-scheme:dark;',
+            'vars' => '--color-bg:oklch(0.235 0.016 255);--color-surface:oklch(0.278 0.021 255);--color-text:oklch(0.935 0.013 250);--color-accent:oklch(0.720 0.135 258);--color-accent-2:oklch(0.740 0.095 196);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.007 250);--color-neutral-200:oklch(0.340 0.010 250);--color-neutral-300:oklch(0.400 0.014 250);--color-neutral-400:oklch(0.480 0.017 250);--color-neutral-500:oklch(0.570 0.022 250);--color-neutral-600:oklch(0.660 0.023 250);--color-neutral-700:oklch(0.760 0.022 250);--color-neutral-800:oklch(0.850 0.020 250);--color-neutral-900:oklch(0.930 0.015 250);--color-accent-100:oklch(0.290 0.039 258);--color-accent-200:oklch(0.340 0.055 258);--color-accent-300:oklch(0.400 0.082 258);--color-accent-400:oklch(0.480 0.114 258);--color-accent-500:oklch(0.570 0.144 258);--color-accent-600:oklch(0.660 0.155 258);--color-accent-700:oklch(0.760 0.122 258);--color-accent-800:oklch(0.850 0.074 258);--color-accent-900:oklch(0.930 0.033 258);--color-accent-2-100:oklch(0.290 0.037 196);--color-accent-2-200:oklch(0.340 0.046 196);--color-accent-2-300:oklch(0.400 0.060 196);--color-accent-2-400:oklch(0.480 0.076 196);--color-accent-2-500:oklch(0.570 0.091 196);--color-accent-2-600:oklch(0.660 0.095 196);--color-accent-2-700:oklch(0.760 0.091 196);--color-accent-2-800:oklch(0.850 0.071 196);--color-accent-2-900:oklch(0.930 0.041 196);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#191f26;--accent-color:#6da5f8;color-scheme:dark;',
             'sw' => ['bg' => '#191f26', 'surface' => '#212933', 'accent' => '#6da5f8', 'accent2' => '#57bebe'],
         ],
     ],
     'plum' => [
         'name' => 'Plum', 'note' => 'Berry and emerald on blush',
         'light' => [
-            'vars' => '--color-bg:oklch(0.970 0.008 340);--color-surface:oklch(0.935 0.014 340);--color-text:oklch(0.245 0.024 335);--color-accent:oklch(0.560 0.175 348);--color-accent-2:oklch(0.600 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 340);--color-neutral-200:oklch(0.930 0.010 340);--color-neutral-300:oklch(0.870 0.013 340);--color-neutral-400:oklch(0.780 0.014 340);--color-neutral-500:oklch(0.680 0.015 340);--color-neutral-600:oklch(0.580 0.014 340);--color-neutral-700:oklch(0.479 0.012 340);--color-neutral-800:oklch(0.381 0.010 340);--color-neutral-900:oklch(0.290 0.006 340);--color-accent-100:oklch(0.969 0.018 348);--color-accent-200:oklch(0.930 0.042 348);--color-accent-300:oklch(0.870 0.083 348);--color-accent-400:oklch(0.780 0.155 348);--color-accent-500:oklch(0.680 0.161 348);--color-accent-600:oklch(0.580 0.154 348);--color-accent-700:oklch(0.479 0.135 348);--color-accent-800:oklch(0.381 0.104 348);--color-accent-900:oklch(0.290 0.068 348);--color-accent-2-100:oklch(0.969 0.041 160);--color-accent-2-200:oklch(0.930 0.056 160);--color-accent-2-300:oklch(0.870 0.068 160);--color-accent-2-400:oklch(0.780 0.077 160);--color-accent-2-500:oklch(0.680 0.079 160);--color-accent-2-600:oklch(0.580 0.077 160);--color-accent-2-700:oklch(0.479 0.068 160);--color-accent-2-800:oklch(0.381 0.056 160);--color-accent-2-900:oklch(0.290 0.041 160);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f9f3f7;color-scheme:light;',
+            'vars' => '--color-bg:oklch(0.970 0.008 340);--color-surface:oklch(0.935 0.014 340);--color-text:oklch(0.245 0.024 335);--color-accent:oklch(0.560 0.175 348);--color-accent-2:oklch(0.600 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 16%, transparent);--color-neutral-100:oklch(0.969 0.006 340);--color-neutral-200:oklch(0.930 0.010 340);--color-neutral-300:oklch(0.870 0.013 340);--color-neutral-400:oklch(0.780 0.014 340);--color-neutral-500:oklch(0.680 0.015 340);--color-neutral-600:oklch(0.580 0.014 340);--color-neutral-700:oklch(0.479 0.012 340);--color-neutral-800:oklch(0.381 0.010 340);--color-neutral-900:oklch(0.290 0.006 340);--color-accent-100:oklch(0.969 0.018 348);--color-accent-200:oklch(0.930 0.042 348);--color-accent-300:oklch(0.870 0.083 348);--color-accent-400:oklch(0.780 0.155 348);--color-accent-500:oklch(0.680 0.161 348);--color-accent-600:oklch(0.580 0.154 348);--color-accent-700:oklch(0.479 0.135 348);--color-accent-800:oklch(0.381 0.104 348);--color-accent-900:oklch(0.290 0.068 348);--color-accent-2-100:oklch(0.969 0.041 160);--color-accent-2-200:oklch(0.930 0.056 160);--color-accent-2-300:oklch(0.870 0.068 160);--color-accent-2-400:oklch(0.780 0.077 160);--color-accent-2-500:oklch(0.680 0.079 160);--color-accent-2-600:oklch(0.580 0.077 160);--color-accent-2-700:oklch(0.479 0.068 160);--color-accent-2-800:oklch(0.381 0.056 160);--color-accent-2-900:oklch(0.290 0.041 160);--shadow-sm:0 1px 2px color-mix(in srgb, var(--color-neutral-900) 14%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, var(--color-neutral-900) 16%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, var(--color-neutral-900) 22%, transparent);--theme-color:#f9f3f7;--accent-color:#b93e86;color-scheme:light;',
             'sw' => ['bg' => '#f9f3f7', 'surface' => '#f0e6ec', 'accent' => '#b93e86', 'accent2' => '#3d936a'],
         ],
         'dark' => [
-            'vars' => '--color-bg:oklch(0.232 0.019 330);--color-surface:oklch(0.275 0.025 330);--color-text:oklch(0.935 0.013 340);--color-accent:oklch(0.725 0.145 350);--color-accent-2:oklch(0.735 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.008 335);--color-neutral-200:oklch(0.340 0.010 335);--color-neutral-300:oklch(0.400 0.015 335);--color-neutral-400:oklch(0.480 0.018 335);--color-neutral-500:oklch(0.570 0.023 335);--color-neutral-600:oklch(0.660 0.025 335);--color-neutral-700:oklch(0.760 0.023 335);--color-neutral-800:oklch(0.850 0.021 335);--color-neutral-900:oklch(0.930 0.016 335);--color-accent-100:oklch(0.290 0.041 348);--color-accent-200:oklch(0.340 0.058 348);--color-accent-300:oklch(0.400 0.085 348);--color-accent-400:oklch(0.480 0.119 348);--color-accent-500:oklch(0.570 0.150 348);--color-accent-600:oklch(0.660 0.162 348);--color-accent-700:oklch(0.760 0.137 348);--color-accent-800:oklch(0.850 0.098 348);--color-accent-900:oklch(0.930 0.042 348);--color-accent-2-100:oklch(0.290 0.034 160);--color-accent-2-200:oklch(0.340 0.043 160);--color-accent-2-300:oklch(0.400 0.055 160);--color-accent-2-400:oklch(0.480 0.070 160);--color-accent-2-500:oklch(0.570 0.084 160);--color-accent-2-600:oklch(0.660 0.087 160);--color-accent-2-700:oklch(0.760 0.084 160);--color-accent-2-800:oklch(0.850 0.066 160);--color-accent-2-900:oklch(0.930 0.038 160);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#231a22;color-scheme:dark;',
+            'vars' => '--color-bg:oklch(0.232 0.019 330);--color-surface:oklch(0.275 0.025 330);--color-text:oklch(0.935 0.013 340);--color-accent:oklch(0.725 0.145 350);--color-accent-2:oklch(0.735 0.105 160);--color-divider:color-mix(in srgb, var(--color-text) 18%, transparent);--color-neutral-100:oklch(0.290 0.008 335);--color-neutral-200:oklch(0.340 0.010 335);--color-neutral-300:oklch(0.400 0.015 335);--color-neutral-400:oklch(0.480 0.018 335);--color-neutral-500:oklch(0.570 0.023 335);--color-neutral-600:oklch(0.660 0.025 335);--color-neutral-700:oklch(0.760 0.023 335);--color-neutral-800:oklch(0.850 0.021 335);--color-neutral-900:oklch(0.930 0.016 335);--color-accent-100:oklch(0.290 0.041 348);--color-accent-200:oklch(0.340 0.058 348);--color-accent-300:oklch(0.400 0.085 348);--color-accent-400:oklch(0.480 0.119 348);--color-accent-500:oklch(0.570 0.150 348);--color-accent-600:oklch(0.660 0.162 348);--color-accent-700:oklch(0.760 0.137 348);--color-accent-800:oklch(0.850 0.098 348);--color-accent-900:oklch(0.930 0.042 348);--color-accent-2-100:oklch(0.290 0.034 160);--color-accent-2-200:oklch(0.340 0.043 160);--color-accent-2-300:oklch(0.400 0.055 160);--color-accent-2-400:oklch(0.480 0.070 160);--color-accent-2-500:oklch(0.570 0.084 160);--color-accent-2-600:oklch(0.660 0.087 160);--color-accent-2-700:oklch(0.760 0.084 160);--color-accent-2-800:oklch(0.850 0.066 160);--color-accent-2-900:oklch(0.930 0.038 160);--shadow-sm:0 1px 2px color-mix(in srgb, #000000 40%, transparent);--shadow-md:0 3px 10px color-mix(in srgb, #000000 45%, transparent);--shadow-lg:0 12px 32px color-mix(in srgb, #000000 55%, transparent);--theme-color:#231a22;--accent-color:#e87db3;color-scheme:dark;',
             'sw' => ['bg' => '#231a22', 'surface' => '#2f232e', 'accent' => '#e87db3', 'accent2' => '#69be92'],
         ],
     ],
@@ -1661,6 +1661,10 @@ function switchLedger(PDO $db, int $uid, int $hid): bool {
 function afterSignIn(PDO $db, int $uid): string {
     $token = trim((string)($_SESSION['pending_invite'] ?? ''));
     unset($_SESSION['pending_invite']);
+    // Someone who arrived at the account-deletion page signed out is sent back to it once they
+    // are in. One known value, compared exactly, so this can never become an open redirect.
+    $next = (string)($_SESSION['after_signin'] ?? '');
+    unset($_SESSION['after_signin']);
     if ($token !== '') {
         $r = redeemInvite($db, $token, $uid);
         if ($r['status'] === 'ok' || $r['status'] === 'already') {
@@ -1672,7 +1676,41 @@ function afterSignIn(PDO $db, int $uid): string {
             ? 'That ledger is full — it already has ' . HOUSEHOLD_USERS_MAX . ' people.'
             : 'That invite link has expired or been used. Ask for a fresh one.');
     }
+    if ($next === '/account/delete') return $next;
     return count(ledgersFor($db, $uid)) > 1 ? '/ledgers' : '/';
+}
+
+// Everything that is theirs, gone: the sign-in, every ledger they own with all of its rows, and
+// their seat in every ledger someone else owns. Entries they added to those other ledgers stay
+// — the household paid for them, the same reasoning as /ledgers/leave — with the spender label
+// unlinked so "who spent it" keeps its name, exactly as removing a member does. One transaction:
+// an account half-deleted is worse than either outcome. The table list is checked by
+// --preflight against every table that carries a household_id, so a table added later cannot
+// quietly keep a deleted household's rows.
+function deleteAccount(PDO $db, int $uid): int {
+    $owned = $db->prepare("SELECT household_id FROM household_users WHERE user_id = ? AND role = ?");
+    $owned->execute([$uid, ROLE_OWNER]);
+    $owned = array_map('intval', $owned->fetchAll(PDO::FETCH_COLUMN));
+
+    $db->beginTransaction();
+    try {
+        foreach ($owned as $hid) {
+            foreach (['expenses', 'earnings', 'investments', 'recurring', 'categories', 'earning_categories',
+                      'investment_types', 'members', 'invites', 'device_tokens', 'household_users'] as $t) {
+                $db->prepare("DELETE FROM $t WHERE household_id = ?")->execute([$hid]);
+            }
+            $db->prepare("DELETE FROM households WHERE id = ?")->execute([$hid]);
+        }
+        $db->prepare("UPDATE members SET user_id = NULL WHERE user_id = ?")->execute([$uid]);
+        $db->prepare("DELETE FROM household_users WHERE user_id = ?")->execute([$uid]);
+        $db->prepare("DELETE FROM device_tokens WHERE user_id = ?")->execute([$uid]);
+        $db->prepare("DELETE FROM users WHERE id = ?")->execute([$uid]);
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+    return count($owned);
 }
 
 // Give a user a spender label in this ledger, so "who spent it" and "who may edit it" name
