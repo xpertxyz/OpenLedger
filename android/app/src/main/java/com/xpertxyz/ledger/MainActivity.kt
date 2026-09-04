@@ -481,8 +481,10 @@ a{display:inline-block;background:${hex(accent)};color:${hex(bg)};padding:10px 2
     //
     // The ledger is one file on this phone and there is no account behind it, so the phone's
     // own lock is the only thing standing between it and whoever is holding the device. It is
-    // asked for on every launch and again on every return from the background, the way a
-    // payments app does — not once at install.
+    // asked for once per launch: when the activity is created, and not again on every return
+    // from Recents — that was a prompt on every glance at another app, and it made the lock
+    // feel like the app arguing with its owner. Backgrounded, the phone's own lock screen is
+    // what stands guard; a fresh process starts locked again.
     //
     // Nothing cryptographic hangs off this: it gates the view, it does not hold the database
     // key. ponytail: the file is protected by app-private storage, which is the same thing
@@ -588,10 +590,9 @@ a{display:inline-block;background:${hex(accent)};color:${hex(bg)};padding:10px 2
 
     override fun onStop() {
         super.onStop()
-        // Re-arm the lock, but not while the prompt itself is up: confirming a PIN on API 30+
-        // is a separate system activity, so this fires mid-authentication and would queue a
-        // second prompt behind the one the user is already answering.
-        if (!prompting) locked = true
+        // The lock is not re-armed here: once unlocked, this process stays unlocked. (It used
+        // to be, and confirming a PIN on API 30+ is a separate system activity — so this fired
+        // mid-authentication too, which is why `prompting` is still checked in onStart.)
         // Nothing should hold a listening socket open while the app is not on screen.
         server.stop()
     }

@@ -2247,6 +2247,20 @@ function renderLanding(): void {
       <p class="card-body">Light and dark, per person, remembered. Add to Home Screen
         for a real icon and full-screen chrome on iOS and Android.</p>
     </div>
+    <div class="card">
+      <?= icon('wifi-off', 22) ?>
+      <div class="card-title">Keeps working on the train</div>
+      <p class="card-body">Lose the signal and every page you've opened still opens.
+        Add an expense anyway — it's kept on your phone and posted the moment you're
+        back, with a note at the top saying what's waiting.</p>
+    </div>
+    <div class="card">
+      <?= icon('trash-2', 22) ?>
+      <div class="card-title">Yours to delete</div>
+      <p class="card-body">One page in the profile drawer removes your account, every
+        ledger you own and everything in them — immediately, for good, with nothing
+        kept. It tells you exactly what will go before you confirm.</p>
+    </div>
   </div>
 
   <div class="band">
@@ -2286,6 +2300,18 @@ function renderLanding(): void {
       <summary>Can I get my data out?</summary>
       <p>It's a plain MySQL database. Self-host and it never leaves your host in the
         first place.</p>
+    </details>
+    <details class="faq">
+      <summary>Can I delete everything?</summary>
+      <p>Yes, from the profile drawer — <a href="/account/delete">Delete my account</a>.
+        Your sign-in, every ledger you own with every entry in it, and your seat in
+        anyone else's ledger are removed the moment you confirm. Nothing is retained.</p>
+    </details>
+    <details class="faq">
+      <summary>Does it work without a connection?</summary>
+      <p>Pages you've already opened keep opening, and anything you add while offline
+        is saved on your phone and synced when the signal comes back. Sign-in and
+        invites still need the network.</p>
     </details>
     <details class="faq">
       <summary>Does it do currencies other than rupees?</summary>

@@ -202,11 +202,13 @@ reporting success.
 ## The app lock
 
 The ledger is one file on the phone with no account behind it, so the phone's own lock is the
-only thing between it and whoever is holding the device. `MainActivity` asks for it in `onStart`
-and re-arms in `onStop`: every launch, and every return from the background, the way a payments
-app does. Fingerprint or face, falling back to the PIN/pattern/password — `BIOMETRIC_STRONG or
-DEVICE_CREDENTIAL` on API 30+, `setDeviceCredentialAllowed(true)` below that, where the combined
-form throws.
+only thing between it and whoever is holding the device. `MainActivity` asks for it once per
+process, in the first `onStart` after creation — not on every return from Recents. It used to
+re-arm in `onStop`, the way a payments app does, and that meant a prompt after every glance at
+another app; while the app is in the background the phone's own lock screen stands guard, and a
+fresh process starts locked again. Fingerprint or face, falling back to the PIN/pattern/password
+— `BIOMETRIC_STRONG or DEVICE_CREDENTIAL` on API 30+, `setDeviceCredentialAllowed(true)` below
+that, where the combined form throws.
 
 Three details that are easy to get wrong:
 
@@ -216,15 +218,15 @@ Three details that are easy to get wrong:
   "nothing enrolled" overlap with ones that mean an ordinary failed attempt, so treating them
   alike either locks the user out permanently or lets a failure through. The terms page says
   plainly what a phone with no lock means.
-- **`onStop` must not re-arm while the prompt is up.** Confirming a PIN on API 30+ is a separate
-  system activity, so `onStop` fires mid-authentication; without the `prompting` guard a second
-  prompt queues behind the one being answered.
+- **`onStart` must not prompt while the prompt is up.** Confirming a PIN on API 30+ is a separate
+  system activity, so the activity stops and starts again mid-authentication; without the
+  `prompting` guard a second prompt queues behind the one being answered.
 - **The lock gates the view, not the data.** No key hangs off it. The database is protected by
   app-private storage, the same thing that protects it from other apps. If a stolen-and-rooted
   phone is in the threat model, the answer is a passphrase-derived key on the database itself.
 
-Connecting a Drive account leaves the app, so returning from the account chooser asks for the
-lock again. That is correct, and it is what a payments app does too.
+Connecting a Drive account or answering Google's sign-in sheet leaves the app and comes back
+without a prompt, because the process is the same one that was unlocked.
 
 Testing it on an emulator, which ships with no lock at all:
 
