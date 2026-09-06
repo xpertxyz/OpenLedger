@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -287,7 +288,16 @@ class MainActivity : FragmentActivity() {
         // Pull-to-refresh, which the page cannot provide for itself: a browser's pull gesture
         // is chrome, and a WebView has none.
         pull = SwipeRefreshLayout(this).apply {
-            addView(web)
+            // MATCH_PARENT explicitly. SwipeRefreshLayout inherits ViewGroup's default layout
+            // params, which are WRAP_CONTENT — and a WebView whose height is WRAP_CONTENT is
+            // put into auto-sizing mode, where the viewport has no definite height and every
+            // vh unit in the page computes to ZERO. The page still painted at the right size,
+            // so this showed up only where a length actually depended on vh: the themed
+            // dropdown's `max-height:min(52vh,320px)` collapsed to 0 and its list rendered as
+            // a 14px sliver behind the next field, and `min-height:100vh` did nothing on the
+            // sign-in, offline and terms pages.
+            addView(web, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             // The document scrolls, not an inner container, so scrollY answers "is there
             // anything above this" — which is the only condition under which a downward drag
             // should mean refresh rather than scroll.

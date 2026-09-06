@@ -1379,6 +1379,24 @@ if (PHP_SAPI === 'cli') {
             ? $line('OK',   '/account/delete demands the typed word, deletes through deleteAccount(), then ends the session')
             : $line('FAIL', '/account/delete lost its confirmation, its helper, or its session teardown');
 
+        // The Android shell. A WebView whose layout height is WRAP_CONTENT is auto-sizing, and
+        // in that mode the viewport has no definite height: every vh unit in every page
+        // computes to ZERO, silently. The page still paints at the right size, so nothing looks
+        // wrong until a length actually depends on vh — the themed dropdown collapsed to a 14px
+        // sliver, and min-height:100vh did nothing. Checked here because it is the CSS that
+        // breaks, and because nothing on the web can ever see it.
+        $ma = (string)@file_get_contents(__DIR__ . '/android/app/src/main/java/com/xpertxyz/ledger/MainActivity.kt');
+        $vhUsers = preg_match_all('~[0-9]+(?:vh|dvh|svh|lvh)\b~', $vsrc);
+        if ($ma === '') {
+            $line('WARN', 'MainActivity.kt not readable — cannot check the WebView is given a definite height');
+        } else {
+            preg_match('~addView\(web[^)]*\)~s', $ma, $av);
+            str_contains($av[0] ?? '', 'MATCH_PARENT')
+                ? $line('OK',   'the app gives its WebView MATCH_PARENT, so vh resolves (' . $vhUsers . ' vh lengths in views.php depend on it)')
+                : $line('FAIL', 'the WebView is added without MATCH_PARENT — it auto-sizes, and all '
+                              . $vhUsers . ' vh lengths in views.php silently become 0 in the app');
+        }
+
         echo "\nOffline:\n";
         $sw = (string)@file_get_contents(__DIR__ . '/sw.js');
         ($sw !== '' && str_contains($sw, "req.method !== 'GET'") && str_contains($sw, "'/offline'") && str_contains($sw, "'/login'"))

@@ -10,12 +10,18 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 16
-        versionName = "1.0.16"
+        versionCode = 18
+        versionName = "1.0.18"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.
-        ndk { abiFilters += "arm64-v8a" }
+        //
+        // Commented out, not deleted: libphp.so exists for arm64 alone, so the filter changes
+        // nothing today — the APK is arm64-only either way. It becomes load-bearing the day a
+        // dependency ships its own .so for another ABI, because the APK would then advertise
+        // that ABI with no interpreter behind it. Put it back if `unzip -l` of the release APK
+        // ever shows a lib/ directory other than arm64-v8a.
+        // ndk { abiFilters += "arm64-v8a" }
 
         // Compiled in, not switchable at runtime: an app whose behaviour changes after review
         // is the pattern that gets it pulled from Play. PhpServer passes these to PHP as

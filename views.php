@@ -3616,7 +3616,7 @@ function renderInvest(PDO $db, array $user, bool $showForm, string $filter = 'ac
                           "id"     => (int)$i['id'],
                           "back"   => "/invest?f=$filter" . ($who > 0 ? "&who=$who" : ""),
                           "title"  => "Delete investment?",
-                          "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
+                          "body"   => fmt((float)$i['amount']) . ' — ' . $i['type'] . ' · ' . $i['name'],
                           "ok"     => "Delete",
                       ])) ?>)'>
                 <?= icon('trash-2', 15) ?>
@@ -3938,7 +3938,7 @@ function renderInvestMonth(PDO $db, array $user, bool $showForm, string $filter,
                             "id"     => (int)$i['id'],
                             "back"   => "/invest?m=$offset" . $filterQ,
                             "title"  => "Delete investment?",
-                            "body"   => $i['name'] . ' — ' . fmt((float)$i['amount']),
+                            "body"   => fmt((float)$i['amount']) . ' — ' . $i['type'] . ' · ' . $i['name'],
                             "ok"     => "Delete",
                         ])) ?>)'>
                   <?= icon('trash-2', 15) ?>
@@ -4425,7 +4425,7 @@ function renderEarn(PDO $db, array $user, bool $showForm): void {
                           "id"     => (int)$e['id'],
                           "back"   => "/earn" . ($who > 0 ? "?who=$who" : ""),
                           "title"  => "Delete earning?",
-                          "body"   => $e['name'] . ' — ' . fmt((float)$e['amount']),
+                          "body"   => fmt((float)$e['amount']) . ' — ' . ($e['cat_name'] ?? 'Uncategorised') . ' · ' . $e['name'],
                           "ok"     => "Delete",
                       ])) ?>)'>
                 <?= icon('trash-2', 15) ?>
@@ -5101,7 +5101,7 @@ function renderRecurring(PDO $db, array $user, bool $showForm): void {
                           "action" => "/recurring/delete",
                           "id"     => (int)$r['id'],
                           "title"  => "Delete recurring item?",
-                          "body"   => $r['name'] . ' — ' . fmt((float)$r['amount']) . ' / ' . $r['frequency'],
+                          "body"   => fmt((float)$r['amount']) . ' — ' . ucfirst($r['frequency']) . ' · ' . $r['name'],
                           "ok"     => "Delete",
                           "extra"  => "Also delete all past auto-posted entries for this item",
                       ])) ?>)'>

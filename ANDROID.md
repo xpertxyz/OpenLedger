@@ -152,7 +152,7 @@ writing when it is actually wanted.
 
 ---
 
-## Four things that are easy to get wrong
+## Five things that are easy to get wrong
 
 ### Never touch a socket on the main thread
 
@@ -164,6 +164,32 @@ server had been listening the whole time.
 
 `startAsync()` exists for this: the interpreter starts on a worker thread and the WebView is
 pointed at it from a callback on the main thread.
+
+### The WebView needs a definite height, or every `vh` is zero
+
+`pull.addView(web, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))` — the layout params are
+load-bearing, not boilerplate. `SwipeRefreshLayout` inherits `ViewGroup`'s defaults, which are
+`WRAP_CONTENT`, and a WebView whose height is `WRAP_CONTENT` is put into auto-sizing mode. In
+that mode the viewport has no definite height and **every `vh` unit in the page computes to 0**,
+while the page still paints at the right size. Nothing looks wrong until a length actually
+depends on `vh`.
+
+It cost a day. The themed dropdown's `max-height:min(52vh,320px)` resolved to `0px`, so its list
+rendered as a 14-pixel sliver poking out between two fields — which reads exactly like a
+stacking bug, and was chased as one. `min-height:100vh` was also doing nothing on the sign-in,
+offline and terms pages. The tell is that `innerHeight` and `documentElement.clientHeight` are
+both correct (920) while `getComputedStyle` on anything sized in `vh` returns `0px`.
+
+Attach the WebView with remote debugging and probe it before theorising:
+
+```bash
+adb shell cat /proc/net/unix | grep -o 'webview_devtools_remote_[0-9]*'
+adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>
+# then in DevTools, or over the protocol:
+#   getComputedStyle(el).maxHeight   →  "0px" means the WebView is auto-sizing
+```
+
+`--preflight` fails if `addView(web…)` loses its `MATCH_PARENT`.
 
 ### Cleartext has to be allowed for 127.0.0.1
 
