@@ -64,6 +64,7 @@
 - **In-app updates, in the app's own skin** — the Android build offers, downloads and installs its own updates through Play's flexible flow, with the offer card, the progress bar and the restart prompt drawn from the design tokens rather than by a Google-blue system sheet. The download runs in the background; the ledger stays usable throughout.
 - **Runs offline as an Android app** — the same `index.php`, `lib.php` and `views.php`, served to a WebView by a PHP interpreter bundled in the APK, against a SQLite file in the app's private storage. No account, no server, nothing leaves the device. See [Android app](#android-app).
 - **No build step, no npm, no composer** — just PHP + MySQL + a stylesheet.
+- **Investment goals** — from the profile drawer: a target (say ₹10 Cr), a monthly SIP with a yearly step-up, and low/base/high return assumptions. The app projects the path month by month, lays a milestone ladder over it (₹25 L, ₹50 L, ₹1 Cr …) with the month each is reached, and reads what you *actually* invested straight from the Invest tab. You log the portfolio's real value as a snapshot now and then; each one is judged ahead / on track / behind. Desktop-first dashboard with a fan chart (linear or log), planned-vs-actual bars, calendar or financial-year tables, and a print view.
 
 ## Screens
 

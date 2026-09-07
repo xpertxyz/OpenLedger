@@ -211,6 +211,59 @@ const SCHEMA_STATEMENTS = [
         INDEX ix_household (household_id),
         INDEX ix_pair_code (pair_code)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    // Investment goals — see goals.php. Assumptions only; every projection is recomputed from
+    // them on read. type_filter holds type NAMES because investments.type does, and renames
+    // already cascade there. band_low is the "behind" threshold as a multiple of the low path.
+    "CREATE TABLE IF NOT EXISTS goals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        household_id INT NOT NULL,
+        member_id INT NULL,
+        created_by INT NOT NULL,
+        name VARCHAR(80) NOT NULL,
+        target_amount DECIMAL(16,2) NOT NULL,
+        starting_corpus DECIMAL(16,2) NOT NULL DEFAULT 0,
+        tracking_start DATE NOT NULL,
+        plan_start DATE NOT NULL,
+        monthly_sip DECIMAL(12,2) NOT NULL,
+        stepup_pct DECIMAL(5,2) NOT NULL DEFAULT 10.00,
+        stepup_month TINYINT NOT NULL DEFAULT 1,
+        return_low DECIMAL(5,2) NOT NULL DEFAULT 10.00,
+        return_base DECIMAL(5,2) NOT NULL DEFAULT 12.00,
+        return_high DECIMAL(5,2) NOT NULL DEFAULT 14.00,
+        band_low DECIMAL(4,2) NOT NULL DEFAULT 0.90,
+        horizon_years TINYINT NOT NULL DEFAULT 20,
+        type_filter VARCHAR(500) NOT NULL DEFAULT '',
+        filter_member_id INT NULL,
+        archived TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX ix_goals_household (household_id, archived)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // What the portfolio was actually worth on a day, typed in from the broker app. The only
+    // thing about a goal that cannot be derived, so the only thing worth a table of its own.
+    "CREATE TABLE IF NOT EXISTS goal_snapshots (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        goal_id INT NOT NULL,
+        household_id INT NOT NULL,
+        as_of DATE NOT NULL,
+        current_value DECIMAL(16,2) NOT NULL,
+        note VARCHAR(200) NOT NULL DEFAULT '',
+        created_by INT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX ix_snap_goal_date (goal_id, as_of)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+    // Milestone rows exist only to hold what the default ladder cannot: a custom amount, or a
+    // hand-set achieved date. A default rung with neither has no row.
+    "CREATE TABLE IF NOT EXISTS goal_milestones (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        goal_id INT NOT NULL,
+        household_id INT NOT NULL,
+        amount DECIMAL(16,2) NOT NULL,
+        achieved_on DATE NULL,
+        is_custom TINYINT(1) NOT NULL DEFAULT 0,
+        INDEX ix_ms_goal (goal_id, amount)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ];
 
 // Applied in order after SCHEMA_STATEMENTS, each independently. Re-running is a no-op —
@@ -297,7 +350,7 @@ const MIGRATIONS = [
 // Bump alongside any change to SCHEMA_STATEMENTS/MIGRATIONS. Its presence in data/ is what
 // makes the bootstrap skip itself after the first request. Named here rather than inline so
 // --preflight can report the exact file the running code looks for.
-const SCHEMA_SENTINEL = '.schema-ok-v21';
+const SCHEMA_SENTINEL = '.schema-ok-v22';
 
 // A ledger is a household; these are the only two roles it has. The owner is whoever created
 // it — they can edit every entry, invite people and remove them. Everyone else edits their own.
@@ -1703,6 +1756,7 @@ function afterSignIn(PDO $db, int $uid): string {
 const EXPORT_TABLES = [
     'members', 'categories', 'investment_types', 'earning_categories',
     'expenses', 'earnings', 'investments', 'recurring',
+    'goals', 'goal_snapshots', 'goal_milestones',
 ];
 
 function buildLocalLedgerExport(PDO $db, int $hid, int $uid, string $out): int {
@@ -1798,7 +1852,8 @@ function deleteAccount(PDO $db, int $uid): int {
     try {
         foreach ($owned as $hid) {
             foreach (['expenses', 'earnings', 'investments', 'recurring', 'categories', 'earning_categories',
-                      'investment_types', 'members', 'invites', 'device_tokens', 'household_users'] as $t) {
+                      'investment_types', 'members', 'invites', 'device_tokens', 'household_users',
+                      'goals', 'goal_snapshots', 'goal_milestones'] as $t) {
                 $db->prepare("DELETE FROM $t WHERE household_id = ?")->execute([$hid]);
             }
             $db->prepare("DELETE FROM households WHERE id = ?")->execute([$hid]);

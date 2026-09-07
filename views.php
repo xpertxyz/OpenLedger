@@ -1145,6 +1145,11 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             <span>Yearly summary</span>
             <span class="chev"><?= icon('chevron-right', 16) ?></span>
           </a>
+          <a class="drawer-nav" href="/goals">
+            <span class="ico"><?= icon('landmark', 18) ?></span>
+            <span>Investment goals</span>
+            <span class="chev"><?= icon('chevron-right', 16) ?></span>
+          </a>
           <!-- Categories and types are managed entirely on their own pages — rename, budget
                or target, nest, delete, and moving entries between them. Keeping a second copy
                of those controls here would mean two places to fix every rule change. -->

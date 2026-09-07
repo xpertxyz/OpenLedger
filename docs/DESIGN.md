@@ -101,3 +101,13 @@ All values live in `design-tokens/styles.css` (the actual stylesheet used by the
 - `Home Expense Tracker.dc.html` — the full interactive prototype (open in a browser to click through every screen/state).
 - `design-tokens/styles.css` — the source-of-truth stylesheet for every color/type/spacing/radius/shadow value and component class.
 - `design-tokens/organic-design-system-guide.md` — written guide to the design system's components and usage rules.
+
+## Investment goals (`goals.php`)
+Added after the ledger: a goal is a target amount plus the assumptions that project a path to it (starting corpus, monthly SIP, yearly step-up in January or April, low/base/high annual returns, horizon). Everything else is derived on read:
+- **Projection** — month by month, `value = value × (1 + r/12) + sip`; the fan chart draws low–high, the base line, planned cumulative investment (dashed) and what the Invest tab actually recorded since tracking began (sage). Linear or log axis.
+- **Milestones** — a default ladder (₹25 L … ₹10 Cr, up to 1.5× target) plus custom rungs; each shows when the three paths reach it and when it was actually crossed, derived from snapshots unless set by hand.
+- **Snapshots** — the portfolio's real value typed in from the broker; the only fact the ledger cannot know. Status per snapshot: *behind* below `band_low × low`, *ahead* above high, else *on track*. A snapshot older than 45 days shows a "stale" tag.
+- **Yearly table** — December (calendar) or March (financial year) rows; a snapshot within ±45 days of that month stands in, marked `~`.
+
+Layout is desktop-first (`.col` widened to 1200px on these pages only; KPI strip, two-column grid) and folds to one column under 720px, where charts scroll sideways rather than shrink. `/goals/{id}/print` renders the same page without chrome. The engine is asserted against the reference workbook in `goalsSelfcheck()`; preflight renders both pages.
+

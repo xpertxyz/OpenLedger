@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/lib.php';
+require __DIR__ . '/goals.php';
 
 define('CURRENCY',         $config['currency']);
 define('GOOGLE_CLIENT_ID', $config['google_client_id']);
@@ -325,6 +326,9 @@ if (PHP_SAPI === 'cli') {
         assert(whoWhere(5)       === [' AND member_id = ?',   [5]]);
         assert(whoWhere(5, 'e')  === [' AND e.member_id = ?', [5]]);
 
+        // Goal projections against the reference workbook — see goals.php.
+        goalsSelfcheck();
+
         echo "ok\n"; exit;
     }
     if ($mode === '--preflight') {
@@ -340,7 +344,7 @@ if (PHP_SAPI === 'cli') {
         echo "Open Ledger — preflight\n\n";
 
         echo "PHP syntax:\n";
-        foreach (['index.php','lib.php','views.php','config.php','router.php','api.php'] as $f) {
+        foreach (['index.php','lib.php','views.php','goals.php','config.php','router.php','api.php'] as $f) {
             $r = shell_exec("php -l " . escapeshellarg(__DIR__ . "/$f") . " 2>&1");
             str_contains((string)$r, 'No syntax errors')
                 ? $line('OK',   "$f")
@@ -762,7 +766,10 @@ if (PHP_SAPI === 'cli') {
         // whose action JS repoints — the split dialog serves both add and edit that way, and
         // without that pattern its edit route reads as unreachable — and a bare fetch(), which
         // is how the theme picker records a choice without reloading the page.
-        preg_match_all('~(?:action|href)="(/[^"?#]*)|"action"\s*=>\s*"(/[^"?#]*)|\.action\s*=\s*\'(/[^\']*)|fetch\(\s*\'(/[^\']*)~', $vsrc, $u);
+        // goals.php renders its own pages, so its links count too; askConfirm payloads there
+        // are written as PHP arrays ('action' => '/x'), the fifth spelling.
+        $gsrc = (string)file_get_contents(__DIR__ . '/goals.php');
+        preg_match_all('~(?:action|href)="(/[^"?#]*)|["\']action["\']\s*=>\s*["\'](/[^"\'?#]*)|\.action\s*=\s*\'(/[^\']*)|fetch\(\s*\'(/[^\']*)~', $vsrc . "\n" . $gsrc, $u);
         // is_file, not file_exists: href="/" would otherwise match the project directory.
         $linked = array_filter(array_unique(array_merge($u[1], $u[2], $u[3], $u[4])), fn($p) => $p !== '' && !is_file(__DIR__ . $p));
         $orphan = array_diff($linked, $routes);
@@ -1139,8 +1146,15 @@ if (PHP_SAPI === 'cli') {
                 'ledgers'   => ['renderLedgers',   [$db, $stub]],
                 'terms'     => ['renderTerms',     [$db, $stub]],
                 'delacct'   => ['renderDeleteAccount', [$db, $stub]],
+                'goals'     => ['renderGoalsIndex', [$db, $stub, false]],
             ] as $name => [$fn, $args]) {
                 ob_start(); $fn(...$args); $pages[$name] = (string)ob_get_clean();
+            }
+            // The goal dashboard needs a goal to render; take the household's first, if any.
+            $gq = $db->prepare("SELECT id FROM goals WHERE household_id = ? ORDER BY id LIMIT 1");
+            $gq->execute([$hid0]);
+            if ($gid0 = (int)$gq->fetchColumn()) {
+                ob_start(); renderGoalDashboard($db, $stub, $gid0, false); $pages['goal'] = (string)ob_get_clean();
             }
             $line('OK', count($pages) . ' tabs render without fataling against household ' . $hid0
                       . ' (' . number_format(array_sum(array_map('strlen', $pages))) . ' bytes)');
@@ -1160,6 +1174,7 @@ if (PHP_SAPI === 'cli') {
                 'invest'    => ['renderInvest',    [$db, $guest, true, 'active']],
                 'investmth' => ['renderInvestMonth', [$db, $guest, true, 'active', 0]],
                 'recurring' => ['renderRecurring', [$db, $guest, true]],
+                'goals'     => ['renderGoalsIndex', [$db, $guest, false]],
             ] as $name => [$fn, $args]) {
                 ob_start(); $fn(...$args); $html = (string)ob_get_clean();
                 // The row controls, and only those: the drawer and the dialogs legitimately keep
@@ -1201,7 +1216,8 @@ if (PHP_SAPI === 'cli') {
                 // resolves to 0 and every toast renders under the notch.
                 if (!(str_starts_with(ltrim($html), '<!doctype')
                       && substr_count($html, '/design-tokens/styles.css') === 1
-                      && substr_count($html, '<title>') === 1
+                      // Head only: SVG tooltips on the goal chart are <title> elements too.
+                      && substr_count(substr($html, 0, (int)strpos($html, '</head>')), '<title>') === 1
                       && str_contains($html, 'viewport-fit=cover')
                       && str_contains($html, 'name="theme-color"'))) $badHead[] = $name;
             }
@@ -2816,6 +2832,15 @@ if ($method === 'POST') {
                 }
                 redirect($_POST['back'] ?? '/');
 
+            // Investment goals — handlers live in goals.php and return where to land.
+            case '/goals/save':             redirect(goalSave($db, $config, $hid, $uid, $role));
+            case '/goals/archive':          redirect(goalArchive($db, $config, $hid, $uid, $role));
+            case '/goals/delete':           redirect(goalDelete($db, $config, $hid, $uid, $role));
+            case '/goals/snapshot':         redirect(goalSnapshotSave($db, $config, $hid, $uid, $role));
+            case '/goals/snapshot/delete':  redirect(goalSnapshotDelete($db, $config, $hid, $uid, $role));
+            case '/goals/milestone':        redirect(goalMilestoneSave($db, $config, $hid, $uid, $role));
+            case '/goals/milestone/delete': redirect(goalMilestoneDelete($db, $config, $hid, $uid, $role));
+
             default:
                 http_response_code(404); exit('404');
         }
@@ -2828,6 +2853,11 @@ if ($method === 'POST') {
 // ────────────────────────────────────────────────────────────────────
 // Authed GET routes.
 // ────────────────────────────────────────────────────────────────────
+// The one path with an id in it: /goals/{id} and its print twin.
+if ($method === 'GET' && preg_match('~^/goals/(\d+)(/print)?$~', $path, $gm)) {
+    renderGoalDashboard($db, $user, (int)$gm[1], isset($gm[2]));
+    exit;
+}
 switch ($path) {
     case '/':
     case '/add':       renderAdd($db, $user); break;
@@ -2846,6 +2876,7 @@ switch ($path) {
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
     case '/ledgers':   renderLedgers($db, $user); break;
+    case '/goals':     renderGoalsIndex($db, $user, isset($_GET['archived'])); break;
 
     // This ledger as a SQLite file the phone can adopt as its own. Fetched by the Android app
     // while it is online and kept beside its local ledger, so that swapping to it later is a
