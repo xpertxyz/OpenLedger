@@ -1787,6 +1787,95 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
           sec.style.display = ''; if (hr) hr.style.display = '';
 
           var online = s.mode === 'online';
+
+          /* ── The online ledger's copy on this phone ────────────────────────────────
+             The app keeps a snapshot of whichever online ledger is being viewed beside its
+             own SQLite file, refreshed on every launch and after every save. This is the
+             control that copies it over the phone's own ledger. One direction only: nothing
+             here ever pushes this phone's entries up to the shared ledger. */
+          var syncState = 'idle';
+          function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+          function ago(ms) {
+            var m = Math.round((Date.now() - ms) / 60000);
+            if (!ms) return 'never';
+            if (m < 1) return 'just now';
+            if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+            var h2 = Math.round(m / 60);
+            if (h2 < 24) return h2 + (h2 === 1 ? ' hour ago' : ' hours ago');
+            var d2 = Math.round(h2 / 24);
+            return d2 + (d2 === 1 ? ' day ago' : ' days ago');
+          }
+          function syncHtml() {
+            if (!online || !window.HLSync) return '';
+            var q; try { q = JSON.parse(HLSync.status()); } catch (e) { return ''; }
+            if (!q.available) {
+              return '<p class="muted" style="margin:0;font-size:12px;">'
+                + 'A copy of this ledger for the phone has not been downloaded yet. It arrives '
+                + 'the next time the app is opened with a connection.</p>';
+            }
+            var head = '<div style="font-size:12px;color:var(--color-neutral-800);">'
+              + 'Copy on this phone: <strong>' + esc(q.ledger || 'this ledger') + '</strong> · '
+              + q.entries + (q.entries === 1 ? ' entry' : ' entries')
+              + ' · updated ' + ago(q.syncedAt) + '</div>';
+
+            if (syncState === 'working') {
+              return head + '<p class="muted" style="margin:0;font-size:12px;">Replacing this '
+                + "phone's ledger… the app will restart when it is done.</p>";
+            }
+            if (syncState === 'confirm') {
+              /* Everything that is about to be destroyed, counted rather than described. */
+              var lose = q.local < 0
+                ? "this phone's own ledger"
+                : "this phone's own ledger and its " + q.local + (q.local === 1 ? ' entry' : ' entries');
+              return head
+                + '<div class="card" style="padding:12px;">'
+                +   '<p style="margin:0 0 6px;font-size:12px;">'
+                +     'This replaces <strong>' + lose + '</strong> with a copy of '
+                +     '<strong>' + esc(q.ledger || 'the online ledger') + '</strong>. '
+                +     'What is on the phone now is kept as a single safety copy on the device, '
+                +     'but the app will not show it again, so take a Drive backup first if it matters.'
+                +   '</p>'
+                +   '<p style="margin:0 0 10px;font-size:12px;">'
+                +     'The online ledger is not touched, and nothing from this phone is sent to it.'
+                +   '</p>'
+                +   '<div style="display:flex;gap:8px;">'
+                +     '<button class="btn btn-secondary" id="sync-no" type="button" style="flex:1;">Cancel</button>'
+                +     '<button class="btn btn-danger" id="sync-yes" type="button" style="flex:1;">Replace</button>'
+                +   '</div>'
+                + '</div>';
+            }
+            return head + '<button class="btn btn-block" id="sync-go" type="button">'
+              + "Put this copy on the phone" + '</button>';
+          }
+          function wireSync() {
+            var go = document.getElementById('sync-go');
+            if (go) go.onclick = function () {
+              /* Entries saved while offline live only in this browser until they are posted.
+                 The snapshot is built on the server, so it cannot contain them, and replacing
+                 now would throw them away without ever having filed them. */
+              var pending = (typeof queued === 'function') ? queued().length : 0;
+              if (pending) {
+                toast(pending + (pending === 1 ? ' entry is' : ' entries are')
+                  + ' still waiting to sync. Try again once they have gone up.', 'error');
+                return;
+              }
+              syncState = 'confirm'; paint(false);
+            };
+            var no = document.getElementById('sync-no');
+            if (no) no.onclick = function () { syncState = 'idle'; paint(false); };
+            var yes = document.getElementById('sync-yes');
+            if (yes) yes.onclick = function () {
+              syncState = 'working'; paint(false);
+              HLSync.promote();
+            };
+          }
+          /* The app calls this when the swap could not be done. Success needs no callback:
+             the app restarts into the ledger it just adopted. */
+          window.__hlSyncFailed = function (msg) {
+            syncState = 'idle'; paint(false);
+            toast(msg || 'Could not use that copy.', 'error');
+          };
+
           function paint(showTerms) {
             var h = '<p class="muted" style="margin:0;font-size:12px;">'
               + (online
@@ -1814,9 +1903,11 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
             } else {
               h += '<button class="btn btn-block" id="mode-go" type="button">'
                 +    (online ? "Use this phone's ledger" : 'Use the online ledger')
-                +  '</button>';
+                +  '</button>'
+                +  syncHtml();
             }
             body.innerHTML = h;
+            wireSync();
 
             var go = document.getElementById('mode-go');
             if (go) go.onclick = function () {

@@ -39,6 +39,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
@@ -61,6 +62,7 @@ class MainActivity : FragmentActivity() {
 
     private lateinit var server: PhpServer
     private lateinit var updates: UpdateBridge
+    private lateinit var sync: SyncBridge
     private lateinit var web: WebView
     private lateinit var shell: FrameLayout
     private lateinit var pull: SwipeRefreshLayout
@@ -162,6 +164,7 @@ class MainActivity : FragmentActivity() {
 
         server = PhpServer(this)
         updates = UpdateBridge(this, ::renderUpdate).also { it.start() }
+        sync = SyncBridge(this, server)
 
         // Google's Drive consent coming back. Every branch has to write something down and
         // repaint: a sheet that was dismissed used to leave the panel exactly as it was, which
@@ -195,6 +198,13 @@ class MainActivity : FragmentActivity() {
                 // exactly as long as the load takes, which only the WebView knows.
                 override fun onPageFinished(view: WebView?, url: String?) {
                     pull.isRefreshing = false
+                    // The snapshot's other cue. onResume fires before the WebView has any
+                    // cookies, so on the launch someone actually signs in on, this is the
+                    // first moment there is a session to fetch with. Debounced inside, so
+                    // moving around the site does not mean downloading it again.
+                    if (url != null && AppMode.isOnline(this@MainActivity) && url.startsWith(AppMode.SITE)) {
+                        lifecycleScope.launch(Dispatchers.IO) { sync.fetch(force = false) }
+                    }
                 }
 
                 override fun onReceivedError(
@@ -279,6 +289,9 @@ class MainActivity : FragmentActivity() {
             addJavascriptInterface(WearBridge(applicationContext), "HLWear")
             addJavascriptInterface(ThemeBridge(), "HLTheme")
             addJavascriptInterface(UiBridge(), "HLUi")
+            // The online ledger's snapshot, and the button that adopts it. Both ledgers'
+            // drawers reach for this, the same way they reach for HLMode.
+            addJavascriptInterface(sync, "HLSync")
         }
 
         // The insets go on a container, not on the WebView. A WebView accepts setPadding and
@@ -459,6 +472,20 @@ a{display:inline-block;background:${hex(accent)};color:${hex(bg)};padding:10px 2
 <script>addEventListener('online',function(){location.href=$href})</script></body></html>"""
     }
 
+    /**
+     * Is the page in front of the user actually ours?
+     *
+     * A JavascriptInterface is handed to every page the WebView loads, and online mode may
+     * navigate to Google's sign-in. Anything destructive asks this first.
+     */
+    fun onSite(): Boolean =
+        web.url?.let { it.startsWith(AppMode.SITE) || it.startsWith(server.origin) } == true
+
+    /** Call a global the page may or may not define, with one string argument. */
+    fun tellPage(fn: String, arg: String) {
+        web.evaluateJavascript("$fn && $fn(" + org.json.JSONObject.quote(arg) + ")", null)
+    }
+
     fun restartForModeChange() {
         runCatching { server.stop() }
         val i = Intent(this, MainActivity::class.java)
@@ -574,6 +601,9 @@ a{display:inline-block;background:${hex(accent)};color:${hex(bg)};padding:10px 2
         // Also the only way to notice a download that finished while the app was away: Play
         // sends no callback to a process that was not listening at the time.
         updates.refresh()
+        // And refresh the online ledger's snapshot, so the drawer's "use this copy" button is
+        // never offering something from days ago. Debounced inside, and a no-op in local mode.
+        lifecycleScope.launch(Dispatchers.IO) { sync.fetch(force = false) }
     }
 
     /**

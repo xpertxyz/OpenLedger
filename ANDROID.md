@@ -472,6 +472,51 @@ website's, so the browser gets it too.
 Nothing native listens for connectivity. The WebView raises `online` / `offline` in the page,
 which is where every reaction lives, and `navigator.onLine` is what the pill reads.
 
+## Two ledgers, and the one-way bridge between them
+
+The phone can hold two SQLite files and they are deliberately unrelated:
+
+| File | What it is |
+|---|---|
+| `files/ledger.db` | the ledger this phone owns. The only one Drive ever backs up. |
+| `files/online.db` | a snapshot of whichever online ledger is being viewed. Never backed up. |
+
+The snapshot is refreshed while online: on every resume, whenever a page of the site finishes
+loading (which is the first moment after signing in that there is a session to fetch with), and
+whenever the page reports a save through `HLSync.refresh()`. All three go through one debounce,
+so a burst of saves is one download.
+
+The website builds it. `/export/ledger.db` streams the active household as a SQLite file, and
+`buildLocalLedgerExport()` in lib.php **flattens the identity on the way out**, which is the
+whole reason it is a function rather than a `VACUUM INTO`:
+
+- exactly one user comes out, carrying `google_sub = 'local-device-user'`, owning the ledger
+- spender labels keep their names but only that user stays linked to a login
+- invites and device tokens, which are live server-side credentials, are left behind
+
+Skip that and nothing appears broken until you look: the local build finds its user by that
+sub and the watch's CLI takes the first user by id, so an unflattened copy makes the app decide
+it is a first run and build a *second* household beside the imported one, with every entry
+invisible. `--preflight` builds a real export and checks all of it.
+
+The drawer's "Put this copy on the phone" hands the snapshot to `--restore`, which validates it,
+keeps the ledger it replaces at `ledger.db.pre-restore`, then the app switches to local mode and
+restarts. It refuses while the offline queue still holds entries, because those exist only in
+the browser and the server-built snapshot cannot contain them.
+
+One direction only. Nothing here ever pushes this phone's entries up: that would be a merge
+into a ledger other people are writing to, not a copy.
+
+The download is Kotlin rather than PHP for the reason given above — the bundled interpreter has
+no OpenSSL and so no `https://` wrapper.
+
+### Testing it without the production site
+
+`AppMode.SITE` is compiled in, so point it at `http://127.0.0.1:8090` for a throwaway debug
+build and use `adb reverse tcp:8090 tcp:8090`. Loopback is the one host the network security
+config already permits in cleartext, so nothing else needs relaxing. Run the site with
+`APP_DEBUG=1` and its dev-stub sign-in works inside the WebView. Revert the constant afterwards.
+
 ## Schema upgrades
 
 The MySQL migration ladder in `lib.php` does not run on SQLite. Instead `sqliteSync()` makes the

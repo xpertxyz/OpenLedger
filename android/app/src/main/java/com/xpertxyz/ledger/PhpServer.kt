@@ -179,7 +179,6 @@ class PhpServer(private val ctx: Context) {
      * would otherwise run the PHP from the previous APK, or none at all.
      */
     fun wear(vararg args: String): String? {
-        runCatching { syncAppCode() }.onFailure { logErr("wear: could not sync app code", it); return null }
         val (code, out) = cli(*args)
         // Exit 2 is a UserErr the PHP side already shaped as {"error": …} for the watch to
         // show; anything else non-zero is ours and has no business reaching a wrist.
@@ -191,14 +190,29 @@ class PhpServer(private val ctx: Context) {
 
     /** Run one of index.php's CLI modes against this device's ledger. */
     private fun cli(vararg args: String): Pair<Int, String> {
+        // Not only start() does this. Online mode never starts the server, so nothing else
+        // would have copied the PHP out of assets — and --count and --restore run there, when
+        // the phone adopts the online ledger. Cheap: it returns at once when the stamp matches.
+        runCatching { syncAppCode() }.onFailure { logErr("cli: could not sync app code", it) }
         val php = File(ctx.applicationInfo.nativeLibraryDir, "libphp.so")
-        val p = ProcessBuilder(
-            listOf(php.absolutePath, File(docRoot, "index.php").absolutePath) + args
-        ).apply {
-            environment()["DB_DRIVER"] = "sqlite"
-            environment()["DB_PATH"] = dbPath.absolutePath
-            redirectErrorStream(true)
-        }.start()
+        // Caught rather than thrown: callers read the exit code and none of them expects an
+        // exception. A build with no interpreter in it fails here on start(), and that has to
+        // read as "this CLI mode did not work", not as something that unwinds whoever asked.
+        val p = runCatching {
+            ProcessBuilder(
+                listOf(php.absolutePath, File(docRoot, "index.php").absolutePath) + args
+            ).apply {
+                environment()["DB_DRIVER"] = "sqlite"
+                environment()["DB_PATH"] = dbPath.absolutePath
+                redirectErrorStream(true)
+            }.start()
+        }.getOrElse { e ->
+            // The exception names a path inside the APK, which is of no use to anyone holding
+            // the phone. It goes to the log; what comes back is something a person can read,
+            // because restoreFrom() hands this straight to the page as the reason.
+            logErr("php ${args.joinToString(" ")} could not start", e)
+            return -1 to "Could not run the ledger tool on this device."
+        }
         val out = p.inputStream.bufferedReader().readText()
         val code = p.waitFor()
         // The CLI's own message is the only account of what it did — "restored … 571 entries in

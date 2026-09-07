@@ -771,7 +771,8 @@ if (PHP_SAPI === 'cli') {
         // Reached by the crawler or by an old bookmark, never by a link in the app.
         // /join is reached from outside entirely — a link pasted into a chat, not rendered here.
         // /offline is sw.js's, not a view's.
-        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage', '/join', '/offline']);
+        $dead = array_diff($routes, $linked, ['/sitemap.xml', '/robots.txt', '/manage', '/join',
+                                             '/offline', '/export/ledger.db']);
         $dead ? $line('WARN', 'route nothing links to: ' . implode(', ', $dead))
               : $line('OK',   'no unreachable routes');
 
@@ -1396,6 +1397,60 @@ if (PHP_SAPI === 'cli') {
                 : $line('FAIL', 'the WebView is added without MATCH_PARENT — it auto-sizes, and all '
                               . $vhUsers . ' vh lengths in views.php silently become 0 in the app');
         }
+
+        echo "\nOnline \xe2\x86\x92 phone snapshot:\n";
+        // The phone adopts this file as its own ledger, and the local build finds its user by
+        // google_sub — so an export carrying the online household's users verbatim would make
+        // the app decide it is a first run and build a second household beside the imported
+        // one, with every entry invisible. Nothing at runtime would say so. Built for real
+        // here, against real rows, and checked the way the app will meet it.
+        try {
+            $exHid = (int)$db->query(
+                "SELECT household_id FROM expenses GROUP BY household_id ORDER BY COUNT(*) DESC LIMIT 1"
+            )->fetchColumn();
+            if (!$exHid) {
+                $line('WARN', 'no household has expenses — the export could not be built or checked');
+            } else {
+                $exUid = $db->prepare("SELECT user_id FROM household_users WHERE household_id = ? AND role = ?");
+                $exUid->execute([$exHid, ROLE_OWNER]);
+                $exUid = (int)$exUid->fetchColumn();
+                $exFile = tempnam(sys_get_temp_dir(), 'olpf');
+                try {
+                    $n = buildLocalLedgerExport($db, $exHid, $exUid, $exFile);
+                    $x = new PDO('sqlite:' . $exFile, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+                    $one = fn(string $q) => $x->query($q)->fetchColumn();
+                    $users = (int)$one("SELECT COUNT(*) FROM users");
+                    $sub   = (string)$one("SELECT COALESCE(MAX(google_sub), '') FROM users");
+                    ($users === 1 && $sub === 'local-device-user')
+                        ? $line('OK',   'the export carries exactly one user, and it is the one local mode looks for')
+                        : $line('FAIL', "the export carries $users user(s) with sub '$sub' — the app would treat it as a first run and hide the data");
+                    ((int)$one("SELECT COUNT(*) FROM household_users") === 1
+                        && (string)$one("SELECT role FROM household_users") === ROLE_OWNER)
+                        ? $line('OK',   'that user owns the exported ledger')
+                        : $line('FAIL', 'the exported ledger does not have exactly one owner');
+                    (int)$one("SELECT COUNT(*) FROM members WHERE user_id IS NOT NULL
+                              AND user_id NOT IN (SELECT id FROM users)") === 0
+                        ? $line('OK',   'no spender label is left pointing at a user who did not come with it')
+                        : $line('FAIL', 'the export has member labels linked to users it does not contain');
+                    ((int)$one("SELECT COUNT(*) FROM invites") === 0
+                        && (int)$one("SELECT COUNT(*) FROM device_tokens") === 0)
+                        ? $line('OK',   'no invite or device token travels to the phone')
+                        : $line('FAIL', 'the export carries server-side credentials (invites or device tokens)');
+                    (string)$one('PRAGMA integrity_check') === 'ok'
+                        ? $line('OK',   "the exported ledger passes integrity_check ($n entries)")
+                        : $line('FAIL', 'the exported ledger fails integrity_check');
+                    $x = null;
+                } finally {
+                    foreach (['', '-wal', '-shm'] as $sfx) @unlink($exFile . $sfx);
+                }
+            }
+        } catch (Throwable $e) { $line('FAIL', 'building the export: ' . $e->getMessage()); }
+        // The route that serves it, and the one thing standing between it and a scraper.
+        (preg_match("~case '/export/ledger.db':(.*?)exit;~s", $src, $xr)
+            && str_contains($xr[1] ?? '', 'buildLocalLedgerExport(')
+            && str_contains($xr[1] ?? '', 'rateLimit('))
+            ? $line('OK',   '/export/ledger.db builds through buildLocalLedgerExport() and is rate limited')
+            : $line('FAIL', '/export/ledger.db is missing, hand-rolls its own export, or lost its rate limit');
 
         echo "\nOffline:\n";
         $sw = (string)@file_get_contents(__DIR__ . '/sw.js');
@@ -2791,6 +2846,30 @@ switch ($path) {
     case '/year':      renderYear($db, $user, (int)($_GET['y'] ?? 0), (string)($_GET['mode'] ?? 'cal'), (string)($_GET['inv'] ?? 'all')); break;
     case '/terms':     renderTerms($db, $user); break;
     case '/ledgers':   renderLedgers($db, $user); break;
+
+    // This ledger as a SQLite file the phone can adopt as its own. Fetched by the Android app
+    // while it is online and kept beside its local ledger, so that swapping to it later is a
+    // file copy rather than a download that can fail half way. Nothing links here: the app
+    // asks for it natively, because the PHP it carries is built without OpenSSL and has no
+    // https:// wrapper to fetch with. See buildLocalLedgerExport() for what is left out.
+    case '/export/ledger.db':
+        rateLimit($db, $config, 'export', 240, 3600);
+        $tmp = tempnam(sys_get_temp_dir(), 'olx');
+        try {
+            $n = buildLocalLedgerExport($db, $hid, $uid, $tmp);
+            header('Content-Type: application/octet-stream');
+            header('Content-Length: ' . (string)filesize($tmp));
+            header('Content-Disposition: attachment; filename="open-ledger.db"');
+            header('Cache-Control: no-store');
+            // Counted here so the phone can say what it is about to adopt without opening the
+            // file. rawurlencode because a ledger name is user input and a header is one line.
+            header('X-Ledger-Entries: ' . $n);
+            header('X-Ledger-Name: ' . rawurlencode((string)($user['household_name'] ?? '')));
+            readfile($tmp);
+        } finally {
+            foreach (['', '-wal', '-shm'] as $sfx) @unlink($tmp . $sfx);
+        }
+        exit;
     case '/account/delete': renderDeleteAccount($db, $user); break;
     // A join link opened while already signed in — redeem straight away, no detour. The token
     // goes through the session either way so there is one redemption path, not two.

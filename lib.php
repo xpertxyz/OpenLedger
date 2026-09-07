@@ -1680,6 +1680,108 @@ function afterSignIn(PDO $db, int $uid): string {
     return count(ledgersFor($db, $uid)) > 1 ? '/ledgers' : '/';
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Online → phone: a copy of one ledger the local build can adopt as its own.
+//
+// The Android app keeps this file beside its real ledger and refreshes it while online, so
+// that "put the online ledger on this phone" is a local file swap rather than a download that
+// can fail halfway. Promoting it goes through --restore, which validates, stashes the ledger
+// being replaced, and re-syncs the schema.
+//
+// The identity is flattened on the way out, and that is the whole reason this is a function
+// rather than a VACUUM INTO. The local build has no Google and finds its user by looking up
+// google_sub = 'local-device-user'; the watch's CLI takes the first user by id. Copy an online
+// household verbatim and neither of them finds anybody, so the app decides it is a first run
+// and quietly builds a SECOND household beside the imported one. So exactly one user comes
+// out of here: the person asking, marked as the local device user and owning the ledger.
+//
+// Left behind on purpose: invites and device_tokens are live server-side credentials with no
+// meaning on a phone, and rate_limits is the server's own bookkeeping.
+// ────────────────────────────────────────────────────────────────────
+
+/** Household-scoped tables copied verbatim, in no particular order — the copy runs with foreign keys off. */
+const EXPORT_TABLES = [
+    'members', 'categories', 'investment_types', 'earning_categories',
+    'expenses', 'earnings', 'investments', 'recurring',
+];
+
+function buildLocalLedgerExport(PDO $db, int $hid, int $uid, string $out): int {
+    foreach (['', '-wal', '-shm'] as $suffix) @unlink($out . $suffix);
+    $to = new PDO('sqlite:' . $out, null, null, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+    // One self-contained file with no -wal beside it: the phone copies this single path.
+    $to->exec('PRAGMA journal_mode = DELETE');
+    sqliteSync($to);
+
+    // Only the columns the destination actually has. The phone may be running an older build
+    // than the server, and a column it has never heard of must not fail the whole export.
+    $writer = function (string $table) use ($to): callable {
+        $cols = array_flip(array_column($to->query("PRAGMA table_info($table)")->fetchAll(), 'name'));
+        $stmt = null; $keys = null;
+        return function (array $row) use ($to, $table, $cols, &$stmt, &$keys) {
+            $row = array_intersect_key($row, $cols);
+            if ($stmt === null) {
+                $keys = array_keys($row);
+                $stmt = $to->prepare(
+                    "INSERT INTO $table (" . implode(', ', $keys) . ') VALUES ('
+                    . implode(', ', array_fill(0, count($keys), '?')) . ')'
+                );
+            }
+            $stmt->execute(array_map(fn($k) => $row[$k] ?? null, $keys));
+        };
+    };
+
+    $to->beginTransaction();
+
+    $h = $db->prepare("SELECT * FROM households WHERE id = ?");
+    $h->execute([$hid]);
+    if (!($household = $h->fetch())) throw new RuntimeException('no such ledger');
+    ($writer('households'))($household);
+
+    // The one user, wearing the local device's identity. Their own name, theme and currency
+    // come along; the Google account they signed in with deliberately does not.
+    $u = $db->prepare("SELECT * FROM users WHERE id = ?");
+    $u->execute([$uid]);
+    $me = $u->fetch() ?: [];
+    ($writer('users'))([
+        'id'           => $uid,
+        'household_id' => $hid,
+        'google_sub'   => 'local-device-user',
+        'email'        => (string)($me['email'] ?? ''),
+        'name'         => (string)($me['name'] ?? 'Me'),
+        'is_dark'      => (int)($me['is_dark'] ?? 0),
+        'theme'        => (string)($me['theme'] ?? 'organic'),
+        'currency'     => (string)($me['currency'] ?? '₹'),
+    ]);
+    ($writer('household_users'))(['household_id' => $hid, 'user_id' => $uid, 'role' => ROLE_OWNER]);
+
+    $entries = 0;
+    foreach (EXPORT_TABLES as $table) {
+        $write = $writer($table);
+        $rows = $db->prepare("SELECT * FROM $table WHERE household_id = ?");
+        $rows->execute([$hid]);
+        foreach ($rows->fetchAll() as $row) {
+            // A spender label keeps its name whoever it belonged to, but only this phone's
+            // user may still be linked to a login — the same unlinking /household-users/remove
+            // does, and what keeps "every claimed member belongs to someone in that ledger" true.
+            if ($table === 'members' && (int)($row['user_id'] ?? 0) !== $uid) $row['user_id'] = null;
+            // One person owns everything here now, so authorship follows. member_id is what
+            // still says who spent it, and that is copied untouched.
+            if (array_key_exists('created_by', $row)) $row['created_by'] = $uid;
+            $write($row);
+            if (in_array($table, ['expenses', 'earnings', 'investments'], true)) $entries++;
+        }
+    }
+
+    $to->commit();
+    if ($to->query('PRAGMA integrity_check')->fetchColumn() !== 'ok') {
+        throw new RuntimeException('the exported copy failed its integrity check');
+    }
+    return $entries;
+}
+
 // Everything that is theirs, gone: the sign-in, every ledger they own with all of its rows, and
 // their seat in every ledger someone else owns. Entries they added to those other ledgers stay
 // — the household paid for them, the same reasoning as /ledgers/leave — with the spender label
