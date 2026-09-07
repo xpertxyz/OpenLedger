@@ -1957,12 +1957,24 @@ function renderProfileDrawer(PDO $db, array $user, string $requestUri): void {
 
         <?php /* Last line in the drawer, and only on the phone. The website is whatever is
                  deployed at the moment you load it, so a version number there names something
-                 nobody can act on; an APK sits on a device for months. */ ?>
-        <?php if (APP_VERSION !== ''): ?>
-          <div style="margin-top:10px; font-size:11px; text-align:center; color:var(--color-neutral-800);">
-            Version <?= h(APP_VERSION) ?>
-          </div>
-        <?php endif; ?>
+                 nobody can act on; an APK sits on a device for months.
+
+                 Emitted empty rather than skipped, because only the local build can fill it in
+                 here: online this same drawer is served by the website, which has no idea which
+                 APK is showing it. The script below asks the app instead. In a real browser
+                 there is no bridge, nothing fills it, and it stays hidden. */ ?>
+        <div id="app-version" style="margin-top:10px; font-size:11px; text-align:center; color:var(--color-neutral-800);<?= APP_VERSION === '' ? 'display:none;' : '' ?>"><?= APP_VERSION === '' ? '' : 'Version ' . h(APP_VERSION) ?></div>
+        <script>
+        (function () {
+          var el = document.getElementById('app-version');
+          /* Already answered by PHP in the local build; nothing to ask for. */
+          if (!el || el.textContent.trim() || !window.HLMode) return;
+          try {
+            var v = JSON.parse(HLMode.status()).version;
+            if (v) { el.textContent = 'Version ' + v; el.style.display = ''; }
+          } catch (e) {}
+        })();
+        </script>
       </div>
     </aside>
     <?php
@@ -2714,6 +2726,16 @@ function renderSetup(string $error, array $old): void {
                  . 'and can be sealed with a passphrase only you know.';
     }
     $facts[] = 'Uninstall and it is <strong>gone</strong>. No copy survives somewhere else.';
+    // Drawn in both cards, so it lives in one place.
+    $lockup = <<<'SVG'
+      <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="var(--color-accent)"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
+      </svg>
+SVG;
+
     $factList = implode('', array_map(
         fn($t) => '<li style="display:flex;gap:8px;align-items:flex-start;">'
                 . '<span style="color:var(--color-accent);flex:none;margin-top:1px;">' . icon('check', 15) . '</span>'
@@ -2741,14 +2763,22 @@ $boot
 <body>
 $sprite
 <div style="width:100%;max-width:340px;padding:var(--space-4);">
+  <div id="choose-pane" style="display:none;">
+    <div class="card elev-lg" style="padding:var(--space-6);gap:var(--space-4);">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;">
+$lockup
+        <h1 style="margin:0;font-family:var(--font-heading);font-size:24px;font-weight:normal;">Two ways to start</h1>
+      </div>
+      <!-- Flex spelled out rather than class="stack": that class is defined in layout()'s
+           stylesheet, and this is a standalone page that does not include it. As a plain block
+           the gap did nothing and the two options sat flush against each other. -->
+      <div id="choose-body" style="display:flex;flex-direction:column;gap:24px;width:100%;"></div>
+    </div>
+  </div>
+  <div id="setup-pane">
   <div class="card elev-lg" style="padding:var(--space-6);gap:var(--space-4);">
     <div style="display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;">
-      <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="var(--color-accent)"
-           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-        <circle cx="12" cy="12" r="0.85" fill="var(--color-accent-2)" stroke="none"/>
-      </svg>
+$lockup
       <h1 style="margin:0;font-family:var(--font-heading);font-size:24px;font-weight:normal;">Set up your ledger</h1>
       <p style="margin:0;font-family:var(--font-heading);font-size:19px;line-height:1.3;color:var(--color-accent-700);">
         You own your data.<br>Every last rupee of it.</p>
@@ -2778,7 +2808,13 @@ $sprite
         <input class="input" id="s-email" name="email" type="email" maxlength="190"
                autocomplete="email" autocapitalize="none" spellcheck="false" value="$email"></label>
       <button class="btn btn-primary btn-block" id="s-save" type="submit" disabled>Create my ledger</button>
+      <!-- Only when there was a choice to come back to. A first run should not be a one-way
+           door: tapping the wrong card would otherwise mean creating a ledger to escape it. -->
+      <button type="button" id="s-back" style="display:none;background:none;border:none;padding:0;
+              font:inherit;font-size:12px;cursor:pointer;color:var(--color-neutral-800);
+              text-decoration:underline;text-underline-offset:2px;">Back</button>
     </form>
+  </div>
   </div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;
               margin-top:14px;font-size:12px;color:var(--color-neutral-800);">
@@ -2802,7 +2838,88 @@ $sprite
   });
   l.addEventListener('input', function () { touched = true; sync(); });
   sync();
-  n.focus();
+
+  /*
+   * First run inside the Android app, where there is a second ledger to choose.
+   *
+   * Without this the only way in was to create a phone ledger first and then find the switch in
+   * the drawer, so somebody who came for the shared online one had to build the thing they did
+   * not want before they could leave it. Gated on the bridge rather than a feature flag: a
+   * self-hosted web install renders this same screen and has no online ledger to offer, so
+   * there the chooser never appears and the form is the whole page, exactly as before.
+   */
+  var choose = document.getElementById('choose-pane'),
+      setup  = document.getElementById('setup-pane'),
+      back   = document.getElementById('s-back'),
+      body   = document.getElementById('choose-body');
+  back.onclick = function () {
+    setup.style.display = 'none';
+    back.style.display = 'none';
+    choose.style.display = '';
+  };
+
+  var mode = null;
+  try { mode = window.HLMode ? JSON.parse(HLMode.status()) : null; } catch (e) { mode = null; }
+  /* No app, no choice to make: the form is the page, and the cursor belongs in it. */
+  if (!mode) { n.focus(); return; }
+
+  setup.style.display = 'none';
+  choose.style.display = '';
+
+  function paint(askTerms) {
+    if (askTerms) {
+      /* The agreement the drawer also asks for, in the words that fit here: on a first run
+         there is no phone ledger yet, so it cannot promise one is left untouched. */
+      /* One child, so the 24px that separates the two options does not also push this step's
+         own paragraph, link and buttons apart. It sets its own, tighter spacing. */
+      body.innerHTML =
+          '<div style="display:flex;flex-direction:column;gap:14px;">'
+        +   '<p style="margin:0;font-size:13px;line-height:1.5;">'
+        +     'The online ledger keeps your entries on our server rather than on this phone, which '
+        +     'is what lets you share one with the people you invite. You can start a phone-only '
+        +     'ledger later from the menu, and nothing is copied between the two.'
+        +   '</p>'
+        +   '<a class="plain-link" href="/terms" style="font-size:12px;">Read the full terms</a>'
+        +   '<div style="display:flex;gap:8px;">'
+        +     '<button class="btn btn-secondary" id="t-no" type="button" style="flex:1;">Back</button>'
+        +     '<button class="btn btn-primary" id="t-yes" type="button" style="flex:1;">I agree</button>'
+        +   '</div>'
+        + '</div>';
+      document.getElementById('t-no').onclick = function () { paint(false); };
+      document.getElementById('t-yes').onclick = function () {
+        HLMode.acceptTerms();
+        HLMode.switchTo('online');
+      };
+      return;
+    }
+    /* Each option is one block: the button and the line that explains it. Loose lines between
+       two buttons read as belonging to whichever one the eye reaches first, which on a screen
+       whose entire job is telling two choices apart is the one thing it must not do. */
+    var opt = function (id, kind, label, note) {
+      return '<div>'
+        +      '<button class="btn ' + kind + ' btn-block" id="' + id + '" type="button">' + label + '</button>'
+        +      '<p style="margin:7px 0 0;text-align:center;font-size:12px;line-height:1.45;'
+        +         'color:var(--color-neutral-800);">' + note + '</p>'
+        +    '</div>';
+    };
+    body.innerHTML =
+        opt('c-local', 'btn-primary', 'Use this phone only',
+            'No account and no server. Every entry stays in one file on this phone.')
+      + opt('c-online', 'btn-secondary', 'Sign in to the online ledger',
+            'Sign in with Google to keep one ledger with the rest of your household.');
+    document.getElementById('c-local').onclick = function () {
+      choose.style.display = 'none';
+      setup.style.display = '';
+      back.style.display = '';
+      n.focus();
+    };
+    document.getElementById('c-online').onclick = function () {
+      /* Already agreed on this device, so there is nothing to ask again. */
+      if (mode.termsAccepted) { HLMode.switchTo('online'); return; }
+      paint(true);
+    };
+  }
+  paint(false);
 })();
 </script>
 </body></html>

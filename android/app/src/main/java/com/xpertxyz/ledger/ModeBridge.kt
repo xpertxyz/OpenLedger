@@ -17,6 +17,10 @@ class ModeBridge(private val activity: MainActivity) {
         .put("mode", AppMode.current(activity))
         .put("termsAccepted", AppMode.termsAcceptedAt(activity) > 0L)
         .put("site", AppMode.SITE)
+        // Online, the drawer is the website's, and a deployed site cannot know what is running
+        // it. Built the same way PhpServer builds HL_APP_VERSION, so the line reads the same
+        // whichever ledger is on.
+        .put("version", BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
         .toString()
 
     /** Records that the terms were read. Separate call, so the page can gate the switch on it. */
