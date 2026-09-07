@@ -87,11 +87,21 @@ and ledger sharing, which the phone build compiles out.
     <td align="center"><img src="docs/screenshots/android/expense-dark.png" alt="Expense in dark" width="240"><br><sub><b>Expense — dark</b></sub></td>
     <td align="center"><img src="docs/screenshots/android/earn-dark.png" alt="Earn in dark" width="240"><br><sub><b>Earn — dark</b></sub></td>
   </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/android/goals.png" alt="Investment goals" width="240"><br><sub><b>Goals — one card per goal, with status</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/goal.png" alt="A goal dashboard" width="240"><br><sub><b>Goal — target, value, plan, next rung</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/goal-charts.png" alt="Projection and invested charts" width="240"><br><sub><b>Goal — the fan, and plan against ledger</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/android/goal-year.png" alt="Year by year" width="240"><br><sub><b>Goal — year by year, calendar or FY</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/goal-new.png" alt="New goal dialog" width="240"><br><sub><b>New goal — assumptions and what counts</b></sub></td>
+    <td align="center"><img src="docs/screenshots/android/goal-dark.png" alt="A goal in dark" width="240"><br><sub><b>Goal — dark</b></sub></td>
+  </tr>
 </table>
 
 <sub>Originals are 1344 × 2992 PNG in <a href="docs/screenshots/android/"><code>docs/screenshots/android/</code></a>. Google Play wants each side between 320 and 3840 px and an aspect ratio no taller than 2:1, so these need scaling or padding (they are 2.23:1) before they go on a listing. The earlier web-UI captures are still in <code>docs/screenshots/</code>.</sub>
 
-<sub>Every figure in them comes from <code>tests/demo-seed.php</code> — a generated fourteen months of household money. No real ledger appears anywhere in this repository.</sub>
+<sub>Every figure in them comes from <code>tests/demo-seed.php</code> — fourteen generated months of household spending, thirty of investing against a nested type tree, and two goals with quarterly snapshots read off the projection. No real ledger appears anywhere in this repository.</sub>
 
 ---
 
@@ -371,8 +381,15 @@ households ─┬─ users        (Google-authenticated, one per person)
             ├─ expenses     (fact table, indexed on (household_id, date))
             ├─ investments  (fact table, indexed on (household_id, date))
             ├─ earnings     (fact table, indexed on (household_id, date))
-            └─ recurring    (kind: 'expense' | 'earning' | 'investment' — auto-posts to the right table;
-                             `end_date` NULL = repeats forever, set = a split bill that stops there)
+            ├─ recurring    (kind: 'expense' | 'earning' | 'investment' — auto-posts to the right table;
+            │                `end_date` NULL = repeats forever, set = a split bill that stops there)
+            └─ goals        (a target and the assumptions that reach it: corpus, monthly SIP, step-up,
+                │            low/base/high returns, horizon, which types and whose entries count.
+                │            Nothing derived is stored — change an assumption and every figure moves)
+                ├─ goal_snapshots   (what the portfolio was worth on a day, typed in from the broker —
+                │                    the one fact about a goal the ledger cannot compute)
+                └─ goal_milestones  (a row exists only to hold what the default ladder cannot:
+                                     a custom amount, or a hand-set achieved date)
 rate_limits (bucket, hits, window_end)  — GC'd by cron
 ```
 
@@ -402,6 +419,10 @@ A few behaviours worth knowing:
 - **A recurring item keeps posting into an archived type.** Nothing is silently stopped — the archive confirmation says so and points you at the Recurring tab.
 - **A name is rendered from the reader's side.** `members.name` is one stored string, so an owner who calls their own row "Me" was showing everyone else their word for themselves. `memberLabel()` resolves it per viewer instead: your own row is *Me*, a row with a login is that person's account name, and only a row nobody signs in as uses the stored string. That is also why the "Names on entries" card on `/ledgers` only offers a rename box for unlinked rows — for the others it would edit a string nothing displays.
 - **The owner may file an entry under any member; nobody else may.** `attributableMember()` is the single server-side rule and `attributableIds()` its view-side twin, so a picker never offers a name the server would refuse. For a member the posted `member_id` is ignored entirely and replaced with their own linked row.
+- **A goal stores assumptions, and nothing it can work out for itself.** `goals` holds the target, the corpus you began with, the monthly SIP and its step-up, three annual return rates and a horizon. Every figure on the page — the fan, the milestone dates, "planned today", the year table — is recomputed from those on each render by `goalProject()`, a pure function asserted against a reference workbook in `goalsSelfcheck()`. So correcting a return rate moves every date and every value at once, and there is no cache to go stale and no second copy to disagree. The two things it genuinely cannot derive are stored: what the portfolio is actually worth (a snapshot you type in) and a milestone date you set by hand.
+- **What a goal counts is read from the ledger, and a type brings its sub-types.** "Actual in" and "Invested" are a `SUM` over `investments` since the goal's tracking start — the household already logs every rupee on the Invest tab and a goal never asks for it twice. The filter is by type *name*, like everything else that touches `investments.type`, and `goalTypeNames()` expands a ticked parent to its children before the query runs. Ticking "Equity" therefore counts the SIP and the Stocks filed under it, which is what the type already means everywhere else: `rollupTypes()` folds the same child into the same parent's bar on the Invest tab. Matching names literally would report a household behind on a goal it is meeting, and the Assumptions card lists the expanded set rather than what was ticked so the two can never quietly differ.
+- **"Planned in" and "Actual in" are both contributions; the corpus is in neither.** The starting corpus was already there before the plan began, so counting it on the planned side and not the actual side would make every year look like a shortfall that never happened. Both columns are money added since tracking started, which is also what the *Invested* tile has always compared. The corpus is where the value columns (low/base/high) begin, and the projection chart's dashed line says "Planned in + corpus" because that is the baseline it draws.
+- **A snapshot is judged against its own month, not against today.** `goalStatus()` compares the value you typed to the projection row for the month it is dated in: below `band_low ×` the low path is *behind*, above the high path is *ahead*, anything between is *on track*. That is what lets an old snapshot keep the verdict it earned instead of being re-judged against a path that has since moved on, and it is why the year table can print a status per year rather than one for the goal. A snapshot older than 45 days gets a *stale* tag on the card — the status is only as current as the number behind it.
 
 ### Security
 

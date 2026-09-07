@@ -22,9 +22,17 @@ unless the user turns on Drive backup, and then it goes to their own Drive.
 | Piece | Where |
 |---|---|
 | PHP interpreter | `android/app/src/main/jniLibs/arm64-v8a/libphp.so` (built, not committed) |
-| The app's PHP | copied into assets from the repo root at build time |
+| The app's PHP | copied into assets from the repo root at build time — a **named list**, `phpAppFiles` in `android/app/build.gradle.kts` |
 | Database | `filesDir/ledger.db` |
 | Configuration | process environment, set by `PhpServer.kt` |
+
+**Adding a PHP file means adding it to that list.** The APK does not take the repo wholesale, so a
+new file that `index.php` requires and `phpAppFiles` does not name is a fatal at require time on
+the phone and nowhere else: every page answers 500 and the WebView shows
+`ERR_HTTP_RESPONSE_CODE_FAILURE` without naming the file. The website stays perfectly healthy,
+because the server has it. `--preflight` now cross-checks the list against every
+`require __DIR__ . '/x.php'` in the app, so the miss is a failed gate rather than a bricked
+install — but the list is still the thing to edit.
 
 ---
 

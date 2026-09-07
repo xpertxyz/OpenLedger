@@ -1012,8 +1012,14 @@ function hlSelect(sel) {
   // recurring dialog swaps three of them by kind. The wrapper is the box in the layout now,
   // so it has to follow, and mirroring here beats editing every call site.
   new MutationObserver(mirror).observe(sel, { attributes: true, attributeFilter: ['style'] });
-  w.addEventListener('click', function () {
+  w.addEventListener('click', function (e) {
     if (sel.disabled) return;
+    // A <label> around the select forwards the tap to it as a second, synthetic click, which
+    // bubbles back out through this wrapper — opening the list and closing it again in the
+    // same gesture, so the control reads as dead. A real tap can never land on the select
+    // itself: this wrapper covers it and the select has pointer-events:none. So a click that
+    // targets the select is always that echo, and never a user.
+    if (e.target === sel) return;
     if (selFor === sel) closeSelect(); else openSelect(sel);
   });
   sel.addEventListener('keydown', function (e) {

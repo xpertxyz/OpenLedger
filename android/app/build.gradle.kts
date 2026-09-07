@@ -10,8 +10,8 @@ android {
         applicationId = "com.xpertxyz.ledger"
         minSdk = 24
         targetSdk = 37
-        versionCode = 21
-        versionName = "1.0.21"
+        versionCode = 23
+        versionName = "1.0.23"
 
         // Only arm64. Every Android device sold for years is arm64, and each extra ABI adds
         // another ~8MB PHP binary to the download for machines that no longer exist.
@@ -95,7 +95,7 @@ android {
  * web app it is not in the phone app.
  */
 val phpAppFiles = listOf(
-    "index.php", "lib.php", "views.php", "config.php", "router.php", "api.php",
+    "index.php", "lib.php", "views.php", "goals.php", "config.php", "router.php", "api.php",
     "manifest.webmanifest"
 )
 val phpAppDirs = listOf("design-tokens", "assets")

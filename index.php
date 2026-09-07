@@ -480,6 +480,14 @@ if (PHP_SAPI === 'cli') {
             )->fetchColumn();
             $bad === 0 ? $line('OK', 'no category nested more than one level')
                        : $line('FAIL', "$bad categor(y/ies) nested two levels deep");
+            // The same rule for investment types, which two features now lean on: the Invest
+            // tab rolls a child's total into its parent's bar, and a goal's type filter counts
+            // a parent's sub-types along with it. A second level would be invisible to both.
+            $badType = (int)$db->query(
+                "SELECT COUNT(*) FROM investment_types c JOIN investment_types p ON p.id = c.parent_id WHERE p.parent_id IS NOT NULL"
+            )->fetchColumn();
+            $badType === 0 ? $line('OK', 'no investment type nested more than one level')
+                           : $line('FAIL', "$badType investment type(s) nested two levels deep — rollups and goal filters would miss them");
             $budKids = (int)$db->query("SELECT COUNT(*) FROM categories WHERE parent_id IS NOT NULL AND budget > 0")->fetchColumn();
             $budKids === 0 ? $line('OK', 'no sub-category carries its own budget')
                            : $line('WARN', "$budKids sub-categor(y/ies) still carry a budget — the household total will double-count");
@@ -1412,6 +1420,32 @@ if (PHP_SAPI === 'cli') {
                 ? $line('OK',   'the app gives its WebView MATCH_PARENT, so vh resolves (' . $vhUsers . ' vh lengths in views.php depend on it)')
                 : $line('FAIL', 'the WebView is added without MATCH_PARENT — it auto-sizes, and all '
                               . $vhUsers . ' vh lengths in views.php silently become 0 in the app');
+        }
+
+        // The APK does not take the repo wholesale — it copies a named list of files into its
+        // assets. A new file that index.php requires and that list does not name is a fatal at
+        // require time on the phone and nowhere else: every page answers 500 and the WebView
+        // shows ERR_HTTP_RESPONSE_CODE_FAILURE with no clue which file is missing. The web
+        // stays perfectly healthy, so nothing short of installing the app would notice.
+        $kts = (string)@file_get_contents(__DIR__ . '/android/app/build.gradle.kts');
+        if ($kts === '') {
+            $line('WARN', 'android/app/build.gradle.kts not readable — cannot check the app ships every PHP file it requires');
+        } else {
+            preg_match('~val phpAppFiles = listOf\((.*?)\)~s', $kts, $pk);
+            preg_match_all('~"([^"]+)"~', $pk[1] ?? '', $sh);
+            $shipped = $sh[1];
+            $needs = [];
+            foreach (glob(__DIR__ . '/*.php') as $f) {
+                preg_match_all("~require(?:_once)?\s+__DIR__\s*\.\s*'/([\w.-]+\.php)'~",
+                               (string)file_get_contents($f), $r);
+                foreach ($r[1] as $dep) $needs[$dep] = basename($f);
+            }
+            $unshipped = array_diff(array_keys($needs), $shipped);
+            $unshipped
+                ? $line('FAIL', 'required by the app but not in phpAppFiles: '
+                              . implode(', ', array_map(fn($d) => "$d (required by {$needs[$d]})", $unshipped))
+                              . ' — the APK would 500 on every page')
+                : $line('OK',   'the APK ships every PHP file the app requires (' . count($needs) . ' checked against phpAppFiles)');
         }
 
         echo "\nOnline \xe2\x86\x92 phone snapshot:\n";

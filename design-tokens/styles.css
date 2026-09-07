@@ -312,7 +312,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 .goal-chart .snap.ahead { fill: var(--color-accent-2-600); }
 .goal-chart .snap.ontrack { fill: var(--color-accent); }
 .goal-chart .snap.behind, .goal-chart .snap.none { fill: #c0392b; }
-.goal-chart-bars .planned { fill: none; stroke: var(--color-neutral-700); stroke-width: 1.2; }
+.goal-chart-bars .planned { fill: none; stroke: var(--color-neutral-700); stroke-width: 1.2; stroke-dasharray: 4 3; }  /* dashed = the plan, solid = what happened; same language as the projection's dashed line */
 .goal-chart-bars .actual { fill: var(--color-accent-2); }
 .goal-tip { position: absolute; pointer-events: none; font-size: 12px; line-height: 1.4; padding: 8px 10px;
             background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-sm);
@@ -327,9 +327,20 @@ textarea.input { min-height: 90px; resize: vertical; }
   .goal-kpis { grid-template-columns: repeat(2, 1fr); }
   .goal-kpi .v { font-size: 17px; }
   .goal-chart .fan-low, .goal-chart .fan-high { display: none; }
-  /* A 20-year chart cannot shrink to a phone and stay legible; it scrolls sideways instead. */
+  /* Two hundred and forty months cannot shrink to a phone and stay legible, so the projection
+     keeps its width and scrolls sideways — it starts at today, which is the end that matters.
+     The bar chart is at most 24 months and does fit, so it must NOT scroll: the one month with
+     data would sit off-screen behind a scrollbar nobody sees. It pays for fitting with bigger
+     type — a label is measured in user units, so 20 of them come out around 8px once the
+     viewBox has been squeezed onto a 390px screen. */
   .goal-chart-wrap { overflow-x: auto; }
   .goal-chart { min-width: 720px; }
+  .goal-chart-bars { min-width: 0; }
+  .goal-chart-bars .lbl { font-size: 20px; }
+  /* Three fields across is fine on a desktop dialog and clips a date to "09/01/202" on a
+     phone. Two across, and the odd one out takes the full width. */
+  .goal-dialog .field-row { flex-wrap: wrap; }
+  .goal-dialog .field-row > * { flex: 1 1 42%; }
   .goal-dl { grid-template-columns: 1fr; gap: 2px; }
   .goal-dl dd { margin-bottom: 6px; }
 }

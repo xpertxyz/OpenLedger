@@ -86,6 +86,12 @@ function goalFirstReach(array $proj, string $x, float $amount): ?array {
     return null;
 }
 
+// A YYYY-MM moved by whole months, forwards or back. No day to clamp, so no DateInterval.
+function goalShiftYm(string $ym, int $months): string {
+    $n = ((int)substr($ym, 0, 4)) * 12 + ((int)substr($ym, 5, 2)) - 1 + $months;
+    return sprintf('%04d-%02d', intdiv($n, 12), $n % 12 + 1);
+}
+
 // Months from $a to $b (YYYY-MM prefixes), positive when $b is later.
 function goalMonthsBetween(string $a, string $b): int {
     return ((int)substr($b, 0, 4) - (int)substr($a, 0, 4)) * 12 + ((int)substr($b, 5, 2) - (int)substr($a, 5, 2));
@@ -146,6 +152,12 @@ function goalYearRows(array $g, array $proj, array $actuals, array $snaps, strin
         $val  = $snap ? (float)$snap['current_value'] : null;
         $out[] = $r + [
             'label'      => $mode === 'fy' ? $r['fy'] : (string)$r['cy'],
+            // The row is labelled by the month it ends in, which for the year in progress is
+            // still in the future. What was invested so far belongs on it regardless, so the
+            // page needs to know when the period began.
+            // Plain arithmetic, not addMonths(): that helper only steps forward, and widening
+            // it would touch the recurring sweep for the sake of one label.
+            'period_start' => goalShiftYm($r['ym'], -11),
             'actual_cum' => goalActualCumAt($actuals, $r['ym']),
             'band_value' => $r['low'] * $band,
             'snapshot'   => $snap,
@@ -170,7 +182,7 @@ function goalActualCumAt(array $actuals, string $ym): ?float {
 function goalActuals(PDO $db, array $g): array {
     $sql  = "SELECT " . sqlYm($db, '`date`') . " AS m, SUM(amount) AS amt FROM investments WHERE household_id = ? AND `date` >= ?";
     $bind = [(int)$g['household_id'], substr((string)$g['tracking_start'], 0, 7) . '-01'];
-    $types = goalTypeList((string)$g['type_filter']);
+    $types = goalTypeNames($db, (int)$g['household_id'], (string)$g['type_filter']);
     if ($types) {
         $sql .= ' AND type IN (' . implode(',', array_fill(0, count($types), '?')) . ')';
         array_push($bind, ...$types);
@@ -189,6 +201,31 @@ function goalActuals(PDO $db, array $g): array {
 
 function goalTypeList(string $csv): array {
     return array_values(array_filter(array_map('trim', explode(',', $csv)), fn($t) => $t !== ''));
+}
+
+// The names a goal's type filter actually matches: the ones ticked, plus the sub-types of any
+// parent among them. Ticking "SIP" has to count the SIP entries and the "Stocks" filed under
+// it, because that is what the type means everywhere else — the Invest tab rolls a child's
+// spend into its parent's bar and its target. A filter that did not would quietly report a
+// household as behind on a goal it is meeting.
+//
+// One level, which is all this app's types have: a category with a parent can never be a
+// parent itself, and --preflight fails the build if one ever is.
+function goalTypeNames(PDO $db, int $hid, string $csv): array {
+    $picked = goalTypeList($csv);
+    if (!$picked) return [];                 // nothing ticked = every type, no clause at all
+    $s = $db->prepare("SELECT id, name, parent_id FROM investment_types WHERE household_id = ?");
+    $s->execute([$hid]);
+    $rows = $s->fetchAll();
+    $pickedIds = [];
+    foreach ($rows as $r) if (in_array($r['name'], $picked, true)) $pickedIds[] = (int)$r['id'];
+    $want = array_fill_keys($picked, true);
+    foreach ($rows as $r) {
+        if ($r['parent_id'] !== null && in_array((int)$r['parent_id'], $pickedIds, true)) {
+            $want[$r['name']] = true;
+        }
+    }
+    return array_keys($want);
 }
 
 function goalSnapshots(PDO $db, int $goalId): array {
@@ -292,6 +329,11 @@ function goalsSelfcheck(): void {
     assert($cy[0]['label'] === '2026' && $cy[0]['ym'] === '2026-12', 'goal: cy rows end in December');
     assert($fy[0]['label'] === 'FY2026-27' && $fy[0]['ym'] === '2027-03', 'goal: fy rows end in March');
     assert(goalMonthsBetween('2029-09', '2029-08') === -1);
+    assert(goalShiftYm('2026-12', -11) === '2026-01');
+    assert(goalShiftYm('2027-03', -11) === '2026-04');   // the FY row's period starts in April
+    assert(goalShiftYm('2026-01', -1)  === '2025-12');   // back over a year boundary
+    assert(goalShiftYm('2026-12', 1)   === '2027-01');
+    assert($cy[0]['period_start'] === '2026-01' && $fy[0]['period_start'] === '2026-04');
     assert(goalFmtCompact(2500000.0) === '₹25 L' && goalFmtCompact(10200000.0) === '₹1.02 Cr' && goalFmtCompact(60000.0) === '₹60,000');
 }
 
@@ -660,7 +702,7 @@ function renderGoalDashboard(PDO $db, array $user, int $id, bool $print): void {
           <a class="seg-opt<?= $scale === 'log' ? ' on' : '' ?>" href="<?= h($qs(['scale' => 'log'])) ?>">Log</a>
         </div>
       </div>
-      <div class="ylegend goal-legend"><span><i class="sw" style="background:var(--color-accent);opacity:.2"></i>Low–high fan</span><span><i class="sw" style="background:var(--color-accent)"></i>Base</span><span><i class="sw" style="background:var(--color-neutral-700)"></i>Planned invested</span><span><i class="sw" style="background:var(--color-accent-2)"></i>Actually invested</span><span><i class="sw" style="border-radius:50%;background:var(--color-accent-700)"></i>Snapshots</span></div>
+      <div class="ylegend goal-legend"><span><i class="sw" style="background:var(--color-accent);opacity:.2"></i>Low–high fan</span><span><i class="sw" style="background:var(--color-accent)"></i>Base</span><span><i class="sw" style="background:var(--color-neutral-700)"></i>Planned in + corpus</span><span><i class="sw" style="background:var(--color-accent-2)"></i>Actually invested</span><span><i class="sw" style="border-radius:50%;background:var(--color-accent-700)"></i>Snapshots</span></div>
       <?= goalSvgProjection($g, $S, $scale) ?>
     </div>
 
@@ -725,8 +767,15 @@ function renderGoalDashboard(PDO $db, array $user, int $id, bool $print): void {
               <td><b><?= h($y['label']) ?></b></td>
               <td><?= h(goalMonthLabel($y['ym'])) ?></td>
               <td><?= h(fmtShort($y['sip'])) ?></td>
-              <td><?= h(goalFmtCompact($y['planned_cum'])) ?></td>
-              <td><?= $y['actual_cum'] !== null && $y['ym'] <= $S['today_ym'] ? h(goalFmtCompact($y['actual_cum'])) : '—' ?></td>
+              <?php /* Contributions, not value: the corpus was already there before the plan
+                       started, so counting it here would make every "planned" figure look bigger
+                       than the actual sitting next to it. Same subtraction as the KPI. */ ?>
+              <td><?= h(goalFmtCompact($y['planned_cum'] - (float)$g['starting_corpus'])) ?></td>
+              <?php /* A year that has not started yet has no actuals; the one running has some, and
+                       says so rather than reporting a full year that has not happened. */ ?>
+              <td><?= $y['actual_cum'] !== null && $y['period_start'] <= $S['today_ym']
+                        ? h(goalFmtCompact($y['actual_cum'])) . ($y['ym'] > $S['today_ym'] ? ' <span class="muted" title="So far — this year is still running">so far</span>' : '')
+                        : '—' ?></td>
               <td><?= h(goalFmtCompact($y['low'])) ?></td>
               <td><b><?= h(goalFmtCompact($y['base'])) ?></b></td>
               <td><?= h(goalFmtCompact($y['high'])) ?></td>
@@ -737,7 +786,7 @@ function renderGoalDashboard(PDO $db, array $user, int $id, bool $print): void {
           <?php endforeach; ?>
           </tbody>
         </table></div>
-        <div class="muted">"Planned in" includes the starting corpus of <?= h(goalFmtCompact((float)$g['starting_corpus'])) ?>; "Actual in" counts only ledger entries since <?= h(goalMonthLabel(substr($g['tracking_start'], 0, 7))) ?>.</div>
+        <div class="muted">Both "in" columns are money added since <?= h(goalMonthLabel(substr($g['tracking_start'], 0, 7))) ?>, so they compare directly. The starting corpus of <?= h(goalFmtCompact((float)$g['starting_corpus'])) ?> is in neither — it is where the value columns begin. "Actual in" is read from the Invest tab.</div>
       </div>
     </div>
 
@@ -775,7 +824,10 @@ function renderGoalDashboard(PDO $db, array $user, int $id, bool $print): void {
           <dt>Returns</dt><dd><?= h((string)(float)$g['return_low']) ?>% low · <?= h((string)(float)$g['return_base']) ?>% base · <?= h((string)(float)$g['return_high']) ?>% high, a year</dd>
           <dt>Behind when</dt><dd>below <?= h((string)round((float)$g['band_low'] * 100)) ?>% of the low path</dd>
           <dt>Horizon</dt><dd><?= (int)$g['horizon_years'] ?> years</dd>
-          <dt>Counts</dt><dd><?= $g['type_filter'] !== '' ? h(str_replace(',', ', ', $g['type_filter'])) : 'every investment type' ?><?= $g['filter_member_id'] !== null && isset($mems[(int)$g['filter_member_id']]) ? ', by ' . h($mems[(int)$g['filter_member_id']]) : '' ?></dd>
+          <?php /* The expanded list, not what was ticked: a parent's sub-types count too, and the
+                   page has to be honest about which names it is adding up. */ ?>
+          <?php $counted = goalTypeNames($db, $hid, (string)$g['type_filter']); sort($counted); ?>
+          <dt>Counts</dt><dd><?= $counted ? h(implode(', ', $counted)) : 'every investment type' ?><?= $g['filter_member_id'] !== null && isset($mems[(int)$g['filter_member_id']]) ? ', by ' . h($mems[(int)$g['filter_member_id']]) : '' ?></dd>
         </dl>
       </div>
     </div>
@@ -789,7 +841,7 @@ function renderGoalDashboard(PDO $db, array $user, int $id, bool $print): void {
           <?php foreach ($S['proj'] as $r): $a = $S['actuals'][$r['ym']] ?? null; $sn = goalSnapshotForMonth($S['snaps'], $r['ym']); ?>
             <tr<?= $r['ym'] === $S['today_ym'] ? ' class="goal-now"' : '' ?>>
               <td><?= h(goalMonthLabel($r['ym'])) ?></td><td class="muted"><?= h($r['fy']) ?></td>
-              <td><?= h(fmtShort($r['sip'])) ?></td><td><?= h(goalFmtCompact($r['planned_cum'])) ?></td>
+              <td><?= h(fmtShort($r['sip'])) ?></td><td><?= h(goalFmtCompact($r['planned_cum'] - (float)$g['starting_corpus'])) ?></td>
               <td><?= $a ? h(fmtShort($a['month'])) : '—' ?></td><td><?= $r['ym'] <= $S['today_ym'] && ($ac = goalActualCumAt($S['actuals'], $r['ym'])) !== null ? h(goalFmtCompact($ac)) : '—' ?></td>
               <td><?= h(goalFmtCompact($r['low'])) ?></td><td><b><?= h(goalFmtCompact($r['base'])) ?></b></td><td><?= h(goalFmtCompact($r['high'])) ?></td>
               <td><?= $sn && !$sn['approx'] ? h(goalFmtCompact((float)$sn['current_value'])) : '—' ?></td>
@@ -880,7 +932,10 @@ function goalFormDialog(PDO $db, array $user, ?array $g, string $back): string {
     $hid  = (int)$user['household_id'];
     $uid  = (int)$user['id'];
     $mems = membersFor($db, $hid, $uid);
-    $types = $db->prepare("SELECT name, archived FROM investment_types WHERE household_id = ? ORDER BY archived, name");
+    $types = $db->prepare(
+        "SELECT t.name, t.archived, p.name AS parent
+         FROM investment_types t LEFT JOIN investment_types p ON p.id = t.parent_id
+         WHERE t.household_id = ? ORDER BY t.archived, COALESCE(p.name, t.name), t.name");
     $types->execute([$hid]);
     $types = $types->fetchAll();
     $sel = array_flip(goalTypeList((string)($g['type_filter'] ?? '')));
@@ -896,10 +951,18 @@ function goalFormDialog(PDO $db, array $user, ?array $g, string $back): string {
         <input type="hidden" name="id" value="<?= (int)($g['id'] ?? 0) ?>">
         <input type="hidden" name="back" value="<?= h($back) ?>">
         <div class="dlg-title"><?= $g ? 'Edit goal' : 'New goal' ?></div>
+        <?php /* Whose goal. The shared picker: owners choose anyone, members are themselves —
+                 for a member it comes back as a hidden input, which gets no caption. The dialog
+                 holds two member pickers and they mean different things, so both say so. */ ?>
+        <?php $whose = memberSelect($mems, $uid, $role, '', isset($g['member_id']) ? (int)$g['member_id'] : null); ?>
         <div class="field-row">
-          <input class="input" name="name" placeholder="Goal name, e.g. Retirement" required maxlength="80" value="<?= $v('name') ?>">
-          <?php /* Whose goal. The shared picker: owners choose anyone, members are themselves. */ ?>
-          <?= memberSelect($mems, $uid, $role, '', isset($g['member_id']) ? (int)$g['member_id'] : null) ?>
+          <label class="field"><span>Goal name</span>
+            <input class="input" name="name" placeholder="e.g. Retirement" required maxlength="80" value="<?= $v('name') ?>"></label>
+          <?php if (str_contains($whose, '<select')): ?>
+            <label class="field"><span>Whose goal</span><?= $whose ?></label>
+          <?php else: ?>
+            <?= $whose ?>
+          <?php endif; ?>
         </div>
         <div class="field-row">
           <label class="field"><span>Target</span><input class="input" name="target_amount" type="text" inputmode="decimal" pattern="\d+(\.\d{1,2})?" required value="<?= $num('target_amount', '100000000') ?>"></label>
@@ -922,19 +985,22 @@ function goalFormDialog(PDO $db, array $user, ?array $g, string $back): string {
           <label class="field"><span>Base return %</span><input class="input" name="return_base" type="number" step="0.01" min="0" max="30" value="<?= $num('return_base', '12') ?>"></label>
           <label class="field"><span>High return %</span><input class="input" name="return_high" type="number" step="0.01" min="0" max="30" value="<?= $num('return_high', '14') ?>"></label>
         </div>
-        <div class="field"><span>Count these investment types <span class="muted">(none ticked = all)</span></span>
+        <div class="field"><span>Count these investment types <span class="muted">(none ticked = all; a type brings its sub-types with it)</span></span>
           <div class="pill-row" style="margin-top:6px;">
             <?php foreach ($types as $t): ?>
-              <label class="pill-btn goal-check"><input type="checkbox" name="types[]" value="<?= h($t['name']) ?>"<?= isset($sel[$t['name']]) ? ' checked' : '' ?>> <?= h($t['name']) ?><?= (int)$t['archived'] ? ' (archived)' : '' ?></label>
+              <label class="pill-btn goal-check"><input type="checkbox" name="types[]" value="<?= h($t['name']) ?>"<?= isset($sel[$t['name']]) ? ' checked' : '' ?>> <?= h($t['name']) ?><?php if ($t['parent'] !== null): ?><span class="muted">&nbsp;under <?= h((string)$t['parent']) ?></span><?php endif; ?><?= (int)$t['archived'] ? ' (archived)' : '' ?></label>
             <?php endforeach; ?>
           </div>
         </div>
+        <?php /* Not the same question as "whose goal": that one is a label, this one decides
+                 which entries are added up as "Invested" and "Actual in". A household where
+                 both partners log SIPs into one ledger needs them apart. */ ?>
         <?php if (count($mems) > 1 && $role === ROLE_OWNER): ?>
-          <label class="field"><span>Count only entries by</span>
+          <label class="field"><span>Count only entries by <span class="muted">— whose investments add up as "Invested"</span></span>
             <select class="select" name="filter_member_id">
-              <option value="0">Anyone</option>
+              <option value="0">Anyone in the ledger</option>
               <?php foreach ($mems as $m): ?>
-                <option value="<?= (int)$m['id'] ?>"<?= (int)($g['filter_member_id'] ?? 0) === (int)$m['id'] ? ' selected' : '' ?>><?= h($m['label']) ?></option>
+                <option value="<?= (int)$m['id'] ?>"<?= (int)($g['filter_member_id'] ?? 0) === (int)$m['id'] ? ' selected' : '' ?>><?= h($m['label']) ?> only</option>
               <?php endforeach; ?>
             </select></label>
         <?php endif; ?>
@@ -1054,7 +1120,8 @@ function goalSvgProjection(array $g, array $S, string $scale): string {
               . h(goalDateLabel($s['as_of']) . ' · ' . fmt($v) . ' · ' . ['ahead' => 'Ahead', 'ontrack' => 'On track', 'behind' => 'Behind', 'none' => ''][$st]) . '</title></circle>';
     }
     $out .= '<line class="cross" id="gc-cross" x1="0" x2="0" y1="' . $pt . '" y2="' . ($pt + $ph) . '" visibility="hidden"/>';
-    $out .= '<rect class="hit" id="gc-hit" x="' . $pl . '" y="' . $pt . '" width="' . $pw . '" height="' . $ph . '" fill="transparent"/>';
+    // No class: the script finds it by id, and an unstyled class trips --preflight.
+    $out .= '<rect id="gc-hit" x="' . $pl . '" y="' . $pt . '" width="' . $pw . '" height="' . $ph . '" fill="transparent"/>';
     $out .= '</svg><div class="goal-tip" id="gc-tip" hidden></div></div>';
 
     // Hover data: one short row per month, labels pre-formatted so the script stays dumb.
@@ -1077,7 +1144,7 @@ function goalSvgProjection(array $g, array $S, string $scale): string {
     if (i < 1 || i > n) { hide(); return; }
     var d = rows[i - 1], cx = pl + i / n * pw;
     cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
-    tip.innerHTML = '<b>' + d[0] + '</b><br>Base ' + d[2] + '<br><span class="muted">Low ' + d[1] + ' · High ' + d[3] + '</span><br>Planned in ' + d[4] + (d[5] ? '<br>Actual in ' + d[5] : '');
+    tip.innerHTML = '<b>' + d[0] + '</b><br>Base ' + d[2] + '<br><span class="muted">Low ' + d[1] + ' · High ' + d[3] + '</span><br>Planned in + corpus ' + d[4] + (d[5] ? '<br>Actual in ' + d[5] : '');
     tip.hidden = false;
     var left = cx / sx; if (left > r.width - 180) left -= 190; else left += 12;
     tip.style.left = left + 'px'; tip.style.top = ((ev.clientY - r.top) - 10) + 'px';
@@ -1086,6 +1153,10 @@ function goalSvgProjection(array $g, array $S, string $scale): string {
   hit.addEventListener('mousemove', show); hit.addEventListener('mouseleave', hide);
   hit.addEventListener('touchstart', function (e) { show(e.touches[0]); }, { passive: true });
   hit.addEventListener('touchmove',  function (e) { show(e.touches[0]); }, { passive: true });
+  // A finger has no mouseleave: without these the crosshair and its readout stay on screen
+  // for the rest of the session, over whatever the reader scrolls to next.
+  hit.addEventListener('touchend', hide);
+  hit.addEventListener('touchcancel', hide);
 })();
 </script>
 JS;
@@ -1099,7 +1170,9 @@ function goalSvgInvested(array $S, string $range): string {
     if (!$months) return '<div class="muted">Tracking has not started yet.</div>';
     if ($range === '24') $months = array_slice($months, -24);
     $n = count($months);
-    [$W, $H, $pl, $pr, $pt, $pb] = [1000, 260, 66, 18, 12, 30];
+    // A wider gutter than the projection's: on a phone this chart is squeezed to the screen
+    // instead of scrolling, and its axis labels are enlarged to stay legible at that scale.
+    [$W, $H, $pl, $pr, $pt, $pb] = [1000, 260, 112, 18, 12, 34];
     $pw = $W - $pl - $pr; $ph = $H - $pt - $pb;
     $max = 1.0;
     foreach ($months as $r) $max = max($max, $r['sip'], $S['actuals'][$r['ym']]['month'] ?? 0.0);
@@ -1119,9 +1192,14 @@ function goalSvgInvested(array $S, string $range): string {
         $title = '<title>' . h(goalMonthLabel($r['ym']) . ' · planned ' . fmtShort($r['sip']) . ' · logged ' . fmtShort($a)) . '</title>';
         $out .= '<rect class="planned" x="' . goalPx($x0 - $bw - 1) . '" y="' . goalPx($Y($r['sip'])) . '" width="' . goalPx($bw) . '" height="' . goalPx($pt + $ph - $Y($r['sip'])) . '">' . $title . '</rect>';
         $out .= '<rect class="actual" x="' . goalPx($x0 + 1) . '" y="' . goalPx($Y($a)) . '" width="' . goalPx($bw) . '" height="' . goalPx($pt + $ph - $Y($a)) . '">' . $title . '</rect>';
-        $mm = substr($r['ym'], 5, 2);
-        if ($n <= 24 || $mm === '12' || ($n <= 60 && in_array($mm, ['03', '06', '09'], true))) {
-            $lab = $n <= 24 ? (new DateTimeImmutable($r['ym'] . '-01'))->format($mm === '01' || $k === 0 ? 'M \'y' : 'M') : $r['cy'];
+        // Labels are counted back from the last bar, so this month always carries one and the
+        // spacing never collides — every month up to a year, then every third. Past three
+        // years there is no room for month names at all and the Decembers carry the years.
+        $mm   = substr($r['ym'], 5, 2);
+        $step = $n <= 12 ? 1 : ($n <= 36 ? 3 : 0);
+        $show = $step > 0 ? ($n - 1 - $k) % $step === 0 : $mm === '12';
+        if ($show) {
+            $lab = $step > 0 ? (new DateTimeImmutable($r['ym'] . '-01'))->format($mm === '01' ? 'M \'y' : 'M') : $r['cy'];
             $out .= '<text class="lbl" x="' . goalPx($x0) . '" y="' . ($H - 10) . '" text-anchor="middle">' . h((string)$lab) . '</text>';
         }
     }

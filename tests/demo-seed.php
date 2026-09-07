@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 $config = require __DIR__ . '/../config.php';
 require __DIR__ . '/../lib.php';
+require __DIR__ . '/../goals.php';   // the projection engine, so seeded snapshots sit on the path
 
 $db = makeDb($config);
 mt_srand(20260818);
@@ -178,25 +179,79 @@ for ($back = 13; $back >= 0; $back--) {
     }
 }
 
-// ── Investments. Types must already exist in investment_types — preflight checks that every
-// investment names a type the ledger knows, so this reads them rather than inventing any.
-$types = $db->query("SELECT name FROM investment_types WHERE household_id = $hid")->fetchAll(PDO::FETCH_COLUMN);
+// ── Investment types, nested one level, the way a household actually files them: the asset
+// class is the parent and the instrument is the child. This is what the Invest tab's rollup
+// and a goal's type filter are for — a goal tracking "Equity" has to pick up the SIP and the
+// Stocks filed under it — and a flat list of six defaults exercises neither.
+$typeId = [];
+foreach ($db->query("SELECT id, name FROM investment_types WHERE household_id = $hid") as $r) {
+    $typeId[$r['name']] = (int)$r['id'];
+}
+$mkType = $db->prepare("INSERT INTO investment_types (household_id, name, archived, target, parent_id) VALUES (?,?,0,?,?)");
+$setParent = $db->prepare("UPDATE investment_types SET parent_id = ?, target = ? WHERE id = ? AND household_id = ?");
+// Targets sit on the parents only. A child carrying one would be counted twice by the rollup,
+// exactly as a sub-category's budget would.
+foreach (['Equity' => 40000, 'Debt' => 12000] as $parent => $target) {
+    if (!isset($typeId[$parent])) {
+        $mkType->execute([$hid, $parent, $target, null]);
+        $typeId[$parent] = (int)$db->lastInsertId();
+    }
+}
+foreach (['SIP' => 'Equity', 'Stocks' => 'Equity', 'PPF-EPF' => 'Debt', 'FD-RD' => 'Debt'] as $child => $parent) {
+    if (isset($typeId[$child], $typeId[$parent])) $setParent->execute([$typeId[$parent], 0, $typeId[$child], $hid]);
+}
+if (!isset($typeId['SGB'])) {                        // sovereign gold bonds, under Gold
+    $mkType->execute([$hid, 'SGB', 0, $typeId['Gold'] ?? null]);
+    $typeId['SGB'] = (int)$db->lastInsertId();
+}
+
+// ── Investments. A plan somebody is actually running, not a scatter: two monthly SIPs on the
+// 5th that step up every January, stocks a few times a year, PPF before the March deadline,
+// gold at festivals, an FD when a bonus lands. Thirty months, so a goal has real history and
+// the year-by-year table has a completed year above the one in progress.
 $insInv = $db->prepare(
     "INSERT INTO investments (household_id, name, amount, type, member_id, created_by, date) VALUES (?,?,?,?,?,?,?)"
 );
 $nInv = 0;
-$funds = ['Index Fund SIP', 'Bluechip SIP', 'Emergency Fund', 'Gold', 'PPF', 'Fixed Deposit'];
-for ($back = 13; $back >= 0; $back--) {
-    foreach ([0, 1] as $slot) {
-        $date = $on($back, $slot === 0 ? 5 : 20);
-        if ($date > $today) continue;
-        $insInv->execute([
-            $hid, $funds[mt_rand(0, count($funds) - 1)], mt_rand(2000, 25000),
-            $types[mt_rand(0, count($types) - 1)], $members[mt_rand(0, count($members) - 1)], $uid, $date,
-        ]);
+$startYear = (int)date('Y', strtotime("$today -29 month"));
+// Aarav's own SIPs and Priya's, kept apart so the goal filter "count only entries by" has
+// something to separate.
+$sips = [
+    ['Index Fund SIP', 15000, $members[0]],
+    ['Bluechip SIP',   10000, $members[0]],
+    ['Flexi Cap SIP',   8000, $members[1]],
+];
+for ($back = 29; $back >= 0; $back--) {
+    $date = $on($back, 5);
+    if ($date > $today) continue;
+    // 10% more each January, the way a step-up SIP is actually mandated.
+    $steps = (int)date('Y', strtotime($date)) - $startYear;
+    foreach ($sips as [$name, $base, $who]) {
+        $insInv->execute([$hid, $name, round($base * (1.10 ** $steps)), 'SIP', $who, $uid, $date]);
+        $nInv++;
+    }
+    // Stocks in the months a quarter ends, out of whatever was left over.
+    if (in_array((int)date('n', strtotime($date)), [3, 6, 9, 12], true)) {
+        $insInv->execute([$hid, ['HDFC Bank', 'Infosys', 'ITC', 'Reliance'][mt_rand(0, 3)],
+                          mt_rand(12, 40) * 1000, 'Stocks', $members[0], $uid, $on($back, 18)]);
+        $nInv++;
+    }
+    // PPF before the 31 March cutoff, EPF is payroll so it is not logged by hand.
+    if ((int)date('n', strtotime($date)) === 3) {
+        $insInv->execute([$hid, 'PPF top-up', 150000, 'PPF-EPF', $members[0], $uid, $on($back, 28)]);
+        $nInv++;
+    }
+    // Gold at Dhanteras-ish, and an FD when the March bonus lands.
+    if ((int)date('n', strtotime($date)) === 10) {
+        $insInv->execute([$hid, 'Sovereign Gold Bond', mt_rand(25, 60) * 1000, 'SGB', $members[1], $uid, $on($back, 22)]);
+        $nInv++;
+    }
+    if ((int)date('n', strtotime($date)) === 4) {
+        $insInv->execute([$hid, 'Bank FD', mt_rand(50, 120) * 1000, 'FD-RD', $members[0], $uid, $on($back, 12)]);
         $nInv++;
     }
 }
+$types = $db->query("SELECT name FROM investment_types WHERE household_id = $hid")->fetchAll(PDO::FETCH_COLUMN);
 
 // ── Recurring, one of each kind, so the Recurring tab shows all three and the sweep has
 // something to do. next_date is deliberately in the future: a past date would make the very
@@ -223,9 +278,60 @@ foreach ($recs as [$name, $amount, $kind, $cid, $type, $freq, $inDays]) {
     ]);
 }
 
+// ── Goals. Two, because the interesting cases are the pair: one tracking a parent type for
+// one person, one tracking the same class for somebody else, so "count only entries by" and
+// the sub-type rollup both have something to prove.
+$trackFrom = date('Y-m-01', strtotime("$today -29 month"));
+$insGoal = $db->prepare(
+    "INSERT INTO goals (household_id, member_id, created_by, name, target_amount, starting_corpus,
+                        tracking_start, plan_start, monthly_sip, stepup_pct, stepup_month,
+                        return_low, return_base, return_high, band_low, horizon_years,
+                        type_filter, filter_member_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+);
+$insSnap = $db->prepare(
+    "INSERT INTO goal_snapshots (goal_id, household_id, as_of, current_value, note, created_by, created_at)
+     VALUES (?,?,?,?,?,?,?)"
+);
+// [name, whose, target, corpus already held, monthly SIP, types counted, whose entries count]
+$goalPlans = [
+    ['Retirement',      $members[0], 100000000, 800000, 25000, 'Equity', $members[0]],
+    ['First crore',     $members[1], 10000000,        0,  8000, 'Equity', $members[1]],
+];
+$nGoal = $nSnap = 0;
+foreach ($goalPlans as [$gname, $whose, $target, $corpus, $sip, $filter, $onlyBy]) {
+    $insGoal->execute([
+        $hid, $whose, $uid, $gname, $target, $corpus, $trackFrom, $trackFrom, $sip,
+        10.00, 1, 10.00, 12.00, 14.00, 0.90, 20, $filter, $onlyBy,
+    ]);
+    $gid = (int)$db->lastInsertId();
+    $nGoal++;
+    // Snapshots every quarter for the last year and a half, read off the base projection and
+    // nudged, so the statuses read like a portfolio rather than a straight line. Anchoring on
+    // the engine is what keeps a seeded ledger from showing "behind" on every row.
+    $proj = array_column(goalProject([
+        'starting_corpus' => $corpus, 'tracking_start' => $trackFrom, 'plan_start' => $trackFrom,
+        'monthly_sip' => $sip, 'stepup_pct' => 10, 'stepup_month' => 1,
+        'return_low' => 10, 'return_base' => 12, 'return_high' => 14, 'horizon_years' => 20,
+    ]), null, 'ym');
+    $notes = ['Groww + Zerodha', 'quarter end', '', 'after the market dip', 'Groww'];
+    foreach ([18, 15, 12, 9, 6, 3, 0] as $i => $back) {
+        if ($gname !== 'Retirement' && $back > 6) continue;    // Priya started tracking later
+        $date = $on($back, 1);
+        if ($date > $today) continue;
+        $row = $proj[substr($date, 0, 7)] ?? null;
+        if (!$row) continue;
+        $insSnap->execute([
+            $gid, $hid, $date, round($row['base'] * mt_rand(94, 109) / 100, 2),
+            $notes[$i % count($notes)], $uid, $date . ' 20:00:00',
+        ]);
+        $nSnap++;
+    }
+}
+
 $db->commit();
 
 printf(
-    "seeded household %d: %d expenses, %d earnings, %d investments, %d recurring, %d members, %d budgets\n",
-    $hid, $nExp, $nEarn, $nInv, count($recs), count($members), count($budgets)
+    "seeded household %d: %d expenses, %d earnings, %d investments, %d recurring, %d members, %d budgets, %d goals, %d snapshots\n",
+    $hid, $nExp, $nEarn, $nInv, count($recs), count($members), count($budgets), $nGoal, $nSnap
 );

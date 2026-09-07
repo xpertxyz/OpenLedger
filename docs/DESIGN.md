@@ -103,11 +103,100 @@ All values live in `design-tokens/styles.css` (the actual stylesheet used by the
 - `design-tokens/organic-design-system-guide.md` — written guide to the design system's components and usage rules.
 
 ## Investment goals (`goals.php`)
-Added after the ledger: a goal is a target amount plus the assumptions that project a path to it (starting corpus, monthly SIP, yearly step-up in January or April, low/base/high annual returns, horizon). Everything else is derived on read:
-- **Projection** — month by month, `value = value × (1 + r/12) + sip`; the fan chart draws low–high, the base line, planned cumulative investment (dashed) and what the Invest tab actually recorded since tracking began (sage). Linear or log axis.
-- **Milestones** — a default ladder (₹25 L … ₹10 Cr, up to 1.5× target) plus custom rungs; each shows when the three paths reach it and when it was actually crossed, derived from snapshots unless set by hand.
-- **Snapshots** — the portfolio's real value typed in from the broker; the only fact the ledger cannot know. Status per snapshot: *behind* below `band_low × low`, *ahead* above high, else *on track*. A snapshot older than 45 days shows a "stale" tag.
-- **Yearly table** — December (calendar) or March (financial year) rows; a snapshot within ±45 days of that month stands in, marked `~`.
 
-Layout is desktop-first (`.col` widened to 1200px on these pages only; KPI strip, two-column grid) and folds to one column under 720px, where charts scroll sideways rather than shrink. `/goals/{id}/print` renders the same page without chrome. The engine is asserted against the reference workbook in `goalsSelfcheck()`; preflight renders both pages.
+A goal is a target and the assumptions that reach it. Everything else on the page is worked out
+again on every render, so there is no derived state to go stale and nothing that can disagree
+with anything else.
 
+### What is stored, and what is not
+
+Stored, in `goals`: the target, the corpus already held when tracking began, the monthly SIP and
+its yearly step-up (January or April), three annual return rates, the "behind" band, the horizon,
+which investment types count, and whose entries count. Two more tables hold the only facts the
+app cannot work out: `goal_snapshots` (what the portfolio was worth on a day, typed in from the
+broker) and `goal_milestones` (a row exists only to carry a custom rung or an achieved date set
+by hand — a default rung that has neither has no row at all).
+
+Not stored: every projected value, every milestone date, every status, every total. Change a
+return rate and all of them move together.
+
+### The engine
+
+`goalProject()` returns one row per month for the whole horizon:
+
+```
+sip_i    = 0                                    before plan_start
+         = monthly_sip × (1 + stepup)^k         after, k = step-up boundaries passed
+value_i  = value_{i-1} × (1 + r/12) + sip_i     for each of low, base and high
+```
+
+It is a pure function of the goal row, which is what lets `goalsSelfcheck()` assert it against a
+reference workbook — 240 rows, the month each milestone is reached on each path, both step-up
+modes, the FY labels, the status bands. `--selfcheck` runs it, so the maths cannot drift during a
+tidy-up. `goalShiftYm()` does the month arithmetic rather than `addMonths()`, which only steps
+forward; the year rows need to look back eleven months to find where their period began.
+
+### What counts as invested
+
+"Actual in" and *Invested* are a `SUM` over `investments` since the goal's tracking start. The
+ledger already records every rupee on the Invest tab, and a goal never asks for it a second time.
+Two filters narrow it, both optional:
+
+- **Types.** None ticked means every type. A ticked type brings its sub-types with it —
+  `goalTypeNames()` expands a parent to its children before the query runs, so "Equity" counts
+  the SIP and the Stocks filed under it. That is what a type already means everywhere else:
+  `rollupTypes()` folds the same child into the same parent's bar on the Invest tab. Matching
+  names literally would report a household behind on a goal it is meeting. The Assumptions card
+  prints the expanded list rather than the ticked one, so the two cannot silently differ.
+- **Person.** "Count only entries by" restricts the sum to one member, for a shared ledger where
+  two people log SIPs side by side. It is a different question from "whose goal", which is only a
+  label, and the dialog captions both because two member pickers in one form are otherwise
+  indistinguishable.
+
+Both "in" columns — planned and actual — are money added since tracking began. The starting
+corpus is in neither: counting it on the planned side alone would print a shortfall that never
+happened. It is where the *value* columns start instead, which is why the projection chart's
+dashed baseline is labelled "Planned in + corpus".
+
+### Status
+
+`goalStatus()` judges a snapshot against the projection row for the month it is dated in, never
+against today: below `band_low ×` the low path is *behind*, above the high path is *ahead*,
+between them is *on track*. Judging against its own month is what lets an old snapshot keep the
+verdict it earned, and what lets the year table carry a status per year. A snapshot more than 45
+days old earns a *stale* tag — a status is only as current as the number behind it.
+
+### Pages
+
+`/goals` lists a card per goal. `/goals/{id}` is the dashboard: a KPI strip, the projection fan
+(linear or log), planned-against-actual bars by month, the milestone ladder, a year table in
+calendar or financial years, the snapshots, and the assumptions. `/goals/{id}/print` is the same
+page without chrome. All the toggles are query parameters, so a link carries the view it was
+shared from and the back button works.
+
+Milestones default to a ladder (₹25 L … ₹10 Cr, capped at 1.5× the target) merged with any custom
+rungs. Each row shows when the three paths reach it and when it was actually crossed — the first
+snapshot at or above the amount, unless a date was set by hand — plus how many months that was
+ahead of or behind the base path.
+
+The year table takes December rows in calendar mode and March rows in financial mode. A snapshot
+inside that month stands in for the year; failing that, the nearest one within ±45 days, marked
+`~`. The year in progress shows what has been invested so far, marked, because its labelled month
+has not happened yet; years that have not started show nothing.
+
+### Charts
+
+Inline SVG emitted by PHP, no library and no build step. The fan is a `low → high` polygon under
+the base line, with milestone rules, the planned baseline, what the ledger actually recorded, a
+dot per snapshot coloured by status and a rule at today. A `<title>` on every dot means the chart
+still answers questions with JavaScript off; the optional crosshair adds a per-month readout, and
+releases it on `touchend` because a finger has no `mouseleave`.
+
+### Layout
+
+Desktop-first, which is the one place this app is not phone-first: a KPI strip, a two-column grid
+and wide tables need room, so `.col` widens to 1200px on these pages only. Under 720px it folds to
+one column, tables scroll inside their cards, and the dialog drops from three fields per row to
+two. The 240-month projection keeps its width and scrolls sideways — it starts at today, the end
+that matters — while the 24-month bar chart shrinks to fit, since a chart whose only data sits
+past the right edge reads as empty.
