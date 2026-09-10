@@ -76,6 +76,8 @@ const SVG_SPRITE = <<<SVG
   <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
   <symbol id="icon-log-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
   <symbol id="icon-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M18 12h.01"/></symbol>
+  <symbol id="icon-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+  <symbol id="icon-smartphone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></symbol>
   <symbol id="icon-wifi-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
 </svg>
 SVG;
@@ -256,6 +258,12 @@ function layout(PDO $db, array $user, string $tab, string $content, string $requ
     $mode      = $user['is_dark'] ? 'dark' : 'light';
     $themeVars = themeCss(false);
     $boot      = themeBootScript();
+    // Online or on this phone. FEATURE_SIGNIN off is the local build (index.php), and in the
+    // app's online mode the WebView is showing the website, which has it on — so the flag is
+    // the mode, with no second source of truth to keep in step.
+    $modeIcon  = FEATURE_SIGNIN
+        ? '<span class="brand-mode" role="img" aria-label="Online ledger" title="Online ledger">' . icon('globe', 15) . '</span>'
+        : '<span class="brand-mode" role="img" aria-label="Ledger on this phone" title="Ledger on this phone">' . icon('smartphone', 15) . '</span>';
     $moonBtn   = icon('moon', 18);
     $sunBtn    = icon('sun', 18);
     $initial   = h(strtoupper(mb_substr($user['name'] ?? 'U', 0, 1)));
@@ -367,7 +375,10 @@ $boot
   .hdr { display:flex; align-items:center; justify-content:space-between;
          padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-2);
          position:sticky; top:0; z-index:40; background:var(--color-bg); }
-  .brand { font-family:var(--font-heading); font-size:22px; }
+  .brand { font-family:var(--font-heading); font-size:22px; display:flex; align-items:center; gap:6px; }
+  /* Which ledger the app is talking to — the website, or the file on this phone. Muted and
+     small: it answers a question you only ask once, and must not compete with the name. */
+  .brand-mode { display:inline-flex; color:var(--color-neutral-800); }
   .hdr-actions { display:flex; align-items:center; gap:4px; min-width:0; }
   /* max-width in vw, not px: the brand is fixed-width, so the ledger name is the only thing
      that can give, and it must give before the avatar is pushed off a 320px screen. */
@@ -730,7 +741,7 @@ $boot
 $sprite
 <div class="col">
   <div class="hdr">
-    <div class="brand">Open Ledger</div>
+    <div class="brand">Open Ledger$modeIcon</div>
     <div class="hdr-actions">
       $ledgerTag
       <button class="btn btn-icon tt" type="button" onclick="toggleTheme()" aria-label="Switch between light and dark" title="Switch theme" style="color:var(--color-text);"><span class="moon">$moonBtn</span><span class="sun">$sunBtn</span></button>
